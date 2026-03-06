@@ -79,4 +79,11 @@ public class OmsOrder extends BaseEntity {
     @Schema(description="租户id")
     private Long tenantId;
 
+    @Schema(description="满减券抵扣金额")
+    private BigDecimal useVoucherAmount;
+
+    /**
+     * 整单优惠
+     */
+    private BigDecimal manualDiscountAmount;
 }

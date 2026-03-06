@@ -74,6 +74,13 @@ public class OmsOrderVO {
     @Schema(description="完成时间")
     private LocalDateTime completionTime;
 
+    @Schema(description="满减券抵扣金额")
+    private BigDecimal useVoucherAmount;
+
+    // 🌟 新增：专门存放前台手工改价、抹零、整单优惠的金额
+    @Schema(description="手工整单优惠金额")
+    private BigDecimal manualDiscountAmount;
+
     private LocalDateTime createTime;
 
 }

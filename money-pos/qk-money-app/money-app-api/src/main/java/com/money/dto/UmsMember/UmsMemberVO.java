@@ -3,15 +3,14 @@ package com.money.dto.UmsMember;
 import java.math.BigDecimal;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
+import java.time.LocalDateTime;
+import java.util.Map;
 
 /**
-* <p>
-* 会员表
-* </p>
-*
-* @author money
-* @since 2023-02-27
-*/
+ * <p>
+ * 会员表
+ * </p>
+ */
 @Data
 @Schema(description = "会员表")
 public class UmsMemberVO {
@@ -24,7 +23,7 @@ public class UmsMemberVO {
     @Schema(description="会员名称")
     private String name;
 
-    @Schema(description="会员类型")
+    @Schema(description="历史遗留字段: 单一会员类型")
     private String type;
 
     @Schema(description="手机号")
@@ -63,4 +62,16 @@ public class UmsMemberVO {
     @Schema(description="逻辑删除")
     private Boolean deleted;
 
+    @Schema(description = "本金余额")
+    private BigDecimal balance;
+
+    @Schema(description = "满减券有效张数")
+    private Integer voucherCount;
+
+    @Schema(description = "最后一次到店消费时间")
+    private LocalDateTime lastVisitTime;
+
+    // 🌟 核心新增：打包发给前端回显的多品牌身份矩阵
+    @Schema(description="【全新架构】多品牌等级矩阵")
+    private Map<String, String> brandLevels;
 }

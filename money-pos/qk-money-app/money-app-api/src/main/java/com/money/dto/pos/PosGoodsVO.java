@@ -1,6 +1,7 @@
 package com.money.dto.Pos;
 
 import com.money.constant.GoodsStatus;
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
 import java.math.BigDecimal;
@@ -55,4 +56,7 @@ public class PosGoodsVO {
      * 状态
      */
     private GoodsStatus status;
+
+    @Schema(description = "多级会员专属价")
+    private java.util.Map<String, java.math.BigDecimal> levelPrices;
 }

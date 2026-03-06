@@ -38,4 +38,7 @@ public interface PosService {
      * @return {@link OmsOrderVO}
      */
     OmsOrderVO settleAccounts(SettleAccountsDTO settleAccountsDTO);
+
+    // 获取满减券规则下拉列表
+    java.util.List<com.money.entity.PosCouponRule> getValidCouponRules();
 }

@@ -72,4 +72,15 @@ public class GmsGoods extends BaseEntity {
     @Schema(description="租户id")
     private Long tenantId;
 
+    /**
+     * 是否参与满减(1:参与, 0:不参与)
+     */
+    private Integer isDiscountParticipable;
+
+    @io.swagger.v3.oas.annotations.media.Schema(description = "拼音助记码")
+    private String mnemonicCode;
+
+    // 🌟 补上这个缺失的套餐身份牌
+    @io.swagger.v3.oas.annotations.media.Schema(description = "是否为组合套餐(0:否, 1:是)")
+    private Integer isCombo;
 }

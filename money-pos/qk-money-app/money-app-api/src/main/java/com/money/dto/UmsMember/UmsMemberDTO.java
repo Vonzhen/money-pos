@@ -8,15 +8,13 @@ import javax.validation.constraints.NotBlank;
 import javax.validation.constraints.NotNull;
 import javax.validation.constraints.Size;
 import java.math.BigDecimal;
+import java.util.Map;
 
 /**
-* <p>
-* 会员表
-* </p>
-*
-* @author money
-* @since 2023-02-27
-*/
+ * <p>
+ * 会员表
+ * </p>
+ */
 @Data
 @Schema(description = "会员表")
 public class UmsMemberDTO {
@@ -28,7 +26,7 @@ public class UmsMemberDTO {
     @NotBlank(groups = {ValidGroup.Save.class, ValidGroup.Update.class})
     private String name;
 
-    @Schema(description="会员类型")
+    @Schema(description="历史遗留字段: 单一会员类型")
     @NotBlank(groups = {ValidGroup.Save.class, ValidGroup.Update.class})
     private String type;
 
@@ -55,4 +53,7 @@ public class UmsMemberDTO {
     @Size(max = 255, groups = {ValidGroup.Save.class, ValidGroup.Update.class})
     private String remark;
 
+    // 🌟 核心新增：接收前端传来的多品牌身份矩阵
+    @Schema(description="【全新架构】多品牌等级矩阵 (Key为品牌ID, Value为等级Code)")
+    private Map<String, String> brandLevels;
 }

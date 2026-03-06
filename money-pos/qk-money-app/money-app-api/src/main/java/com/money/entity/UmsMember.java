@@ -6,6 +6,7 @@ import java.math.BigDecimal;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Getter;
 import lombok.Setter;
+import java.time.LocalDateTime;
 
 /**
  * <p>
@@ -63,10 +64,22 @@ public class UmsMember extends BaseEntity {
     @Schema(description="备注")
     private String remark;
 
+    /**
+     * 最后一次到店消费时间
+     */
+    private LocalDateTime lastVisitTime;
+
     @Schema(description="逻辑删除")
     private Boolean deleted;
 
     @Schema(description="租户id")
     private Long tenantId;
 
+    /**
+     * 会员等级ID
+     */
+    private Long levelId;
+
+    @Schema(description = "真实储值余额(本金)")
+    private java.math.BigDecimal balance;
 }

@@ -3,6 +3,7 @@ package com.money.service.impl;
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.util.RandomUtil;
 import cn.hutool.core.util.StrUtil;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.money.web.exception.BaseException;
@@ -10,29 +11,47 @@ import com.money.web.vo.PageVO;
 import com.money.dto.UmsMember.UmsMemberDTO;
 import com.money.dto.UmsMember.UmsMemberQueryDTO;
 import com.money.dto.UmsMember.UmsMemberVO;
+import com.money.dto.Ums.RechargeDTO;
 import com.money.entity.UmsMember;
+import com.money.entity.UmsMemberLog;
+import com.money.entity.PosMemberCoupon;
+import com.money.entity.OmsOrder;
+import com.money.entity.OmsOrderDetail;
+import com.money.entity.UmsMemberBrandLevel;
+import com.money.entity.GmsBrand;
 import com.money.mapper.UmsMemberMapper;
+import com.money.mapper.UmsMemberLogMapper;
+import com.money.mapper.PosMemberCouponMapper;
+import com.money.mapper.OmsOrderMapper;
+import com.money.mapper.OmsOrderDetailMapper;
+import com.money.mapper.UmsMemberBrandLevelMapper;
+import com.money.mapper.GmsBrandMapper;
 import com.money.service.UmsMemberService;
 import com.money.util.PageUtil;
+import com.alibaba.excel.EasyExcel;
+import com.money.dto.UmsMember.UmsMemberImportExcelDTO;
 import lombok.RequiredArgsConstructor;
+import lombok.SneakyThrows;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
-import java.util.Set;
+import java.time.LocalDateTime;
+import java.util.*;
+import java.util.stream.Collectors;
 
-/**
- * <p>
- * 会员表 服务实现类
- * </p>
- *
- * @author money
- * @since 2023-02-27
- */
 @Service
 @RequiredArgsConstructor
 @Transactional(rollbackFor = Exception.class)
 public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember> implements UmsMemberService {
+
+    private final UmsMemberLogMapper umsMemberLogMapper;
+    private final PosMemberCouponMapper posMemberCouponMapper;
+    private final OmsOrderMapper omsOrderMapper;
+    private final OmsOrderDetailMapper omsOrderDetailMapper;
+    private final UmsMemberBrandLevelMapper umsMemberBrandLevelMapper;
+    private final GmsBrandMapper gmsBrandMapper;
 
     @Override
     public PageVO<UmsMemberVO> list(UmsMemberQueryDTO queryDTO) {
@@ -45,31 +64,116 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
                 .orderByDesc(StrUtil.isBlank(queryDTO.getOrderBy()), UmsMember::getUpdateTime)
                 .last(StrUtil.isNotBlank(queryDTO.getOrderBy()), queryDTO.getOrderBySql())
                 .page(PageUtil.toPage(queryDTO));
-        return PageUtil.toPageVO(page, UmsMemberVO::new);
+
+        PageVO<UmsMemberVO> pageVO = PageUtil.toPageVO(page, UmsMemberVO::new);
+
+        if (pageVO.getRecords() != null && !pageVO.getRecords().isEmpty()) {
+            List<Long> memberIds = pageVO.getRecords().stream().map(UmsMemberVO::getId).collect(Collectors.toList());
+
+            List<UmsMemberBrandLevel> allBrandLevels = umsMemberBrandLevelMapper.selectList(
+                    new LambdaQueryWrapper<UmsMemberBrandLevel>().in(UmsMemberBrandLevel::getMemberId, memberIds)
+            );
+            Map<Long, List<UmsMemberBrandLevel>> blMap = allBrandLevels.stream().collect(Collectors.groupingBy(UmsMemberBrandLevel::getMemberId));
+
+            for (UmsMemberVO vo : pageVO.getRecords()) {
+                long count = posMemberCouponMapper.selectCount(
+                        new LambdaQueryWrapper<PosMemberCoupon>()
+                                .eq(PosMemberCoupon::getMemberId, vo.getId())
+                                .eq(PosMemberCoupon::getStatus, "UNUSED")
+                );
+                vo.setVoucherCount((int) count);
+
+                List<UmsMemberBrandLevel> levels = blMap.get(vo.getId());
+                Map<String, String> levelMap = new HashMap<>();
+                if (levels != null) {
+                    for (UmsMemberBrandLevel bl : levels) {
+                        levelMap.put(bl.getBrand(), bl.getLevelCode());
+                    }
+                }
+                vo.setBrandLevels(levelMap);
+            }
+        }
+        return pageVO;
+    }
+
+    private void saveBrandLevels(Long memberId, Map<String, String> brandLevels) {
+        umsMemberBrandLevelMapper.delete(new LambdaQueryWrapper<UmsMemberBrandLevel>().eq(UmsMemberBrandLevel::getMemberId, memberId));
+        if (brandLevels != null && !brandLevels.isEmpty()) {
+            brandLevels.forEach((brand, levelCode) -> {
+                if (StrUtil.isNotBlank(levelCode)) {
+                    UmsMemberBrandLevel bl = new UmsMemberBrandLevel();
+                    bl.setMemberId(memberId);
+                    bl.setBrand(brand);
+                    bl.setLevelCode(levelCode);
+                    umsMemberBrandLevelMapper.insert(bl);
+                }
+            });
+        }
     }
 
     @Override
     public void add(UmsMemberDTO addDTO) {
         boolean exists = this.lambdaQuery().eq(UmsMember::getPhone, addDTO.getPhone()).exists();
-        if (exists) {
-            throw new BaseException("手机号码已存在");
-        }
+        if (exists) throw new BaseException("手机号码已存在");
         UmsMember umsMember = new UmsMember();
         BeanUtil.copyProperties(addDTO, umsMember);
-        // 分配会员号
         umsMember.setCode(RandomUtil.randomNumbers(8));
+        umsMember.setBalance(BigDecimal.ZERO);
+        umsMember.setCoupon(BigDecimal.ZERO);
         this.save(umsMember);
+        saveBrandLevels(umsMember.getId(), addDTO.getBrandLevels());
     }
 
     @Override
     public void update(UmsMemberDTO updateDTO) {
         boolean exists = this.lambdaQuery().ne(UmsMember::getId, updateDTO.getId()).eq(UmsMember::getPhone, updateDTO.getPhone()).exists();
-        if (exists) {
-            throw new BaseException("手机号码已存在");
-        }
-        UmsMember umsMember = new UmsMember();
+        if (exists) throw new BaseException("手机号码已存在");
+        UmsMember umsMember = this.getById(updateDTO.getId());
         BeanUtil.copyProperties(updateDTO, umsMember);
         this.updateById(umsMember);
+        saveBrandLevels(umsMember.getId(), updateDTO.getBrandLevels());
+    }
+
+    @Override
+    public List<Map<String, Object>> getTop10Goods(Long memberId) {
+        List<OmsOrder> orders = omsOrderMapper.selectList(new LambdaQueryWrapper<OmsOrder>().eq(OmsOrder::getMemberId, memberId).eq(OmsOrder::getStatus, "PAID"));
+        if (orders.isEmpty()) return new ArrayList<>();
+        List<String> orderNos = orders.stream().map(OmsOrder::getOrderNo).collect(Collectors.toList());
+        List<OmsOrderDetail> details = omsOrderDetailMapper.selectList(new LambdaQueryWrapper<OmsOrderDetail>().in(OmsOrderDetail::getOrderNo, orderNos));
+        Map<String, Integer> goodsCountMap = new HashMap<>();
+        for (OmsOrderDetail detail : details) {
+            int validQty = detail.getQuantity() - (detail.getReturnQuantity() != null ? detail.getReturnQuantity() : 0);
+            if (validQty > 0) goodsCountMap.put(detail.getGoodsName(), goodsCountMap.getOrDefault(detail.getGoodsName(), 0) + validQty);
+        }
+        return goodsCountMap.entrySet().stream().sorted((e1, e2) -> e2.getValue().compareTo(e1.getValue())).limit(10)
+                .map(e -> { Map<String, Object> map = new HashMap<>(); map.put("goodsName", e.getKey()); map.put("buyCount", e.getValue()); return map; }).collect(Collectors.toList());
+    }
+
+    @Override
+    public List<UmsMemberVO> getDormantMembers(Integer days) {
+        LocalDateTime threshold = LocalDateTime.now().minusDays(days);
+        List<UmsMember> list = this.lambdaQuery().eq(UmsMember::getDeleted, false).isNotNull(UmsMember::getLastVisitTime)
+                .le(UmsMember::getLastVisitTime, threshold).orderByDesc(UmsMember::getConsumeAmount).last("LIMIT 100").list();
+        return cn.hutool.core.bean.BeanUtil.copyToList(list, UmsMemberVO.class);
+    }
+
+    @Override
+    public void batchIssueVoucher(List<Long> memberIds, Long ruleId, Integer quantity) {
+        if (memberIds == null || memberIds.isEmpty() || ruleId == null || quantity == null || quantity <= 0) throw new BaseException("发券参数错误");
+        LocalDateTime now = LocalDateTime.now();
+        List<PosMemberCoupon> coupons = new ArrayList<>();
+        for (Long memberId : memberIds) {
+            for (int i = 0; i < quantity; i++) {
+                PosMemberCoupon pc = new PosMemberCoupon(); pc.setMemberId(memberId); pc.setRuleId(ruleId);
+                pc.setStatus("UNUSED"); pc.setGetTime(now); coupons.add(pc);
+            }
+        }
+        for (PosMemberCoupon coupon : coupons) posMemberCouponMapper.insert(coupon);
+        for (Long memberId : memberIds) {
+            long totalVouchers = posMemberCouponMapper.selectCount(new LambdaQueryWrapper<PosMemberCoupon>().eq(PosMemberCoupon::getMemberId, memberId).eq(PosMemberCoupon::getStatus, "UNUSED"));
+            UmsMemberLog log = new UmsMemberLog(); log.setMemberId(memberId); log.setType("VOUCHER"); log.setOperateType("ISSUE");
+            log.setAmount(BigDecimal.valueOf(quantity)); log.setAfterAmount(BigDecimal.valueOf(totalVouchers)); log.setRemark("沉睡唤醒：系统批量派发专属满减券"); log.setCreateTime(now); umsMemberLogMapper.insert(log);
+        }
     }
 
     @Override
@@ -79,20 +183,124 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
 
     @Override
     public void consume(Long id, BigDecimal amount, BigDecimal coupon) {
-        // 加总消费金额 加消费抵用券 减当前抵用券 消费次数加一
-        this.lambdaUpdate().setSql("consume_amount = consume_amount + " + amount +
-                ", consume_coupon = consume_coupon + " + coupon +
-                ", coupon = coupon - " + coupon +
-                ", consume_times = consume_times + 1").eq(UmsMember::getId, id).update();
+        this.lambdaUpdate().setSql("consume_amount = consume_amount + " + amount + ", consume_coupon = consume_coupon + " + coupon + ", coupon = coupon - " + coupon + ", consume_times = consume_times + 1").eq(UmsMember::getId, id).update();
     }
 
     @Override
     public void rebate(Long id, BigDecimal amount, BigDecimal coupon, boolean increaseCancelTimes) {
-        // 减总消费金额 减费抵用券 退还当前抵用券 取消次数加一
-        this.lambdaUpdate().setSql("consume_amount = consume_amount - " + amount +
-                        ", consume_coupon = consume_coupon - " + coupon +
-                        ", coupon = coupon + " + coupon)
-                .setSql(increaseCancelTimes, "cancel_times = cancel_times + 1").eq(UmsMember::getId, id).update();
+        this.lambdaUpdate().setSql("consume_amount = consume_amount - " + amount + ", consume_coupon = consume_coupon - " + coupon + ", coupon = coupon + " + coupon).setSql(increaseCancelTimes, "cancel_times = cancel_times + 1").eq(UmsMember::getId, id).update();
     }
 
+    @Override
+    public void recharge(RechargeDTO dto) {
+        UmsMember member = this.getById(dto.getMemberId());
+        if (member == null) throw new BaseException("未找到该会员信息");
+        if (member.getBalance() == null) member.setBalance(BigDecimal.ZERO);
+        if (member.getCoupon() == null) member.setCoupon(BigDecimal.ZERO);
+        LocalDateTime now = LocalDateTime.now();
+
+        if ("BALANCE".equals(dto.getType())) {
+            member.setBalance(member.getBalance().add(dto.getAmount()));
+            UmsMemberLog log = new UmsMemberLog(); log.setMemberId(member.getId()); log.setType("BALANCE"); log.setOperateType("RECHARGE");
+            log.setAmount(dto.getAmount()); log.setAfterAmount(member.getBalance()); log.setRemark(StrUtil.isNotBlank(dto.getRemark()) ? dto.getRemark() : "前台办理充值本金"); log.setCreateTime(now); umsMemberLogMapper.insert(log);
+            if (dto.getGiftCoupon() != null && dto.getGiftCoupon().compareTo(BigDecimal.ZERO) > 0) {
+                member.setCoupon(member.getCoupon().add(dto.getGiftCoupon()));
+                UmsMemberLog giftLog = new UmsMemberLog(); giftLog.setMemberId(member.getId()); giftLog.setType("COUPON"); giftLog.setOperateType("GIFT");
+                giftLog.setAmount(dto.getGiftCoupon()); giftLog.setAfterAmount(member.getCoupon()); giftLog.setRemark("充值附送券"); giftLog.setCreateTime(now); umsMemberLogMapper.insert(giftLog);
+            }
+            this.updateById(member);
+        } else if ("COUPON".equals(dto.getType())) {
+            member.setCoupon(member.getCoupon().add(dto.getAmount()));
+            UmsMemberLog log = new UmsMemberLog(); log.setMemberId(member.getId()); log.setType("COUPON"); log.setOperateType("RECHARGE");
+            log.setAmount(dto.getAmount()); log.setAfterAmount(member.getCoupon()); log.setRemark(StrUtil.isNotBlank(dto.getRemark()) ? dto.getRemark() : "前台充值会员券"); log.setCreateTime(now); umsMemberLogMapper.insert(log);
+            this.updateById(member);
+        } else if ("VOUCHER".equals(dto.getType())) {
+            if (dto.getRuleId() == null || dto.getQuantity() == null || dto.getQuantity() <= 0) throw new BaseException("发券参数错误");
+            List<PosMemberCoupon> coupons = new ArrayList<>();
+            for (int i = 0; i < dto.getQuantity(); i++) {
+                PosMemberCoupon pc = new PosMemberCoupon(); pc.setMemberId(member.getId()); pc.setRuleId(dto.getRuleId()); pc.setStatus("UNUSED"); pc.setGetTime(now); coupons.add(pc);
+            }
+            for (PosMemberCoupon coupon : coupons) posMemberCouponMapper.insert(coupon);
+            long totalVouchers = posMemberCouponMapper.selectCount(new LambdaQueryWrapper<PosMemberCoupon>().eq(PosMemberCoupon::getMemberId, member.getId()).eq(PosMemberCoupon::getStatus, "UNUSED"));
+            UmsMemberLog log = new UmsMemberLog(); log.setMemberId(member.getId()); log.setType("VOUCHER"); log.setOperateType("ISSUE");
+            log.setAmount(BigDecimal.valueOf(dto.getQuantity())); log.setAfterAmount(BigDecimal.valueOf(totalVouchers)); log.setRemark(StrUtil.isNotBlank(dto.getRemark()) ? dto.getRemark() : "前台发放满减券"); log.setCreateTime(now); umsMemberLogMapper.insert(log);
+        }
+    }
+
+    @Override
+    @SneakyThrows
+    public void importMembers(MultipartFile file) {
+        List<UmsMemberImportExcelDTO> list = EasyExcel.read(file.getInputStream()).head(UmsMemberImportExcelDTO.class).sheet().doReadSync();
+        LocalDateTime now = LocalDateTime.now();
+
+        List<GmsBrand> brandList = gmsBrandMapper.selectList(new LambdaQueryWrapper<>());
+        Map<String, String> brandNameToIdMap = brandList.stream().collect(Collectors.toMap(GmsBrand::getName, b -> String.valueOf(b.getId())));
+
+        for (UmsMemberImportExcelDTO dto : list) {
+            if (StrUtil.isBlank(dto.getPhone())) continue;
+            UmsMember member = this.lambdaQuery().eq(UmsMember::getPhone, dto.getPhone()).one();
+
+            // 如果是老会员恢复
+            if (member != null) {
+                if (member.getDeleted()) {
+                    member.setDeleted(false);
+                    member.setName(dto.getName());
+                    member.setType("MEMBER");
+                    member.setBalance(dto.getBalance() != null ? dto.getBalance() : BigDecimal.ZERO);
+
+                    // 🌟 核心提取：覆盖更新会员券
+                    member.setCoupon(dto.getCoupon() != null ? dto.getCoupon() : BigDecimal.ZERO);
+                    member.setRemark(dto.getRemark());
+                    this.updateById(member);
+
+                    if (member.getBalance().compareTo(BigDecimal.ZERO) > 0) {
+                        UmsMemberLog log = new UmsMemberLog(); log.setMemberId(member.getId()); log.setType("BALANCE"); log.setOperateType("IMPORT"); log.setAmount(member.getBalance()); log.setAfterAmount(member.getBalance()); log.setRemark("老会员恢复及重新导入本金"); log.setCreateTime(now); umsMemberLogMapper.insert(log);
+                    }
+
+                    // 🌟 会员券流水入库
+                    if (member.getCoupon().compareTo(BigDecimal.ZERO) > 0) {
+                        UmsMemberLog couponLog = new UmsMemberLog(); couponLog.setMemberId(member.getId()); couponLog.setType("COUPON"); couponLog.setOperateType("IMPORT"); couponLog.setAmount(member.getCoupon()); couponLog.setAfterAmount(member.getCoupon()); couponLog.setRemark("老会员恢复及重新导入会员券"); couponLog.setCreateTime(now); umsMemberLogMapper.insert(couponLog);
+                    }
+                }
+            } else {
+                // 如果是新会员
+                member = new UmsMember();
+                member.setName(dto.getName());
+                member.setPhone(dto.getPhone());
+                member.setType("MEMBER");
+                member.setBalance(dto.getBalance() != null ? dto.getBalance() : BigDecimal.ZERO);
+
+                // 🌟 核心提取：初始化新会员的会员券
+                member.setCoupon(dto.getCoupon() != null ? dto.getCoupon() : BigDecimal.ZERO);
+                member.setCode(RandomUtil.randomNumbers(8));
+                member.setRemark(dto.getRemark());
+                this.save(member);
+
+                if (member.getBalance().compareTo(BigDecimal.ZERO) > 0) {
+                    UmsMemberLog log = new UmsMemberLog(); log.setMemberId(member.getId()); log.setType("BALANCE"); log.setOperateType("IMPORT"); log.setAmount(member.getBalance()); log.setAfterAmount(member.getBalance()); log.setRemark("老会员初始本金导入"); log.setCreateTime(now); umsMemberLogMapper.insert(log);
+                }
+
+                // 🌟 会员券流水入库
+                if (member.getCoupon().compareTo(BigDecimal.ZERO) > 0) {
+                    UmsMemberLog couponLog = new UmsMemberLog(); couponLog.setMemberId(member.getId()); couponLog.setType("COUPON"); couponLog.setOperateType("IMPORT"); couponLog.setAmount(member.getCoupon()); couponLog.setAfterAmount(member.getCoupon()); couponLog.setRemark("老会员初始会员券导入"); couponLog.setCreateTime(now); umsMemberLogMapper.insert(couponLog);
+                }
+            }
+
+            // 解析特权矩阵 (保持不变)
+            if (StrUtil.isNotBlank(dto.getBrandPrivileges())) {
+                Map<String, String> brandLevels = new HashMap<>();
+                String[] parts = dto.getBrandPrivileges().split(",");
+                for (String part : parts) {
+                    String[] kv = part.replace("：", ":").split(":");
+                    if (kv.length == 2) {
+                        String bName = kv[0].trim();
+                        String lCode = kv[1].trim();
+                        String bId = brandNameToIdMap.getOrDefault(bName, bName);
+                        brandLevels.put(bId, lCode);
+                    }
+                }
+                saveBrandLevels(member.getId(), brandLevels);
+            }
+        }
+    }
 }

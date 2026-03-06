@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="CompilerConfiguration">
+    <annotationProcessing>
+      <profile default="true" name="Default" enabled="true" />
+      <profile name="Maven default annotation processors profile" enabled="true">
+        <sourceOutputDir name="target/generated-sources/annotations" />
+        <sourceTestOutputDir name="target/generated-test-sources/test-annotations" />
+        <outputRelativeToContentRoot value="true" />
+        <module name="money-common-web" />
+        <module name="money-common-cache" />
+        <module name="qk-money-security" />
+        <module name="money-common-swagger" />
+        <module name="money-common-oss" />
+        <module name="money-app-api" />
+        <module name="qk-money-tenant" />
+        <module name="money-common-mail" />
+        <module name="money-common-schedule" />
+        <module name="money-app-system" />
+        <module name="money-app-biz" />
+        <module name="money-common-mybatis" />
+      </profile>
+    </annotationProcessing>
+  </component>
+</project>

@@ -35,14 +35,6 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
-/**
- * <p>
- * 订单表 服务实现类
- * </p>
- *
- * @author money
- * @since 2023-02-27
- */
 @Service
 @RequiredArgsConstructor
 @Transactional(rollbackFor = Exception.class)
@@ -52,6 +44,7 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
     private final GmsGoodsService gmsGoodsService;
     private final OmsOrderDetailService omsOrderDetailService;
     private final OmsOrderLogService omsOrderLogService;
+    private final com.money.mapper.GmsStockLogMapper gmsStockLogMapper;
 
     @Override
     public PageVO<OmsOrderVO> list(OmsOrderQueryDTO queryDTO) {
@@ -68,51 +61,57 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
 
     @Override
     public OrderCountVO countOrderAndSales(LocalDateTime startTime, LocalDateTime endTime) {
-        // 1.查询时间段内的所有订单详情
         List<OmsOrderDetail> omsOrderDetails = omsOrderDetailService.lambdaQuery()
                 .select(OmsOrderDetail::getOrderNo, OmsOrderDetail::getQuantity, OmsOrderDetail::getReturnQuantity,
                         OmsOrderDetail::getGoodsPrice, OmsOrderDetail::getPurchasePrice)
-                // 只统计已支付的订单
                 .eq(OmsOrderDetail::getStatus, OrderStatusEnum.PAID)
                 .ge(startTime != null, OmsOrderDetail::getCreateTime, startTime)
                 .le(endTime != null, OmsOrderDetail::getCreateTime, endTime)
                 .list();
-        // 2.通过去重订单详情的单号获取到订单数
         long count = omsOrderDetails.stream().map(OmsOrderDetail::getOrderNo).distinct().count();
-        // 3.计算销售额和成本
         BigDecimal saleCount = BigDecimal.ZERO;
         BigDecimal costCount = BigDecimal.ZERO;
         for (OmsOrderDetail omsOrderDetail : omsOrderDetails) {
-            // 商品数量需要减去退货的数量
             int quantity = omsOrderDetail.getQuantity() - omsOrderDetail.getReturnQuantity();
             saleCount = saleCount.add(omsOrderDetail.getGoodsPrice().multiply(new BigDecimal(quantity)));
             costCount = costCount.add(omsOrderDetail.getPurchasePrice().multiply(new BigDecimal(quantity)));
         }
-        // 4.返回 VO
         OrderCountVO vo = new OrderCountVO();
         vo.setOrderCount(count);
         vo.setSaleCount(saleCount);
         vo.setCostCount(costCount);
-        // 销售额 - 成本 = 利润
         vo.setProfit(saleCount.subtract(costCount));
         return vo;
     }
 
+    // =========================================================================
+    // 🌟 核心重构：所有订单详情的获取，必须经过这个“绝对计算中枢”！
+    // =========================================================================
     @Override
     public OrderDetailVO getOrderDetail(Long id) {
         OrderDetailVO vo = new OrderDetailVO();
         OmsOrder order = this.getById(id);
-        if (order == null) {
-            throw new BaseException("订单不存在");
-        }
-        // 订单信息
-        vo.setOrder(BeanMapUtil.to(order, OmsOrderVO::new));
-        // 会员信息
+        if (order == null) throw new BaseException("订单不存在");
+
+        OmsOrderVO orderVO = BeanMapUtil.to(order, OmsOrderVO::new);
+
+        // 🌟 贯彻解耦定律：在这里对所有的金额进行终极配平，确保前后端统一。
+        BigDecimal total = orderVO.getTotalAmount() != null ? orderVO.getTotalAmount() : BigDecimal.ZERO;
+        BigDecimal pay = orderVO.getPayAmount() != null ? orderVO.getPayAmount() : BigDecimal.ZERO;
+        BigDecimal coupon = orderVO.getCouponAmount() != null ? orderVO.getCouponAmount() : BigDecimal.ZERO;
+        BigDecimal voucher = orderVO.getUseVoucherAmount() != null ? orderVO.getUseVoucherAmount() : BigDecimal.ZERO;
+
+        // 公式兜底计算：解决历史老订单没有存“整单优惠”字段的问题
+        // 整单优惠 = 应收总价 - 实付 - 会员券 - 满减券
+        BigDecimal manual = total.subtract(pay).subtract(coupon).subtract(voucher);
+        orderVO.setManualDiscountAmount(manual.compareTo(BigDecimal.ZERO) < 0 ? BigDecimal.ZERO : manual);
+
+        // 装入统一的数据包装盒
+        vo.setOrder(orderVO);
         vo.setMember(BeanMapUtil.to(umsMemberService.getById(order.getMemberId()), UmsMemberVO::new));
-        // 订单详情
         vo.setOrderDetail(BeanMapUtil.to(omsOrderDetailService.listByOrderNo(order.getOrderNo()), OmsOrderDetailVO::new));
-        // 订单日志
         vo.setOrderLog(BeanMapUtil.to(omsOrderLogService.listByOrderId(id), OmsOrderLogVO::new));
+
         return vo;
     }
 
@@ -126,19 +125,26 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
                 int returnQty = orderDetail.getQuantity() - orderDetail.getReturnQuantity();
                 returnPrice.set(returnPrice.get().add(orderDetail.getGoodsPrice().multiply(new BigDecimal(returnQty))));
                 returnCoupon.set(returnCoupon.get().add(orderDetail.getCoupon().multiply(new BigDecimal(returnQty))));
-                // 更新库存
                 gmsGoodsService.updateStock(orderDetail.getGoodsId(), returnQty);
-                orderDetail.setReturnQuantity(orderDetail.getQuantity());
-                orderDetail.setStatus(OrderStatusEnum.RETURN.name());
+
+                com.money.entity.GmsGoods goods = gmsGoodsService.getById(orderDetail.getGoodsId());
+                com.money.entity.GmsStockLog stockLog = new com.money.entity.GmsStockLog();
+                stockLog.setGoodsId(goods.getId());
+                stockLog.setGoodsName(goods.getName());
+                stockLog.setGoodsBarcode(goods.getBarcode());
+                stockLog.setType("RETURN");
+                stockLog.setQuantity(returnQty);
+                stockLog.setAfterQuantity(goods.getStock() == null ? 0 : goods.getStock().intValue());
+                stockLog.setOrderNo(order.getOrderNo());
+                stockLog.setRemark("整单退款，商品退回仓库");
+                stockLog.setCreateTime(LocalDateTime.now());
+                gmsStockLogMapper.insert(stockLog);
             });
-            // 退款和抵用券
             umsMemberService.rebate(order.getMemberId(), returnPrice.get(), returnCoupon.get(), true);
-            // 修改订单最终销售额
             order.setFinalSalesAmount(BigDecimal.ZERO);
             order.setStatus(OrderStatusEnum.RETURN.name());
             this.updateById(order);
             omsOrderDetailService.updateBatchById(orderDetails);
-            // 订单日志
             OmsOrderLog log = new OmsOrderLog();
             log.setOrderId(order.getId());
             log.setDescription("<span style=\"color:red\">退单</span>");
@@ -148,7 +154,6 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
 
     @Override
     public void returnGoods(ReturnGoodsDTO returnGoodsDTO) {
-        // 修改明细
         Integer returnQty = returnGoodsDTO.getQuantity();
         OmsOrderDetail orderDetail = omsOrderDetailService.getById(returnGoodsDTO.getId());
         orderDetail.setReturnQuantity(orderDetail.getReturnQuantity() + returnQty);
@@ -158,22 +163,33 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
             throw new BaseException("退货数量不能超过商品数量");
         }
         omsOrderDetailService.updateById(orderDetail);
-        // 修改订单
+
         OmsOrder order = this.lambdaQuery().eq(OmsOrder::getOrderNo, orderDetail.getOrderNo()).one();
         BigDecimal returnPrice = orderDetail.getGoodsPrice().multiply(new BigDecimal(returnQty));
         BigDecimal finalSalesAmount = order.getFinalSalesAmount().subtract(returnPrice);
         order.setFinalSalesAmount(finalSalesAmount);
         this.updateById(order);
-        // 退款和抵用券
+
         BigDecimal returnCoupon = orderDetail.getCoupon().multiply(new BigDecimal(returnQty));
         umsMemberService.rebate(order.getMemberId(), returnPrice, returnCoupon, false);
-        // 更新库存
         gmsGoodsService.updateStock(orderDetail.getGoodsId(), returnQty);
-        // 订单日志
+
+        com.money.entity.GmsGoods goods = gmsGoodsService.getById(orderDetail.getGoodsId());
+        com.money.entity.GmsStockLog stockLog = new com.money.entity.GmsStockLog();
+        stockLog.setGoodsId(goods.getId());
+        stockLog.setGoodsName(goods.getName());
+        stockLog.setGoodsBarcode(goods.getBarcode());
+        stockLog.setType("RETURN");
+        stockLog.setQuantity(returnQty);
+        stockLog.setAfterQuantity(goods.getStock() == null ? 0 : goods.getStock().intValue());
+        stockLog.setOrderNo(order.getOrderNo());
+        stockLog.setRemark("单品售后退货");
+        stockLog.setCreateTime(LocalDateTime.now());
+        gmsStockLogMapper.insert(stockLog);
+
         OmsOrderLog log = new OmsOrderLog();
         log.setOrderId(order.getId());
         log.setDescription("<span style=\"color:red\">退货</span>" + orderDetail.getGoodsName() + " X " + returnQty);
         omsOrderLogService.save(log);
     }
-
 }

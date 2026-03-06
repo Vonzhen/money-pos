@@ -51,4 +51,7 @@ public interface GmsGoodsService extends IService<GmsGoods> {
      * @return {@link BigDecimal}
      */
     BigDecimal getCurrentStockValue();
+
+    // 处理 Excel 导入
+    Boolean importGoods(org.springframework.web.multipart.MultipartFile file);
 }

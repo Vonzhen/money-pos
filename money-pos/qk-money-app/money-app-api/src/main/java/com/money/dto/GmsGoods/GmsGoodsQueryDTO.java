@@ -40,4 +40,7 @@ public class GmsGoodsQueryDTO extends PageQueryRequest {
     public Map<String, String> sortKeyMap() {
         return MoneyCommUtil.sortFieldMap("sales", "createTime", "updateTime");
     }
+
+    @io.swagger.v3.oas.annotations.media.Schema(description = "是否为套餐(0普通 1套餐)")
+    private Integer isCombo;
 }
