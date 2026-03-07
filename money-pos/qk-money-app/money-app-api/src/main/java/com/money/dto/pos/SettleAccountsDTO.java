@@ -24,10 +24,9 @@ public class SettleAccountsDTO {
     @Schema(description = "订单详情")
     private List<OmsOrderDetailDTO> orderDetail;
 
-    @Schema(description = "是否免收会员券")
+    @Schema(description = "强制免收会员券开关(如果为true，则该单所有商品应扣券强制归零)")
     private Boolean waiveCoupon;
 
-    // 🌟 贯彻解耦架构：前台只管传原始输入的优惠数值，不参与计算！
     @Schema(description = "整单优惠金额")
     private BigDecimal manualDiscountAmount;
 

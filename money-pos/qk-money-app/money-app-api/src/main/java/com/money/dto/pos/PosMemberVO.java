@@ -1,5 +1,6 @@
 package com.money.dto.Pos;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import java.math.BigDecimal;
 import java.util.List;
@@ -43,14 +44,19 @@ public class PosMemberVO {
     @io.swagger.v3.oas.annotations.media.Schema(description="本金余额")
     private BigDecimal balance;
 
+    // ... 前面是你原有的 id, name, phone 等字段 ...
+
+    @Schema(description="【全新架构】多品牌等级矩阵")
+    private java.util.Map<String, String> brandLevels;
+
     // ==========================================
     // 🌟 必须加上的 3 个字段！否则前端永远收不到满减券和等级！
     // ==========================================
     @io.swagger.v3.oas.annotations.media.Schema(description="会员等级ID")
     private Long levelId;
 
-    @io.swagger.v3.oas.annotations.media.Schema(description="拥有的满减券总数")
-    private Integer couponCount;
+    @Schema(description = "满减券有效张数(统一命名)")
+    private Integer voucherCount;
 
     @io.swagger.v3.oas.annotations.media.Schema(description="具体的满减券规则列表(给下拉框用)")
     private List<MemberCouponRuleVO> couponList;

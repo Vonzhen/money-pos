@@ -3,60 +3,50 @@ package com.money.dto.Pos;
 import com.money.constant.GoodsStatus;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
-
 import java.math.BigDecimal;
+import java.util.Map;
 
-/**
- * @author : money
- * @version : 1.0.0
- * @description : pos商品VO
- * @createTime : 2022-04-14 22:06:10
- */
 @Data
 public class PosGoodsVO {
-
     private Long id;
 
-    /**
-     * 条码
-     */
+    @Schema(description = "条码")
     private String barcode;
 
-    /**
-     * 商品名称
-     */
+    @Schema(description = "商品名称")
     private String name;
 
-    /**
-     * 进价
-     */
+    @Schema(description = "品牌ID")
+    private Long brandId;
+
+    @Schema(description = "进价")
     private BigDecimal purchasePrice;
 
-    /**
-     * 售价
-     */
+    @Schema(description = "售价 (系统基准零售价)")
     private BigDecimal salePrice;
 
-    /**
-     * 会员价
-     */
+    @Schema(description = "历史遗留字段: 旧会员价")
     private BigDecimal vipPrice;
 
-    /**
-     * 用券
-     */
+    @Schema(description = "历史遗留字段: 旧用券")
     private BigDecimal coupon;
 
-    /**
-     * 库存
-     */
+    @Schema(description = "库存")
     private Long stock;
 
-    /**
-     * 状态
-     */
+    @Schema(description = "状态")
     private GoodsStatus status;
 
+    @Schema(description = "是否参与满减(1:参与, 0:不参与)")
+    private Integer isDiscountParticipable;
+
+    // 🌟 新增：套餐标识牌
+    @Schema(description = "是否套餐(1:是, 0:否)")
+    private Integer isCombo;
+
     @Schema(description = "多级会员专属价")
-    private java.util.Map<String, java.math.BigDecimal> levelPrices;
+    private Map<String, BigDecimal> levelPrices;
+
+    @Schema(description = "多级会员专属券")
+    private Map<String, BigDecimal> levelCoupons;
 }

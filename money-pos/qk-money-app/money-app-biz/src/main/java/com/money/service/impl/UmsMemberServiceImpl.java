@@ -202,17 +202,18 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
         if ("BALANCE".equals(dto.getType())) {
             member.setBalance(member.getBalance().add(dto.getAmount()));
             UmsMemberLog log = new UmsMemberLog(); log.setMemberId(member.getId()); log.setType("BALANCE"); log.setOperateType("RECHARGE");
-            log.setAmount(dto.getAmount()); log.setAfterAmount(member.getBalance()); log.setRemark(StrUtil.isNotBlank(dto.getRemark()) ? dto.getRemark() : "前台办理充值本金"); log.setCreateTime(now); umsMemberLogMapper.insert(log);
+            // 🌟 统一命名
+            log.setAmount(dto.getAmount()); log.setAfterAmount(member.getBalance()); log.setRemark(StrUtil.isNotBlank(dto.getRemark()) ? dto.getRemark() : "前台办理充值会员余额"); log.setCreateTime(now); umsMemberLogMapper.insert(log);
             if (dto.getGiftCoupon() != null && dto.getGiftCoupon().compareTo(BigDecimal.ZERO) > 0) {
                 member.setCoupon(member.getCoupon().add(dto.getGiftCoupon()));
                 UmsMemberLog giftLog = new UmsMemberLog(); giftLog.setMemberId(member.getId()); giftLog.setType("COUPON"); giftLog.setOperateType("GIFT");
-                giftLog.setAmount(dto.getGiftCoupon()); giftLog.setAfterAmount(member.getCoupon()); giftLog.setRemark("充值附送券"); giftLog.setCreateTime(now); umsMemberLogMapper.insert(giftLog);
+                giftLog.setAmount(dto.getGiftCoupon()); giftLog.setAfterAmount(member.getCoupon()); giftLog.setRemark("充值附送会员券"); giftLog.setCreateTime(now); umsMemberLogMapper.insert(giftLog);
             }
             this.updateById(member);
         } else if ("COUPON".equals(dto.getType())) {
             member.setCoupon(member.getCoupon().add(dto.getAmount()));
             UmsMemberLog log = new UmsMemberLog(); log.setMemberId(member.getId()); log.setType("COUPON"); log.setOperateType("RECHARGE");
-            log.setAmount(dto.getAmount()); log.setAfterAmount(member.getCoupon()); log.setRemark(StrUtil.isNotBlank(dto.getRemark()) ? dto.getRemark() : "前台充值会员券"); log.setCreateTime(now); umsMemberLogMapper.insert(log);
+            log.setAmount(dto.getAmount()); log.setAfterAmount(member.getCoupon()); log.setRemark(StrUtil.isNotBlank(dto.getRemark()) ? dto.getRemark() : "前台直充会员券"); log.setCreateTime(now); umsMemberLogMapper.insert(log);
             this.updateById(member);
         } else if ("VOUCHER".equals(dto.getType())) {
             if (dto.getRuleId() == null || dto.getQuantity() == null || dto.getQuantity() <= 0) throw new BaseException("发券参数错误");
@@ -240,53 +241,44 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
             if (StrUtil.isBlank(dto.getPhone())) continue;
             UmsMember member = this.lambdaQuery().eq(UmsMember::getPhone, dto.getPhone()).one();
 
-            // 如果是老会员恢复
             if (member != null) {
                 if (member.getDeleted()) {
                     member.setDeleted(false);
                     member.setName(dto.getName());
                     member.setType("MEMBER");
                     member.setBalance(dto.getBalance() != null ? dto.getBalance() : BigDecimal.ZERO);
-
-                    // 🌟 核心提取：覆盖更新会员券
                     member.setCoupon(dto.getCoupon() != null ? dto.getCoupon() : BigDecimal.ZERO);
                     member.setRemark(dto.getRemark());
                     this.updateById(member);
 
                     if (member.getBalance().compareTo(BigDecimal.ZERO) > 0) {
-                        UmsMemberLog log = new UmsMemberLog(); log.setMemberId(member.getId()); log.setType("BALANCE"); log.setOperateType("IMPORT"); log.setAmount(member.getBalance()); log.setAfterAmount(member.getBalance()); log.setRemark("老会员恢复及重新导入本金"); log.setCreateTime(now); umsMemberLogMapper.insert(log);
+                        // 🌟 统一命名
+                        UmsMemberLog log = new UmsMemberLog(); log.setMemberId(member.getId()); log.setType("BALANCE"); log.setOperateType("IMPORT"); log.setAmount(member.getBalance()); log.setAfterAmount(member.getBalance()); log.setRemark("老会员恢复及重新导入会员余额"); log.setCreateTime(now); umsMemberLogMapper.insert(log);
                     }
-
-                    // 🌟 会员券流水入库
                     if (member.getCoupon().compareTo(BigDecimal.ZERO) > 0) {
                         UmsMemberLog couponLog = new UmsMemberLog(); couponLog.setMemberId(member.getId()); couponLog.setType("COUPON"); couponLog.setOperateType("IMPORT"); couponLog.setAmount(member.getCoupon()); couponLog.setAfterAmount(member.getCoupon()); couponLog.setRemark("老会员恢复及重新导入会员券"); couponLog.setCreateTime(now); umsMemberLogMapper.insert(couponLog);
                     }
                 }
             } else {
-                // 如果是新会员
                 member = new UmsMember();
                 member.setName(dto.getName());
                 member.setPhone(dto.getPhone());
                 member.setType("MEMBER");
                 member.setBalance(dto.getBalance() != null ? dto.getBalance() : BigDecimal.ZERO);
-
-                // 🌟 核心提取：初始化新会员的会员券
                 member.setCoupon(dto.getCoupon() != null ? dto.getCoupon() : BigDecimal.ZERO);
                 member.setCode(RandomUtil.randomNumbers(8));
                 member.setRemark(dto.getRemark());
                 this.save(member);
 
                 if (member.getBalance().compareTo(BigDecimal.ZERO) > 0) {
-                    UmsMemberLog log = new UmsMemberLog(); log.setMemberId(member.getId()); log.setType("BALANCE"); log.setOperateType("IMPORT"); log.setAmount(member.getBalance()); log.setAfterAmount(member.getBalance()); log.setRemark("老会员初始本金导入"); log.setCreateTime(now); umsMemberLogMapper.insert(log);
+                    // 🌟 统一命名
+                    UmsMemberLog log = new UmsMemberLog(); log.setMemberId(member.getId()); log.setType("BALANCE"); log.setOperateType("IMPORT"); log.setAmount(member.getBalance()); log.setAfterAmount(member.getBalance()); log.setRemark("老会员初始会员余额导入"); log.setCreateTime(now); umsMemberLogMapper.insert(log);
                 }
-
-                // 🌟 会员券流水入库
                 if (member.getCoupon().compareTo(BigDecimal.ZERO) > 0) {
                     UmsMemberLog couponLog = new UmsMemberLog(); couponLog.setMemberId(member.getId()); couponLog.setType("COUPON"); couponLog.setOperateType("IMPORT"); couponLog.setAmount(member.getCoupon()); couponLog.setAfterAmount(member.getCoupon()); couponLog.setRemark("老会员初始会员券导入"); couponLog.setCreateTime(now); umsMemberLogMapper.insert(couponLog);
                 }
             }
 
-            // 解析特权矩阵 (保持不变)
             if (StrUtil.isNotBlank(dto.getBrandPrivileges())) {
                 Map<String, String> brandLevels = new HashMap<>();
                 String[] parts = dto.getBrandPrivileges().split(",");

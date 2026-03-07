@@ -11,11 +11,6 @@ import javax.validation.constraints.NotNull;
 import java.math.BigDecimal;
 import java.util.Map;
 
-/**
- * <p>
- * 商品表
- * </p>
- */
 @Data
 @Schema(description = "商品表")
 public class GmsGoodsDTO {
@@ -78,9 +73,9 @@ public class GmsGoodsDTO {
     @Schema(description = "是否参与满减(1:参与, 0:不参与)")
     private Integer isDiscountParticipable;
 
-    @io.swagger.v3.oas.annotations.media.Schema(description = "是否为套餐(0否 1是)")
+    @Schema(description = "是否为套餐(0否 1是)")
     private Integer isCombo;
 
-    @io.swagger.v3.oas.annotations.media.Schema(description = "套餐包含的子商品列表")
+    @Schema(description = "套餐包含的子商品列表")
     private java.util.List<GmsGoodsComboDTO> subGoodsList;
 }

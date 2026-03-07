@@ -79,47 +79,52 @@ public class GmsGoodsServiceImpl extends ServiceImpl<GmsGoodsMapper, GmsGoods> i
         if (!pageVO.getRecords().isEmpty()) {
             List<Long> goodsIds = pageVO.getRecords().stream().map(GmsGoodsVO::getId).collect(Collectors.toList());
 
+            // 1. 🌟 装载多维价格矩阵回显
             List<PosSkuLevelPrice> allLevelPrices = posSkuLevelPriceMapper.selectList(
                     new LambdaQueryWrapper<PosSkuLevelPrice>().in(PosSkuLevelPrice::getSkuId, goodsIds)
             );
             Map<Long, List<PosSkuLevelPrice>> priceMap = allLevelPrices.stream().collect(Collectors.groupingBy(PosSkuLevelPrice::getSkuId));
 
+            // 2. 🌟 装载套餐包含关系
+            List<GmsGoodsCombo> allCombos = gmsGoodsComboMapper.selectList(
+                    new LambdaQueryWrapper<GmsGoodsCombo>().in(GmsGoodsCombo::getComboGoodsId, goodsIds)
+            );
+            Map<Long, List<GmsGoodsCombo>> comboMap = allCombos.stream().collect(Collectors.groupingBy(GmsGoodsCombo::getComboGoodsId));
+
+            // 3. 提取所有关联子商品的名称（用于 comboDesc 展示）
+            List<Long> allSubIds = allCombos.stream().map(GmsGoodsCombo::getSubGoodsId).distinct().collect(Collectors.toList());
+            Map<Long, String> subNameMap = allSubIds.isEmpty() ? new HashMap<>() :
+                    this.listByIds(allSubIds).stream().collect(Collectors.toMap(GmsGoods::getId, GmsGoods::getName));
+
             for (GmsGoodsVO vo : pageVO.getRecords()) {
+                // 处理价格矩阵
                 List<PosSkuLevelPrice> prices = priceMap.get(vo.getId());
                 Map<String, BigDecimal> lpMap = new HashMap<>();
-                Map<String, BigDecimal> lcMap = new HashMap<>(); // 🌟 新增：装载券额的 Map
-
+                Map<String, BigDecimal> lcMap = new HashMap<>();
                 if (prices != null) {
                     for (PosSkuLevelPrice p : prices) {
                         lpMap.put(p.getLevelId(), p.getMemberPrice());
-                        lcMap.put(p.getLevelId(), p.getMemberCoupon()); // 🌟 提取专属券额
+                        lcMap.put(p.getLevelId(), p.getMemberCoupon());
                     }
                 }
                 vo.setLevelPrices(lpMap);
-                vo.setLevelCoupons(lcMap); // 🌟 统一返回给前端
+                vo.setLevelCoupons(lcMap);
 
-                if (queryDTO.getIsCombo() != null && queryDTO.getIsCombo() == 1) {
-                    List<GmsGoodsCombo> comboList = gmsGoodsComboMapper.selectList(new LambdaQueryWrapper<GmsGoodsCombo>().in(GmsGoodsCombo::getComboGoodsId, goodsIds));
-                    if (!comboList.isEmpty()) {
-                        List<Long> subGoodsIds = comboList.stream().map(GmsGoodsCombo::getSubGoodsId).distinct().collect(Collectors.toList());
-                        Map<Long, String> subGoodsNameMap = this.listByIds(subGoodsIds).stream().collect(Collectors.toMap(GmsGoods::getId, GmsGoods::getName));
+                // 🌟 处理套餐明细与描述文字
+                List<GmsGoodsCombo> mySubItems = comboMap.get(vo.getId());
+                if (mySubItems != null && !mySubItems.isEmpty()) {
+                    String desc = mySubItems.stream()
+                            .map(c -> subNameMap.getOrDefault(c.getSubGoodsId(), "未知") + "x" + c.getSubGoodsQty())
+                            .collect(Collectors.joining(", "));
+                    vo.setComboDesc(desc);
 
-                        String comboDesc = comboList.stream()
-                                .filter(c -> c.getComboGoodsId().equals(vo.getId()))
-                                .map(c -> subGoodsNameMap.getOrDefault(c.getSubGoodsId(), "未知商品") + " x" + c.getSubGoodsQty())
-                                .collect(Collectors.joining(", "));
-                        vo.setComboDesc(comboDesc);
-
-                        List<GmsGoodsComboDTO> subList = comboList.stream()
-                                .filter(c -> c.getComboGoodsId().equals(vo.getId()))
-                                .map(c -> {
-                                    GmsGoodsComboDTO dto = new GmsGoodsComboDTO();
-                                    dto.setSubGoodsId(c.getSubGoodsId());
-                                    dto.setSubGoodsQty(c.getSubGoodsQty());
-                                    return dto;
-                                }).collect(Collectors.toList());
-                        vo.setSubGoodsList(subList);
-                    }
+                    List<GmsGoodsComboDTO> dtoList = mySubItems.stream().map(c -> {
+                        GmsGoodsComboDTO dto = new GmsGoodsComboDTO();
+                        dto.setSubGoodsId(c.getSubGoodsId());
+                        dto.setSubGoodsQty(c.getSubGoodsQty());
+                        return dto;
+                    }).collect(Collectors.toList());
+                    vo.setSubGoodsList(dtoList);
                 }
             }
         }
@@ -139,16 +144,13 @@ public class GmsGoodsServiceImpl extends ServiceImpl<GmsGoodsMapper, GmsGoods> i
             gmsGoods.setMnemonicCode(PinyinUtil.getFirstLetter(gmsGoods.getName()));
         }
 
-        if (pic != null) {
-            String picUrl = localOSS.upload(pic, FolderPath.builder().cd("goods").build(), FileNameStrategy.TIMESTAMP);
-            gmsGoods.setPic(picUrl);
-        }
         gmsBrandService.updateGoodsCount(gmsGoods.getBrandId(), 1);
         gmsGoodsCategoryService.updateGoodsCount(gmsGoods.getCategoryId(), 1);
 
         this.save(gmsGoods);
-        // 🌟 将价格和券额同时传入底层落库
+        // 保存矩阵定价
         saveLevelPrices(gmsGoods.getId(), addDTO.getLevelPrices(), addDTO.getLevelCoupons());
+        // 保存套餐明细
         saveComboDetails(gmsGoods.getId(), addDTO.getIsCombo(), addDTO.getSubGoodsList());
     }
 
@@ -175,29 +177,24 @@ public class GmsGoodsServiceImpl extends ServiceImpl<GmsGoodsMapper, GmsGoods> i
             gmsGoods.setMnemonicCode(PinyinUtil.getFirstLetter(gmsGoods.getName()));
         }
 
+        // 自动切换上下架状态逻辑
         if (GoodsStatus.SOLD_OUT.name().equals(gmsGoods.getStatus()) && updateDTO.getStock() > 0) gmsGoods.setStatus(GoodsStatus.SALE.name());
         if (GoodsStatus.SALE.name().equals(gmsGoods.getStatus()) && updateDTO.getStock() <= 0) gmsGoods.setStatus(GoodsStatus.SOLD_OUT.name());
 
-        if (pic != null) {
-            localOSS.delete(gmsGoods.getPic());
-            String picUrl = localOSS.upload(pic, FolderPath.builder().cd("goods").build(), FileNameStrategy.TIMESTAMP);
-            gmsGoods.setPic(picUrl);
-        }
         this.updateById(gmsGoods);
 
+        // 重置矩阵价格
         posSkuLevelPriceMapper.delete(new LambdaQueryWrapper<PosSkuLevelPrice>().eq(PosSkuLevelPrice::getSkuId, gmsGoods.getId()));
-        // 🌟 更新时同步传入价格和券额
         saveLevelPrices(gmsGoods.getId(), updateDTO.getLevelPrices(), updateDTO.getLevelCoupons());
 
+        // 重置套餐明细
         gmsGoodsComboMapper.delete(new LambdaQueryWrapper<GmsGoodsCombo>().eq(GmsGoodsCombo::getComboGoodsId, gmsGoods.getId()));
         saveComboDetails(gmsGoods.getId(), updateDTO.getIsCombo(), updateDTO.getSubGoodsList());
     }
 
     @Override
     public void delete(Set<Long> ids) {
-        List<GmsGoods> gmsGoodsList = this.listByIds(ids);
         this.removeByIds(ids);
-        gmsGoodsList.forEach(gmsGoods -> { if (StrUtil.isNotBlank(gmsGoods.getPic())) localOSS.delete(gmsGoods.getPic()); });
         posSkuLevelPriceMapper.delete(new LambdaQueryWrapper<PosSkuLevelPrice>().in(PosSkuLevelPrice::getSkuId, ids));
         gmsGoodsComboMapper.delete(new LambdaQueryWrapper<GmsGoodsCombo>().in(GmsGoodsCombo::getComboGoodsId, ids));
     }
@@ -206,7 +203,6 @@ public class GmsGoodsServiceImpl extends ServiceImpl<GmsGoodsMapper, GmsGoods> i
     @Override public void updateStock(Long goodsId, Integer qty) { }
     @Override public BigDecimal getCurrentStockValue() { return BigDecimal.ZERO; }
 
-    // 🌟 核心升级：同时处理价格与券额落库
     private void saveLevelPrices(Long skuId, Map<String, BigDecimal> levelPrices, Map<String, BigDecimal> levelCoupons) {
         if (levelPrices != null && !levelPrices.isEmpty()) {
             levelPrices.forEach((levelDictValue, price) -> {
@@ -216,14 +212,12 @@ public class GmsGoodsServiceImpl extends ServiceImpl<GmsGoodsMapper, GmsGoods> i
                     levelPrice.setLevelId(levelDictValue);
                     levelPrice.setMemberPrice(price);
 
-                    // 提取对应的券额，如果没有传，则默认写入 0
                     BigDecimal coupon = BigDecimal.ZERO;
                     if (levelCoupons != null && levelCoupons.containsKey(levelDictValue)) {
-                        coupon = levelCoupons.get(levelDictValue);
-                        if (coupon == null) coupon = BigDecimal.ZERO;
+                        BigDecimal userCoupon = levelCoupons.get(levelDictValue);
+                        coupon = userCoupon != null ? userCoupon : BigDecimal.ZERO;
                     }
                     levelPrice.setMemberCoupon(coupon);
-
                     posSkuLevelPriceMapper.insert(levelPrice);
                 }
             });
@@ -249,44 +243,33 @@ public class GmsGoodsServiceImpl extends ServiceImpl<GmsGoodsMapper, GmsGoods> i
             List<GmsGoodsExcelDTO> list = EasyExcel.read(file.getInputStream()).head(GmsGoodsExcelDTO.class).sheet().doReadSync();
             for (GmsGoodsExcelDTO dto : list) {
                 if (StrUtil.isBlank(dto.getBarcode()) || StrUtil.isBlank(dto.getName())) continue;
-                String mnemonic = PinyinUtil.getFirstLetter(dto.getName());
 
-                Map<String, BigDecimal> levelPriceMap = new HashMap<>();
-                Map<String, BigDecimal> levelCouponMap = new HashMap<>(); // 导入场景默认无券，后续可再扩充
+                GmsGoods goods = this.lambdaQuery().eq(GmsGoods::getBarcode, dto.getBarcode()).one();
+                boolean isNew = goods == null;
+                if (isNew) goods = new GmsGoods();
 
-                if (dto.getGoldPrice() != null) levelPriceMap.put("HJ_VIP", dto.getGoldPrice());
-                if (dto.getPlatinumPrice() != null) levelPriceMap.put("BJ_VIP", dto.getPlatinumPrice());
-                if (dto.getInternalPrice() != null) levelPriceMap.put("INNER", dto.getInternalPrice());
+                goods.setBarcode(dto.getBarcode());
+                goods.setName(dto.getName());
+                goods.setMnemonicCode(PinyinUtil.getFirstLetter(dto.getName()));
+                goods.setPurchasePrice(dto.getPurchasePrice() != null ? dto.getPurchasePrice() : BigDecimal.ZERO);
+                goods.setSalePrice(dto.getSalePrice() != null ? dto.getSalePrice() : BigDecimal.ZERO);
+                goods.setStock(dto.getStock() != null ? dto.getStock().longValue() : 0L);
+                goods.setIsCombo(0);
 
-                GmsGoods existGoods = this.lambdaQuery().eq(GmsGoods::getBarcode, dto.getBarcode()).one();
-                if (existGoods != null) {
-                    existGoods.setName(dto.getName());
-                    if (dto.getPurchasePrice() != null) existGoods.setPurchasePrice(dto.getPurchasePrice());
-                    if (dto.getSalePrice() != null) existGoods.setSalePrice(dto.getSalePrice());
-                    if (dto.getVipPrice() != null) existGoods.setVipPrice(dto.getVipPrice());
-                    if (dto.getStock() != null) existGoods.setStock(dto.getStock().longValue());
-                    existGoods.setMnemonicCode(mnemonic);
-                    this.updateById(existGoods);
-                    posSkuLevelPriceMapper.delete(new LambdaQueryWrapper<PosSkuLevelPrice>().eq(PosSkuLevelPrice::getSkuId, existGoods.getId()));
-                    saveLevelPrices(existGoods.getId(), levelPriceMap, levelCouponMap);
-                } else {
-                    GmsGoods newGoods = new GmsGoods();
-                    newGoods.setBarcode(dto.getBarcode());
-                    newGoods.setName(dto.getName());
-                    newGoods.setPurchasePrice(dto.getPurchasePrice() != null ? dto.getPurchasePrice() : BigDecimal.ZERO);
-                    newGoods.setSalePrice(dto.getSalePrice() != null ? dto.getSalePrice() : BigDecimal.ZERO);
-                    newGoods.setVipPrice(dto.getVipPrice() != null ? dto.getVipPrice() : BigDecimal.ZERO);
-                    newGoods.setStock(dto.getStock() != null ? dto.getStock().longValue() : 0L);
-                    newGoods.setMnemonicCode(mnemonic);
-                    newGoods.setIsCombo(0);
-                    this.save(newGoods);
-                    saveLevelPrices(newGoods.getId(), levelPriceMap, levelCouponMap);
-                }
+                if (isNew) this.save(goods); else this.updateById(goods);
+
+                // 导入场景的价格矩阵处理（如 Excel 中有固定列名对应的等级）
+                Map<String, BigDecimal> lp = new HashMap<>();
+                if (dto.getGoldPrice() != null) lp.put("HJ_VIP", dto.getGoldPrice());
+                if (dto.getPlatinumPrice() != null) lp.put("BJ_VIP", dto.getPlatinumPrice());
+
+                posSkuLevelPriceMapper.delete(new LambdaQueryWrapper<PosSkuLevelPrice>().eq(PosSkuLevelPrice::getSkuId, goods.getId()));
+                saveLevelPrices(goods.getId(), lp, null);
             }
             return true;
         } catch (Exception e) {
             log.error("Excel导入失败: ", e);
-            throw new BaseException("导入失败，请检查Excel文件格式是否正确");
+            throw new BaseException("导入失败，Excel 格式有误");
         }
     }
 }

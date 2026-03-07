@@ -23,9 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
@@ -45,6 +43,12 @@ public class PosServiceImpl implements PosService {
     private final UmsMemberLogMapper umsMemberLogMapper;
     private final com.money.mapper.GmsStockLogMapper gmsStockLogMapper;
 
+    private final SysBrandConfigMapper sysBrandConfigMapper;
+    private final UmsMemberBrandLevelMapper umsMemberBrandLevelMapper;
+
+    // 🌟 新增：为了拆解套餐扣库存，必须注入这个 Mapper
+    private final GmsGoodsComboMapper gmsGoodsComboMapper;
+
     @Override
     public List<PosGoodsVO> listGoods(String barcode) {
         List<GmsGoods> gmsGoodsList = gmsGoodsService.lambdaQuery().like(StrUtil.isNotBlank(barcode), GmsGoods::getBarcode, barcode).list();
@@ -53,10 +57,21 @@ public class PosServiceImpl implements PosService {
         if (!posGoodsVOS.isEmpty()) {
             List<Long> skuIds = posGoodsVOS.stream().map(PosGoodsVO::getId).collect(Collectors.toList());
             List<PosSkuLevelPrice> levelPrices = posSkuLevelPriceMapper.selectList(new LambdaQueryWrapper<PosSkuLevelPrice>().in(PosSkuLevelPrice::getSkuId, skuIds));
+            Map<Long, List<PosSkuLevelPrice>> skuPriceMap = levelPrices.stream().collect(Collectors.groupingBy(PosSkuLevelPrice::getSkuId));
 
-            Map<Long, Map<String, BigDecimal>> priceMap = levelPrices.stream()
-                    .collect(Collectors.groupingBy(PosSkuLevelPrice::getSkuId, Collectors.toMap(PosSkuLevelPrice::getLevelId, PosSkuLevelPrice::getMemberPrice)));
-            posGoodsVOS.forEach(vo -> vo.setLevelPrices(priceMap.getOrDefault(vo.getId(), new HashMap<>())));
+            for (PosGoodsVO vo : posGoodsVOS) {
+                Map<String, BigDecimal> priceMap = new HashMap<>();
+                Map<String, BigDecimal> couponMap = new HashMap<>();
+                List<PosSkuLevelPrice> prices = skuPriceMap.get(vo.getId());
+                if (prices != null) {
+                    for (PosSkuLevelPrice p : prices) {
+                        priceMap.put(p.getLevelId(), p.getMemberPrice());
+                        couponMap.put(p.getLevelId(), p.getMemberCoupon() != null ? p.getMemberCoupon() : BigDecimal.ZERO);
+                    }
+                }
+                vo.setLevelPrices(priceMap);
+                vo.setLevelCoupons(couponMap);
+            }
         }
         return posGoodsVOS;
     }
@@ -69,31 +84,50 @@ public class PosServiceImpl implements PosService {
 
         if (!posMemberVOS.isEmpty()) {
             List<Long> memberIds = posMemberVOS.stream().map(PosMemberVO::getId).collect(Collectors.toList());
-            List<PosMemberCoupon> allUnusedCoupons = posMemberCouponMapper.selectList(new LambdaQueryWrapper<PosMemberCoupon>().in(PosMemberCoupon::getMemberId, memberIds).ne(PosMemberCoupon::getStatus, "USED"));
-            for (PosMemberVO vo : posMemberVOS) vo.setCouponCount(0);
 
+            List<UmsMemberBrandLevel> allBrandLevels = umsMemberBrandLevelMapper.selectList(
+                    new LambdaQueryWrapper<UmsMemberBrandLevel>().in(UmsMemberBrandLevel::getMemberId, memberIds)
+            );
+            Map<Long, List<UmsMemberBrandLevel>> blMap = allBrandLevels.stream().collect(Collectors.groupingBy(UmsMemberBrandLevel::getMemberId));
+
+            List<PosMemberCoupon> allUnusedCoupons = posMemberCouponMapper.selectList(
+                    new LambdaQueryWrapper<PosMemberCoupon>()
+                            .in(PosMemberCoupon::getMemberId, memberIds)
+                            .eq(PosMemberCoupon::getStatus, "UNUSED")
+            );
+
+            final Map<Long, PosCouponRule> ruleMap = new HashMap<>();
             if (!allUnusedCoupons.isEmpty()) {
                 List<Long> ruleIds = allUnusedCoupons.stream().map(PosMemberCoupon::getRuleId).distinct().collect(Collectors.toList());
-                Map<Long, PosCouponRule> ruleMap = posCouponRuleMapper.selectBatchIds(ruleIds).stream().collect(Collectors.toMap(PosCouponRule::getId, rule -> rule));
+                ruleMap.putAll(posCouponRuleMapper.selectBatchIds(ruleIds).stream().collect(Collectors.toMap(PosCouponRule::getId, rule -> rule)));
+            }
 
-                for (PosMemberVO vo : posMemberVOS) {
-                    List<PosMemberCoupon> hisCoupons = allUnusedCoupons.stream().filter(c -> c.getMemberId().equals(vo.getId())).collect(Collectors.toList());
-                    vo.setCouponCount(hisCoupons.size());
-
-                    if (!hisCoupons.isEmpty()) {
-                        Map<Long, Long> ruleCountMap = hisCoupons.stream().collect(Collectors.groupingBy(PosMemberCoupon::getRuleId, Collectors.counting()));
-                        List<PosMemberVO.MemberCouponRuleVO> ruleVOList = ruleCountMap.entrySet().stream().filter(entry -> ruleMap.containsKey(entry.getKey())).map(entry -> {
-                            PosCouponRule rule = ruleMap.get(entry.getKey());
-                            PosMemberVO.MemberCouponRuleVO ruleVO = new PosMemberVO.MemberCouponRuleVO();
-                            ruleVO.setRuleId(rule.getId());
-                            ruleVO.setName("满" + rule.getThresholdAmount().stripTrailingZeros().toPlainString() + "减" + rule.getDiscountAmount().stripTrailingZeros().toPlainString());
-                            ruleVO.setThreshold(rule.getThresholdAmount());
-                            ruleVO.setDeduction(rule.getDiscountAmount());
-                            ruleVO.setAvailableCount(entry.getValue().intValue());
-                            return ruleVO;
-                        }).collect(Collectors.toList());
-                        vo.setCouponList(ruleVOList);
+            for (PosMemberVO vo : posMemberVOS) {
+                List<UmsMemberBrandLevel> levels = blMap.get(vo.getId());
+                Map<String, String> levelMap = new HashMap<>();
+                if (levels != null) {
+                    for (UmsMemberBrandLevel bl : levels) {
+                        levelMap.put(bl.getBrand(), bl.getLevelCode());
                     }
+                }
+                vo.setBrandLevels(levelMap);
+
+                List<PosMemberCoupon> hisCoupons = allUnusedCoupons.stream().filter(c -> c.getMemberId().equals(vo.getId())).collect(Collectors.toList());
+                vo.setVoucherCount(hisCoupons.size());
+
+                if (!hisCoupons.isEmpty()) {
+                    Map<Long, Long> ruleCountMap = hisCoupons.stream().collect(Collectors.groupingBy(PosMemberCoupon::getRuleId, Collectors.counting()));
+                    List<PosMemberVO.MemberCouponRuleVO> ruleVOList = ruleCountMap.entrySet().stream().filter(entry -> ruleMap.containsKey(entry.getKey())).map(entry -> {
+                        PosCouponRule rule = ruleMap.get(entry.getKey());
+                        PosMemberVO.MemberCouponRuleVO ruleVO = new PosMemberVO.MemberCouponRuleVO();
+                        ruleVO.setRuleId(rule.getId());
+                        ruleVO.setName("满" + rule.getThresholdAmount().stripTrailingZeros().toPlainString() + "减" + rule.getDiscountAmount().stripTrailingZeros().toPlainString());
+                        ruleVO.setThreshold(rule.getThresholdAmount());
+                        ruleVO.setDeduction(rule.getDiscountAmount());
+                        ruleVO.setAvailableCount(entry.getValue().intValue());
+                        return ruleVO;
+                    }).collect(Collectors.toList());
+                    vo.setCouponList(ruleVOList);
                 }
             }
         }
@@ -110,46 +144,112 @@ public class PosServiceImpl implements PosService {
         Long memberId = settleAccountsDTO.getMember();
         boolean isVip = memberId != null;
 
-        // --- 1. 组装明细，提取所有的基础财务数据 ---
+        // ==========================================
+        // 🌟 核心优化：批量预加载所有数据，消灭 N+1 查询
+        // ==========================================
+        List<Long> goodsIds = settleAccountsDTO.getOrderDetail().stream().map(OmsOrderDetailDTO::getGoodsId).collect(Collectors.toList());
+        Map<Long, GmsGoods> goodsMap = gmsGoodsService.listByIds(goodsIds).stream().collect(Collectors.toMap(GmsGoods::getId, g -> g));
+
+        Set<String> brandIdSet = goodsMap.values().stream()
+                .map(g -> g.getBrandId() != null ? String.valueOf(g.getBrandId()) : "0")
+                .collect(Collectors.toSet());
+
+        // 1. 预加载品牌策略
+        Map<String, Boolean> brandCouponStrategyMap = new HashMap<>();
+        if (!brandIdSet.isEmpty()) {
+            List<SysBrandConfig> configs = sysBrandConfigMapper.selectList(new LambdaQueryWrapper<SysBrandConfig>().in(SysBrandConfig::getBrand, brandIdSet));
+            for (SysBrandConfig config : configs) {
+                brandCouponStrategyMap.put(config.getBrand(), config.getCouponEnabled());
+            }
+        }
+
+        // 2. 预加载会员在这个购物车所有品牌的特权等级
+        Map<String, String> memberBrandLevels = new HashMap<>();
+        if (isVip && !brandIdSet.isEmpty()) {
+            List<UmsMemberBrandLevel> brandLevels = umsMemberBrandLevelMapper.selectList(
+                    new LambdaQueryWrapper<UmsMemberBrandLevel>().eq(UmsMemberBrandLevel::getMemberId, memberId).in(UmsMemberBrandLevel::getBrand, brandIdSet)
+            );
+            for (UmsMemberBrandLevel bl : brandLevels) {
+                memberBrandLevels.put(bl.getBrand(), bl.getLevelCode());
+            }
+        }
+
+        // 3. 预加载这些商品的所有矩阵价格
+        Map<Long, Map<String, PosSkuLevelPrice>> goodsLevelPriceMap = new HashMap<>();
+        if (!goodsIds.isEmpty()) {
+            List<PosSkuLevelPrice> prices = posSkuLevelPriceMapper.selectList(new LambdaQueryWrapper<PosSkuLevelPrice>().in(PosSkuLevelPrice::getSkuId, goodsIds));
+            for (PosSkuLevelPrice p : prices) {
+                goodsLevelPriceMap.computeIfAbsent(p.getSkuId(), k -> new HashMap<>()).put(p.getLevelId(), p);
+            }
+        }
+
         BigDecimal totalAmount = BigDecimal.ZERO;
         BigDecimal couponAmount = BigDecimal.ZERO;
-        BigDecimal costAmount = BigDecimal.ZERO; // 🌟 修复：补回成本计算
+        BigDecimal costAmount = BigDecimal.ZERO;
+        BigDecimal participatingAmount = BigDecimal.ZERO;
+        List<OmsOrderDetail> orderDetails = new ArrayList<>();
 
-        List<OmsOrderDetail> orderDetails = settleAccountsDTO.getOrderDetail().stream().map(dto -> {
-            GmsGoods goods = gmsGoodsService.getById(dto.getGoodsId());
+        // ==========================================
+        // 💰 开始光速计费循环 (纯内存计算)
+        // ==========================================
+        for (OmsOrderDetailDTO dto : settleAccountsDTO.getOrderDetail()) {
+            GmsGoods goods = goodsMap.get(dto.getGoodsId());
+            if (goods == null) throw new BaseException("购物车中存在无效商品，请重新扫码");
+
+            String brandIdStr = goods.getBrandId() != null ? String.valueOf(goods.getBrandId()) : "0";
+            Boolean isCouponEnabled = brandCouponStrategyMap.getOrDefault(brandIdStr, true);
+            String levelCode = isVip ? memberBrandLevels.get(brandIdStr) : null;
+
+            BigDecimal unitBasePrice = goods.getSalePrice();
+            BigDecimal unitCoupon = BigDecimal.ZERO;
+
+            if (StrUtil.isNotBlank(levelCode) && goodsLevelPriceMap.containsKey(goods.getId())) {
+                PosSkuLevelPrice levelPrice = goodsLevelPriceMap.get(goods.getId()).get(levelCode);
+                if (levelPrice != null) {
+                    if (isCouponEnabled) {
+                        unitBasePrice = goods.getSalePrice();
+                        unitCoupon = levelPrice.getMemberCoupon() != null ? levelPrice.getMemberCoupon() : BigDecimal.ZERO;
+                    } else {
+                        unitBasePrice = levelPrice.getMemberPrice() != null ? levelPrice.getMemberPrice() : goods.getSalePrice();
+                        unitCoupon = BigDecimal.ZERO;
+                    }
+                }
+            }
+
+            if (Boolean.TRUE.equals(settleAccountsDTO.getWaiveCoupon())) {
+                unitCoupon = BigDecimal.ZERO;
+            }
+
             OmsOrderDetail detail = new OmsOrderDetail();
             detail.setOrderNo(orderNo);
             detail.setStatus(OrderStatusEnum.PAID.name());
             detail.setGoodsId(goods.getId());
             detail.setGoodsBarcode(goods.getBarcode());
             detail.setGoodsName(goods.getName());
-            detail.setSalePrice(goods.getSalePrice());
+
+            detail.setSalePrice(unitBasePrice);
             detail.setPurchasePrice(goods.getPurchasePrice() == null ? BigDecimal.ZERO : goods.getPurchasePrice());
             detail.setVipPrice(goods.getVipPrice());
             detail.setQuantity(dto.getQuantity());
-            detail.setGoodsPrice(dto.getGoodsPrice());
 
-            if (isVip && !Boolean.TRUE.equals(settleAccountsDTO.getWaiveCoupon())) {
-                BigDecimal dynamicCoupon = goods.getSalePrice().subtract(dto.getGoodsPrice());
-                detail.setCoupon(dynamicCoupon.compareTo(BigDecimal.ZERO) > 0 ? dynamicCoupon : BigDecimal.ZERO);
-            } else {
-                detail.setCoupon(BigDecimal.ZERO);
-            }
-            return detail;
-        }).collect(Collectors.toList());
+            BigDecimal finalGoodsPrice = unitBasePrice.subtract(unitCoupon);
+            detail.setGoodsPrice(finalGoodsPrice);
+            detail.setCoupon(unitCoupon);
+            orderDetails.add(detail);
 
-        for (OmsOrderDetail detail : orderDetails) {
             BigDecimal qty = new BigDecimal(detail.getQuantity());
-            totalAmount = totalAmount.add(detail.getSalePrice().multiply(qty));
-            couponAmount = couponAmount.add(detail.getCoupon().multiply(qty));
-            costAmount = costAmount.add(detail.getPurchasePrice().multiply(qty)); // 🌟 修复：累加进货成本
+            totalAmount = totalAmount.add(unitBasePrice.multiply(qty));
+            couponAmount = couponAmount.add(unitCoupon.multiply(qty));
+            costAmount = costAmount.add(detail.getPurchasePrice().multiply(qty));
+
+            if (goods.getIsDiscountParticipable() != null && goods.getIsDiscountParticipable() == 1) {
+                participatingAmount = participatingAmount.add(finalGoodsPrice.multiply(qty));
+            }
         }
 
         order.setTotalAmount(totalAmount);
         order.setCouponAmount(couponAmount);
-        order.setCostAmount(costAmount); // 🌟 修复：将成本填入订单主表
-
-        // --- 2. 满减与会员卡逻辑 ---
+        order.setCostAmount(costAmount);
         order.setVip(false);
         BigDecimal voucherAmount = BigDecimal.ZERO;
         UmsMember member = null;
@@ -166,10 +266,9 @@ public class PosServiceImpl implements PosService {
             order.setDistrict(member.getDistrict());
             order.setAddress(member.getAddress());
 
-            // 扣除会员券账户余额
             if (couponAmount.compareTo(BigDecimal.ZERO) > 0) {
                 BigDecimal consumeCoupon = member.getCoupon().subtract(couponAmount);
-                if (consumeCoupon.compareTo(BigDecimal.ZERO) < 0) throw new BaseException("抵扣会员券余额不足");
+                if (consumeCoupon.compareTo(BigDecimal.ZERO) < 0) throw new BaseException("顾客账户内【会员券】余额不足！需扣: " + couponAmount);
                 member.setCoupon(consumeCoupon);
 
                 UmsMemberLog couponLog = new UmsMemberLog();
@@ -179,17 +278,21 @@ public class PosServiceImpl implements PosService {
                 couponLog.setAmount(couponAmount.negate());
                 couponLog.setAfterAmount(member.getCoupon());
                 couponLog.setOrderNo(orderNo);
-                couponLog.setRemark("订单抵扣会员券");
+                couponLog.setRemark("订单自动抵扣关联品牌会员券");
                 couponLog.setCreateTime(now);
                 umsMemberLogMapper.insert(couponLog);
             }
 
-            // 核销满减券
             if (settleAccountsDTO.getUsedCouponRuleId() != null && settleAccountsDTO.getUsedCouponCount() != null && settleAccountsDTO.getUsedCouponCount() > 0) {
                 Long ruleId = settleAccountsDTO.getUsedCouponRuleId();
                 Integer usedCount = settleAccountsDTO.getUsedCouponCount();
                 PosCouponRule rule = posCouponRuleMapper.selectById(ruleId);
                 if (rule == null) throw new BaseException("满减券异常或已停用");
+
+                BigDecimal requiredThreshold = rule.getThresholdAmount().multiply(new BigDecimal(usedCount));
+                if (participatingAmount.compareTo(requiredThreshold) < 0) {
+                    throw new BaseException("购物车中【参与活动】的商品总额未达到用券门槛！");
+                }
 
                 List<PosMemberCoupon> availableCoupons = posMemberCouponMapper.selectList(new LambdaQueryWrapper<PosMemberCoupon>().eq(PosMemberCoupon::getMemberId, memberId).eq(PosMemberCoupon::getRuleId, ruleId).eq(PosMemberCoupon::getStatus, "UNUSED").last("LIMIT " + usedCount));
                 if (availableCoupons.size() < usedCount) throw new BaseException("卡包内满减券可用张数不足！");
@@ -211,25 +314,21 @@ public class PosServiceImpl implements PosService {
                 voucherLog.setAmount(BigDecimal.valueOf(-usedCount));
                 voucherLog.setAfterAmount(BigDecimal.valueOf(remainVouchers));
                 voucherLog.setOrderNo(orderNo);
-                voucherLog.setRemark("核销满减券");
+                voucherLog.setRemark("核销满减优惠券");
                 voucherLog.setCreateTime(now);
                 umsMemberLogMapper.insert(voucherLog);
             }
         }
         order.setUseVoucherAmount(voucherAmount);
 
-        // --- 3. 🌟 贯彻解耦定律：后端的绝对财务配平中心 ---
         BigDecimal manualDiscount = settleAccountsDTO.getManualDiscountAmount() != null ? settleAccountsDTO.getManualDiscountAmount() : BigDecimal.ZERO;
         order.setManualDiscountAmount(manualDiscount);
 
-        // 终极公式：实付 = 总价 - 会员券 - 满减券 - 整单优惠
         BigDecimal finalPayAmount = totalAmount.subtract(couponAmount).subtract(voucherAmount).subtract(manualDiscount);
         if (finalPayAmount.compareTo(BigDecimal.ZERO) < 0) finalPayAmount = BigDecimal.ZERO;
 
         order.setPayAmount(finalPayAmount);
-        order.setFinalSalesAmount(finalPayAmount); // 🌟 修复：最终销售额落库
-
-        // --- 4. 落地保存 ---
+        order.setFinalSalesAmount(finalPayAmount);
         order.setStatus(OrderStatusEnum.PAID.name());
         order.setPaymentTime(now);
         omsOrderService.save(order);
@@ -247,22 +346,63 @@ public class PosServiceImpl implements PosService {
                 if ("BALANCE".equals(item.getPayMethodCode())) actualBalanceCost = actualBalanceCost.add(item.getPayAmount());
             }
         }
-
         omsOrderDetailService.saveBatch(orderDetails);
+
+        // ==========================================
+        // 📦 修复扣库地雷：判断套餐并拆解子件扣除
+        // ==========================================
+        List<Long> comboGoodsIds = goodsMap.values().stream().filter(g -> g.getIsCombo() != null && g.getIsCombo() == 1).map(GmsGoods::getId).collect(Collectors.toList());
+        Map<Long, List<GmsGoodsCombo>> comboMap = new HashMap<>();
+        if (!comboGoodsIds.isEmpty()) {
+            List<GmsGoodsCombo> allCombos = gmsGoodsComboMapper.selectList(new LambdaQueryWrapper<GmsGoodsCombo>().in(GmsGoodsCombo::getComboGoodsId, comboGoodsIds));
+            comboMap = allCombos.stream().collect(Collectors.groupingBy(GmsGoodsCombo::getComboGoodsId));
+        }
+
         for (OmsOrderDetail detail : orderDetails) {
-            gmsGoodsService.sell(detail.getGoodsId(), detail.getQuantity());
-            GmsGoods goods = gmsGoodsService.getById(detail.getGoodsId());
-            com.money.entity.GmsStockLog stockLog = new com.money.entity.GmsStockLog();
-            stockLog.setGoodsId(goods.getId());
-            stockLog.setGoodsName(goods.getName());
-            stockLog.setGoodsBarcode(goods.getBarcode());
-            stockLog.setType("SALE");
-            stockLog.setQuantity(-detail.getQuantity());
-            stockLog.setAfterQuantity(goods.getStock() == null ? 0 : goods.getStock().intValue());
-            stockLog.setOrderNo(orderNo);
-            stockLog.setRemark("前台收银售出");
-            stockLog.setCreateTime(now);
-            gmsStockLogMapper.insert(stockLog);
+            GmsGoods goods = goodsMap.get(detail.getGoodsId());
+
+            if (goods.getIsCombo() != null && goods.getIsCombo() == 1) {
+                // 拆解套餐，扣减真实子件库存
+                List<GmsGoodsCombo> combos = comboMap.get(goods.getId());
+                if (combos != null && !combos.isEmpty()) {
+                    for (GmsGoodsCombo combo : combos) {
+                        GmsGoods subGoods = gmsGoodsService.getById(combo.getSubGoodsId());
+                        if (subGoods != null) {
+                            int deductQty = detail.getQuantity() * combo.getSubGoodsQty();
+                            subGoods.setStock((subGoods.getStock() == null ? 0 : subGoods.getStock()) - deductQty);
+                            gmsGoodsService.updateById(subGoods);
+
+                            com.money.entity.GmsStockLog stockLog = new com.money.entity.GmsStockLog();
+                            stockLog.setGoodsId(subGoods.getId());
+                            stockLog.setGoodsName(subGoods.getName() + " (套餐:" + goods.getName() + " 子件)");
+                            stockLog.setGoodsBarcode(subGoods.getBarcode());
+                            stockLog.setType("SALE");
+                            stockLog.setQuantity(-deductQty);
+                            stockLog.setAfterQuantity(subGoods.getStock().intValue());
+                            stockLog.setOrderNo(orderNo);
+                            stockLog.setRemark("前台套餐售出联动扣除");
+                            stockLog.setCreateTime(now);
+                            gmsStockLogMapper.insert(stockLog);
+                        }
+                    }
+                }
+            } else {
+                // 普通单品直接扣库
+                goods.setStock((goods.getStock() == null ? 0 : goods.getStock()) - detail.getQuantity());
+                gmsGoodsService.updateById(goods);
+
+                com.money.entity.GmsStockLog stockLog = new com.money.entity.GmsStockLog();
+                stockLog.setGoodsId(goods.getId());
+                stockLog.setGoodsName(goods.getName());
+                stockLog.setGoodsBarcode(goods.getBarcode());
+                stockLog.setType("SALE");
+                stockLog.setQuantity(-detail.getQuantity());
+                stockLog.setAfterQuantity(goods.getStock().intValue());
+                stockLog.setOrderNo(orderNo);
+                stockLog.setRemark("前台智能收银售出");
+                stockLog.setCreateTime(now);
+                gmsStockLogMapper.insert(stockLog);
+            }
         }
 
         if (member != null) {
@@ -279,7 +419,7 @@ public class PosServiceImpl implements PosService {
                 balanceLog.setAmount(actualBalanceCost.negate());
                 balanceLog.setAfterAmount(member.getBalance());
                 balanceLog.setOrderNo(orderNo);
-                balanceLog.setRemark("订单支付扣款");
+                balanceLog.setRemark("订单支付扣除会员余额");
                 balanceLog.setCreateTime(now);
                 umsMemberLogMapper.insert(balanceLog);
             }
@@ -289,7 +429,7 @@ public class PosServiceImpl implements PosService {
 
         OmsOrderLog log = new OmsOrderLog();
         log.setOrderId(order.getId());
-        log.setDescription("完成全动态组合支付订单");
+        log.setDescription("执行强一致性 SettleEngine 结算");
         omsOrderLogService.saveBatch(ListUtil.of(log));
 
         return BeanMapUtil.to(order, OmsOrderVO::new);
