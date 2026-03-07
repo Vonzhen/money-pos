@@ -1,96 +1,235 @@
 <template>
-  <div :class="['h-[200px] border-t-4 flex p-2 gap-2 shadow-inner shrink-0 transition-colors duration-300 w-full', theme.bottomPanel, theme.bottomBorder]">
+    <div class="bg-gray-900 text-gray-200 p-3 shadow-inner flex gap-3 h-56 select-none border-t border-gray-800">
 
-    <div :class="['w-36 rounded border p-3 flex flex-col justify-center text-sm shadow-sm shrink-0', theme.cardBg, theme.cardBorder]">
-        <div :class="['mb-2 border-b pb-1 font-bold', theme.mutedText]">上一单汇总</div>
-        <div :class="['flex justify-between mt-1', theme.normalText]"><span>应收:</span> <span class="font-bold">￥{{ lastOrder.total.toFixed(2) }}</span></div>
-        <div :class="['flex justify-between mt-1', theme.normalText]"><span>实收:</span> <span class="font-bold text-green-500">￥{{ lastOrder.paid.toFixed(2) }}</span></div>
-        <div :class="['flex justify-between mt-1', theme.normalText]"><span>找零:</span> <span class="font-bold text-red-500">￥{{ lastOrder.change.toFixed(2) }}</span></div>
-    </div>
-
-    <div :class="['flex-1 rounded border p-3 flex flex-col justify-center shadow-sm min-w-[200px]', theme.cardBg, theme.cardBorder]" @click="focusInput">
-        <div :class="['flex justify-between text-sm font-bold mb-2 truncate', theme.mutedText]">
-            <span class="truncate mr-2">流水号: {{ currentOrderNo }}</span>
-            <span v-if="currentMember.id" class="text-blue-500 flex items-center bg-blue-50 px-2 rounded shrink-0 cursor-pointer" @click="clearMember">
-                <el-icon class="mr-1"><Avatar /></el-icon> {{ currentMember.name }} ({{ memberLevelDesc }}) <el-icon class="ml-1 text-red-400"><Close /></el-icon>
-            </span>
-            <span v-else class="bg-gray-100 px-2 rounded shrink-0">普通散客</span>
-        </div>
-
-        <el-autocomplete
-            ref="scanInputRef" v-model="scanKeyword" :fetch-suggestions="queryGoodsSearch"
-            placeholder="扫码，或输入条码/首拼联想" :class="['pos-input mt-1 w-full', theme.inputStyle]"
-            clearable highlight-first-item value-key="displayValue" @select="handleSelectGoods" @keyup.enter="handleScanEnter"
-        >
-            <template #prefix><el-icon class="text-3xl font-black ml-1"><Search /></el-icon></template>
-            <template #default="{ item }">
-                <div class="flex justify-between items-center w-full">
-                    <span class="font-bold">{{ item.name }}</span>
-                    <div class="flex gap-4"><span class="text-gray-400 text-sm">{{ item.barcode }}</span><span class="text-red-500 font-bold">￥{{ item.salePrice }}</span></div>
+        <div class="w-[24%] bg-gray-800 rounded-lg border border-gray-700 p-4 flex flex-col shadow-md relative">
+            <div v-if="currentMember.id" class="w-full h-full flex flex-col justify-between text-sm text-gray-300">
+                <div class="flex justify-between items-center border-b border-gray-700 pb-2">
+                    <div class="flex items-baseline gap-2 overflow-hidden">
+                        <span class="text-white font-bold text-base truncate">{{ currentMember.name }}</span>
+                        <span class="text-gray-400 text-xs">{{ currentMember.phone }}</span>
+                    </div>
+                    <el-button size="small" type="danger" link @click="currentMember = {}">退出</el-button>
                 </div>
-            </template>
-        </el-autocomplete>
-    </div>
 
-    <div :class="['w-56 rounded border p-3 flex flex-col justify-between items-end shadow-sm shrink-0 relative', theme.amountBg, theme.amountBorder]">
-        <div :class="['text-sm w-full flex justify-between font-bold', theme.mutedText]">
-            <span>共 <b class="text-red-500 text-xl mx-1">{{ totalCount }}</b> 件</span>
-        </div>
-        <div class="flex items-baseline text-red-500 mb-1 relative w-full justify-end">
-            <div v-if="actualCouponUsed > 0" class="absolute -top-8 right-0 bg-teal-50 border border-teal-200 px-2 py-0.5 rounded text-[11px] font-bold text-teal-600 shadow-sm whitespace-nowrap">
-                本次扣会员券: ￥{{ actualCouponUsed.toFixed(2) }}
+                <div class="flex justify-between items-center">
+                    <span class="text-gray-400">会员等级:</span>
+                    <span class="font-bold text-orange-400 truncate text-right max-w-[140px]">
+                        <span v-if="!currentMember.brandLevels || Object.keys(currentMember.brandLevels).length === 0" class="text-gray-500">无</span>
+                        <span v-else>{{ Object.values(currentMember.brandLevels).map(code => getLevelName(code)).join(', ') }}</span>
+                    </span>
+                </div>
+
+                <div class="flex justify-between items-center">
+                    <span class="text-gray-400">会员余额:</span>
+                    <span class="font-bold text-white">￥ {{ formatMoney(currentMember.balance) }}</span>
+                </div>
+                <div class="flex justify-between items-center">
+                    <span class="text-gray-400">会员券:</span>
+                    <span class="font-bold text-green-400">￥ {{ formatMoney(currentMember.coupon) }}</span>
+                </div>
+                <div class="flex justify-between items-center">
+                    <span class="text-gray-400">满减券:</span>
+                    <span class="font-bold text-orange-400">{{ currentMember.voucherCount || 0 }} 张</span>
+                </div>
             </div>
-            <span class="text-3xl font-bold mr-1 tracking-tighter">￥</span>
-            <span class="text-[55px] leading-none font-black tracking-tighter">{{ totalAmount.toFixed(2) }}</span>
+
+            <div v-else class="w-full h-full flex flex-col justify-center space-y-3 text-sm">
+                <div class="text-gray-400 mb-1 border-b border-gray-700 pb-2 flex items-center gap-2">
+                    <el-icon><Monitor /></el-icon>上一单结算快照
+                </div>
+                <div class="flex justify-between items-center">
+                    <span class="text-gray-400">应收金额:</span>
+                    <span class="text-white font-bold">￥ {{ formatMoney(lastOrder.total) }}</span>
+                </div>
+                <div class="flex justify-between items-center bg-gray-700 px-2 py-1.5 rounded shadow-inner">
+                    <span class="text-gray-300">实收金额:</span>
+                    <span class="text-2xl font-black text-green-500">￥ {{ formatMoney(lastOrder.paid) }}</span>
+                </div>
+                <div class="flex justify-between items-center">
+                    <span class="text-gray-400">已扣会员券:</span>
+                    <span class="text-orange-400 font-bold">￥ {{ formatMoney(lastOrder.couponUsed) }}</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex-1 bg-gray-800 rounded-lg border border-gray-700 p-4 flex shadow-md relative">
+
+            <div class="flex-1 flex flex-col pr-6 border-r border-gray-700">
+                <div class="text-gray-300 text-sm font-medium space-y-2.5 mt-1">
+                    <div class="flex items-center gap-2"><el-icon class="text-gray-400"><Tickets /></el-icon>流水号: {{ currentOrderNo }}</div>
+                    <div class="flex items-center gap-2"><el-icon class="text-gray-400"><Timer /></el-icon>时　间: {{ currentTime }}</div>
+                </div>
+
+                <div class="w-full mt-auto">
+                    <el-autocomplete
+                        ref="scannerInput"
+                        v-model="scanKeyword"
+                        :fetch-suggestions="querySearchAsync"
+                        placeholder="请将条码对准窗口 / 手输拼音联想"
+                        clearable
+                        class="w-full scanner-input"
+                        value-key="name"
+                        :trigger-on-focus="false"
+                        @select="handleSelect"
+                        @keyup.enter="handleScan"
+                    >
+                        <template #prefix><el-icon class="text-2xl text-blue-500"><Search /></el-icon></template>
+                        <template #default="{ item }">
+                            <div class="flex justify-between items-center w-full">
+                                <div>
+                                    <span class="font-bold text-gray-800">{{ item.name }}</span>
+                                    <span class="text-gray-400 text-xs ml-2">({{ item.barcode }})</span>
+                                </div>
+                                <span class="text-red-500 font-bold ml-4">￥{{ item.salePrice }}</span>
+                            </div>
+                        </template>
+                    </el-autocomplete>
+                </div>
+            </div>
+
+            <div class="w-64 flex flex-col items-end justify-between pl-6 pb-1">
+                <div class="text-gray-400 font-bold text-base w-full text-right mt-1">
+                    共 <span class="text-white text-2xl mx-1 font-black">{{ computedTotalCount }}</span> 件
+                </div>
+                <div class="text-red-500 font-black text-[44px] leading-none tracking-tight shadow-sm w-full text-right">
+                    ￥{{ formatMoney(computedTotalAmount) }}
+                </div>
+                <div class="text-green-500 text-sm font-bold tracking-wider w-full text-right bg-gray-700 py-1 px-2 rounded">
+                    已省/券扣: ￥{{ formatMoney(computedCouponUsed) }}
+                </div>
+            </div>
+        </div>
+
+        <div class="w-[28%] grid grid-cols-3 grid-rows-2 gap-2">
+            <button class="pos-btn bg-blue-600 hover:bg-blue-500 text-white" @click="$emit('suspend')">
+                <el-icon class="text-2xl mb-1"><Tickets /></el-icon><span class="text-base">挂单</span>
+            </button>
+            <button class="pos-btn bg-purple-600 hover:bg-purple-500 text-white" @click="$emit('bind-member')">
+                <el-icon class="text-2xl mb-1"><User /></el-icon><span class="text-base">会员</span>
+            </button>
+            <button class="pos-btn bg-red-600 hover:bg-red-500 text-white row-span-2 shadow-[0_0_15px_rgba(239,68,68,0.3)] border border-red-500/50" @click="$emit('open-checkout')">
+                <span class="text-3xl font-black tracking-widest">收款</span>
+                <span class="text-xs font-normal opacity-80 mt-1 bg-red-800/50 px-2 py-1 rounded-full">[Enter]</span>
+            </button>
+            <button class="pos-btn bg-emerald-600 hover:bg-emerald-500 text-white" @click="$emit('open-drawer')">
+                <el-icon class="text-2xl mb-1"><Unlock /></el-icon><span class="text-base">钱箱</span>
+            </button>
+            <button class="pos-btn bg-slate-600 hover:bg-slate-500 text-white" @click="$emit('clear-cart')">
+                <el-icon class="text-2xl mb-1"><Delete /></el-icon><span class="text-base">清空</span>
+            </button>
         </div>
     </div>
-
-    <div class="flex gap-2 shrink-0">
-        <div class="grid grid-cols-2 grid-rows-2 gap-2 w-[200px]">
-            <button :class="['pos-btn', suspendedCount > 0 ? 'bg-[#00b482]' : 'bg-[#4080ff]']" @click="$emit('suspend-retrieve')"><el-icon class="text-xl mb-1"><Calendar /></el-icon><span>{{ suspendedCount > 0 ? `取单(${suspendedCount})` : '挂单' }}</span></button>
-            <button class="pos-btn bg-[#8b5cf6]" @click="$emit('bind-member')"><el-icon class="text-xl mb-1"><User /></el-icon><span>会员</span></button>
-            <button class="pos-btn bg-[#14b8a6]" @click="$emit('open-drawer')"><el-icon class="text-xl mb-1"><Unlock /></el-icon><span>钱箱</span></button>
-            <button class="pos-btn bg-[#6b7280]" @click="$emit('clear-cart')"><el-icon class="text-xl mb-1"><Delete /></el-icon><span>清空</span></button>
-        </div>
-        <button class="w-[120px] h-full bg-[#ff4d4f] text-white rounded shadow-md hover:brightness-110 active:scale-95 transition-all flex flex-col items-center justify-center border-b-4 border-red-700 shrink-0" @click="$emit('open-checkout')">
-            <span class="text-3xl font-black tracking-widest">收款</span><span class="text-xs mt-2 font-bold opacity-90 bg-black/20 px-2 py-0.5 rounded">[Enter]</span>
-        </button>
-    </div>
-
-  </div>
 </template>
 
 <script setup>
-import { ref, nextTick } from 'vue'
-import { Search, Avatar, Close, Calendar, User, Unlock, Delete } from '@element-plus/icons-vue'
+import { ref, computed } from 'vue'
+import { Search, Delete, User, Unlock, Tickets, Timer, Monitor } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
+import { req } from '@/api/index.js'
 import { usePosStore } from '../hooks/usePosStore'
-import goodsApi from "@/api/gms/goods.js"
 
-const props = defineProps(['theme', 'lastOrder', 'currentOrderNo', 'memberLevelDesc', 'suspendedCount'])
-const emit = defineEmits(['open-checkout', 'suspend-retrieve', 'bind-member', 'open-drawer', 'clear-cart'])
-const { currentMember, totalCount, totalAmount, actualCouponUsed, addToCart, clearMember } = usePosStore()
+const props = defineProps(['lastOrder', 'currentOrderNo', 'currentTime', 'memberTypesDict'])
+const emit = defineEmits(['open-checkout', 'bind-member', 'open-drawer', 'clear-cart', 'suspend'])
 
-const scanKeyword = ref(''); const scanInputRef = ref(null)
+const { cartList, currentMember } = usePosStore()
+const scanKeyword = ref('')
+const scannerInput = ref(null)
 
-const queryGoodsSearch = async (queryString, cb) => {
-    if (!queryString) { cb([]); return }
-    try { const res = await goodsApi.posSearch(queryString); cb(res.data.map(item => ({ ...item, displayValue: item.barcode }))) } catch (e) { cb([]) }
+const focusInput = () => { setTimeout(() => { scannerInput.value?.focus() }, 100) }
+
+const getLevelName = (code) => {
+    if (!props.memberTypesDict) return code;
+    const match = props.memberTypesDict.find(item => String(item.value) === String(code));
+    return match ? match.desc : code;
 }
-const handleSelectGoods = (item) => { addToCart(item); setTimeout(() => { scanKeyword.value = '' }, 50); focusInput() }
-const handleScanEnter = async () => {
-    const code = scanKeyword.value.trim(); if (!code) return;
-    try { const res = await goodsApi.posSearch(code); if (res.data?.length > 0) addToCart(res.data[0]); else ElMessage.warning(`未找到条码 [${code}]`) }
-    catch (e) { ElMessage.error('查询异常') } finally { scanKeyword.value = ''; focusInput() }
+
+const formatMoney = (val) => {
+    if (val === null || val === undefined) return '0.00';
+    const num = Number(val);
+    return isNaN(num) ? '0.00' : num.toFixed(2);
 }
-const focusInput = () => { nextTick(() => { scanInputRef.value?.focus() }) }
+
+const getLevelCode = (brandId) => {
+    if (!currentMember.value?.id || !brandId) return null;
+    return currentMember.value.brandLevels?.[String(brandId)] || null;
+}
+
+const computedTotalCount = computed(() => {
+    return cartList.value.reduce((sum, item) => sum + (Number(item.qty) || 1), 0);
+});
+
+const computedTotalAmount = computed(() => {
+    return cartList.value.reduce((sum, item) => {
+        let price = Number(item.salePrice) || 0;
+        const code = getLevelCode(item.brandId);
+        if (code && item.levelPrices && item.levelPrices[code] != null) price = Number(item.levelPrices[code]);
+        return sum + (price * (Number(item.qty) || 1));
+    }, 0);
+});
+
+const computedCouponUsed = computed(() => {
+    return cartList.value.reduce((sum, item) => {
+        let coupon = 0;
+        const code = getLevelCode(item.brandId);
+        if (code && item.levelCoupons && item.levelCoupons[code] != null) coupon = Number(item.levelCoupons[code]);
+        return sum + (coupon * (Number(item.qty) || 1));
+    }, 0);
+});
+
+const querySearchAsync = async (queryString, cb) => {
+    if (!queryString) { cb([]); return; }
+    try {
+        const res = await req({ url: '/pos/goods', method: 'GET', params: { barcode: queryString } });
+        cb(res.data || []);
+    } catch (e) {
+        cb([]);
+    }
+}
+
+const handleSelect = (item) => {
+    const existing = cartList.value.find(i => i.id === item.id);
+    if (existing) {
+        existing.qty = (existing.qty || 1) + 1;
+    } else {
+        cartList.value.push({ ...item, qty: 1 });
+    }
+    scanKeyword.value = '';
+    focusInput();
+}
+
+const handleScan = async () => {
+    if (!scanKeyword.value) return;
+    try {
+        const res = await req({ url: '/pos/goods', method: 'GET', params: { barcode: scanKeyword.value } });
+        const items = res.data || [];
+        if (items.length === 1) {
+            handleSelect(items[0]);
+        } else if (items.length > 1) {
+            ElMessage.warning('匹配到多个商品，请在列表中手动选择');
+        } else {
+            ElMessage.error('未找到该商品条码');
+            scanKeyword.value = '';
+        }
+    } catch (e) {}
+    focusInput();
+}
+
 defineExpose({ focusInput })
 </script>
 
 <style scoped>
-/* 🌟 修复：找回底部各种炫酷组件的样式！ */
-.pos-btn { @apply flex flex-col items-center justify-center text-white rounded shadow-sm hover:brightness-110 active:scale-95 transition-all; border-bottom: 3px solid rgba(0,0,0,0.2); }
-.pos-btn span { @apply text-sm font-bold tracking-widest; }
-:deep(.pos-input .el-input__wrapper) { height: 65px; font-size: 26px; font-weight: 900; padding-left: 10px; transition: all 0.3s ease; }
-:deep(.pos-input .el-input__inner) { letter-spacing: 2px; }
+.pos-btn {
+    @apply rounded-xl shadow-sm transition-all duration-150 active:scale-95 flex flex-col items-center justify-center font-bold tracking-wider;
+}
+:deep(.scanner-input .el-input__wrapper) {
+    box-shadow: 0 0 0 2px #3b82f6 inset !important;
+    background-color: #ffffff;
+    height: 64px;
+    border-radius: 8px;
+    font-size: 20px;
+    font-weight: 900;
+}
+:deep(.scanner-input .el-input__inner) {
+    color: #1f2937;
+}
 </style>

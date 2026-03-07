@@ -8,21 +8,9 @@
 
         <div class="flex items-center gap-2 mb-3 mt-2">
             <MoneyCUD :money-crud="moneyCrud" />
-
-            <el-button type="info" @click="handleDownloadTemplate">
-                <el-icon class="mr-1"><Download /></el-icon>下载模板
-            </el-button>
-
-            <el-upload
-                action="#"
-                :auto-upload="false"
-                :show-file-list="false"
-                :on-change="handleImport"
-                accept=".xlsx, .xls"
-            >
-                <el-button type="success" :loading="importLoading">
-                    <el-icon class="mr-1"><Upload /></el-icon>导入老会员
-                </el-button>
+            <el-button type="info" @click="handleDownloadTemplate"><el-icon class="mr-1"><Download /></el-icon>下载模板</el-button>
+            <el-upload action="#" :auto-upload="false" :show-file-list="false" :on-change="handleImport" accept=".xlsx, .xls">
+                <el-button type="success" :loading="importLoading"><el-icon class="mr-1"><Upload /></el-icon>导入老会员</el-button>
             </el-upload>
         </div>
 
@@ -34,7 +22,6 @@
                     </span>
                 </el-link>
             </template>
-
             <template #brandLevels="{scope}">
                 <div class="flex flex-wrap gap-1">
                     <template v-if="scope.row.brandLevels && Object.keys(scope.row.brandLevels).length > 0">
@@ -45,15 +32,9 @@
                     <el-tag v-else size="small" type="info" class="text-gray-400 border-dashed border-gray-300 bg-transparent">普通零售客</el-tag>
                 </div>
             </template>
-
-            <template #address="{scope}">
-                {{ scope.row.province + scope.row.city + scope.row.district + scope.row.address }}
-            </template>
-
+            <template #address="{scope}">{{ scope.row.province + scope.row.city + scope.row.district + scope.row.address }}</template>
             <template #opt="{scope}">
-                <el-button type="success" link @click="openRecharge(scope.row)">
-                    <el-icon class="mr-1"><Money /></el-icon>充值/发券
-                </el-button>
+                <el-button type="success" link @click="openRecharge(scope.row)"><el-icon class="mr-1"><Money /></el-icon>充值/发券</el-button>
                 <MoneyUD :money-crud="moneyCrud" :scope="scope" />
             </template>
         </MoneyCrudTable>
@@ -62,16 +43,10 @@
             <div class="bg-gray-50 p-4 rounded-lg border border-gray-100 mb-4">
                 <h4 class="font-bold text-gray-700 mb-3 flex items-center gap-2"><el-icon><User /></el-icon> 基础档案</h4>
                 <div class="flex gap-4">
-                    <el-form-item label="会员名称" prop="name" class="!w-1/2">
-                        <el-input v-model.trim="moneyCrud.form.name" placeholder="请输入姓名" />
-                    </el-form-item>
-                    <el-form-item label="手机号码" prop="phone" class="!w-1/2">
-                        <el-input v-model="moneyCrud.form.phone" placeholder="用于结账识别" />
-                    </el-form-item>
+                    <el-form-item label="会员名称" prop="name" class="!w-1/2"><el-input v-model.trim="moneyCrud.form.name" placeholder="请输入姓名" /></el-form-item>
+                    <el-form-item label="手机号码" prop="phone" class="!w-1/2"><el-input v-model="moneyCrud.form.phone" placeholder="用于结账识别" /></el-form-item>
                 </div>
-                <el-form-item label="备注说明" prop="remark" class="mb-0">
-                    <el-input v-model="moneyCrud.form.remark" placeholder="非必填" />
-                </el-form-item>
+                <el-form-item label="备注说明" prop="remark" class="mb-0"><el-input v-model="moneyCrud.form.remark" placeholder="非必填" /></el-form-item>
             </div>
 
             <div class="bg-blue-50/50 p-4 rounded-lg border border-blue-100 relative">
@@ -79,7 +54,6 @@
                 <div class="w-full text-xs text-gray-500 mb-4 border-b border-blue-100/50 pb-2">
                     不选择的品牌，该客户将被系统默认视为【普通零售客】，无法享受对应品牌的会员价与折扣券。
                 </div>
-
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <el-form-item v-for="brand in brands" :key="brand.value" :label="brand.label" class="!mb-0 font-bold">
                         <el-select v-model="uiBrandLevels[brand.value]" placeholder="默认零售 (无特权)" clearable class="w-full">
@@ -105,7 +79,7 @@
                             <span>📱 手机号码:</span> <span class="font-mono text-gray-700">{{ current360Member.phone }}</span>
                         </div>
                         <div class="flex justify-between">
-                            <span>💳 剩余本金:</span> <span class="font-bold text-gray-700">￥{{ (current360Member.balance || 0).toFixed(2) }}</span>
+                            <span>💳 会员余额:</span> <span class="font-bold text-gray-700">￥{{ (current360Member.balance || 0).toFixed(2) }}</span>
                         </div>
                         <div class="flex justify-between">
                             <span>🎫 剩余满减券:</span> <span class="font-bold text-orange-500">{{ current360Member.voucherCount || 0 }} 张</span>
@@ -155,15 +129,15 @@
             <el-form :model="rechargeForm" ref="rechargeFormRef" label-width="110px">
                 <el-form-item label="业务类型">
                     <el-radio-group v-model="rechargeForm.type">
-                        <el-radio label="BALANCE">充值本金 (可送券)</el-radio>
+                        <el-radio label="BALANCE">充值会员余额</el-radio>
                         <el-radio label="COUPON">直充会员券</el-radio>
                         <el-radio label="VOUCHER">发满减优惠券</el-radio>
                     </el-radio-group>
                 </el-form-item>
 
                 <template v-if="rechargeForm.type === 'BALANCE'">
-                    <el-form-item label="实收本金" prop="amount" :rules="[{required: true, type: 'number', message: '请输入实际收款金额'}]">
-                        <el-input-number v-model="rechargeForm.amount" :precision="2" :step="100" class="!w-full" placeholder="顾客实际支付的金额(元)" />
+                    <el-form-item label="充值金额" prop="amount" :rules="[{required: true, type: 'number', message: '请输入实际收款金额'}]">
+                        <el-input-number v-model="rechargeForm.amount" :precision="2" :step="100" class="!w-full" placeholder="顾客实际支付充值的金额(元)" />
                     </el-form-item>
                     <el-form-item label="赠送会员券" prop="giftCoupon">
                         <el-input-number v-model="rechargeForm.giftCoupon" :precision="2" :step="10" class="!w-full" placeholder="额外赠送的1:1会员抵用券(无则留空)" />
@@ -210,6 +184,7 @@ import MoneyRR from "@/components/crud/MoneyRR.vue";
 import MoneyCUD from "@/components/crud/MoneyCUD.vue";
 import MoneyUD from "@/components/crud/MoneyUD.vue";
 import MoneyForm from "@/components/crud/MoneyForm.vue";
+import ComputeInput from "@/components/ComputeInput.vue";
 
 import { ref, watch, reactive } from "vue";
 import { useUserStore } from "@/store/index.js";
@@ -248,20 +223,21 @@ const hookedMemberApi = {
     }
 }
 
+// 🌟 统一列名
 const columns = [
     {prop: 'code', label: '会员号', show: false},
     {prop: 'name', label: '会员名称', width: 120},
     {prop: 'phone', label: '手机号码', width: 130},
     {prop: 'brandLevels', label: '品牌专属身份', minWidth: 260},
-    {prop: 'balance', label: '本金余额', minWidth: 100},
-    {prop: 'coupon', label: '专属会员券', minWidth: 110},
+    {prop: 'balance', label: '会员余额', minWidth: 100},
+    {prop: 'coupon', label: '会员券', minWidth: 110},
     {prop: 'voucherCount', label: '满减券(张)', minWidth: 100},
     {prop: 'consumeAmount', label: '总消费金额', sortable: 'custom', show: false},
     {prop: 'address', label: '地址', show: false},
     {
         prop: 'opt',
         label: '操作',
-        width: 250, // 🌟 修复问题 2：拓宽操作列，防止折行
+        width: 250,
         align: 'center',
         fixed: 'right',
         showOverflowTooltip: false,
@@ -285,12 +261,8 @@ const moneyCrud = ref(new MoneyCrud({
     defaultForm: { type: 'MEMBER', coupon: 0 }
 }))
 
-// 🌟 修复问题 1：深度监听数据源，绝不残留脏数据
 watch(() => moneyCrud.value.form, (newForm) => {
-    // 每次表单发生变动（包含打开新建、打开编辑），先无情清空
     Object.keys(uiBrandLevels).forEach(key => delete uiBrandLevels[key]);
-
-    // 如果是编辑，且有专属等级，再重新填入
     if (newForm && newForm.id && newForm.brandLevels) {
         Object.assign(uiBrandLevels, newForm.brandLevels);
     }

@@ -1,76 +1,86 @@
 <template>
-  <div class="flex-1 overflow-hidden flex flex-col p-2">
     <el-table
-      :data="cartList" border stripe height="100%" size="large"
-      :class="['w-full text-lg font-bold shadow-sm rounded overflow-hidden', theme.tableText]"
-      :header-cell-style="tableHeaderStyle"
+        :data="cartList"
+        height="100%"
+        stripe
+        border
+        :header-cell-style="{ background: '#e0e7ff', color: '#3730a3', fontSize: '15px', fontWeight: 'bold' }"
+        :row-style="{ fontSize: '16px', color: '#1f2937' }"
     >
-      <el-table-column type="index" label="序号" width="60" align="center" />
-      <el-table-column prop="barcode" label="条码" width="180" />
-      <el-table-column prop="name" label="商品名称" min-width="200" show-overflow-tooltip />
+        <el-table-column type="index" label="序号" width="70" align="center" />
+        <el-table-column prop="barcode" label="条码" width="160" />
 
-      <el-table-column label="单价" width="140" align="right">
-        <template #default="{row}">
-          <div v-if="currentMember.id && SettleEngine.getRealPrice(row, currentMember) < row.salePrice">
-            <div class="text-gray-400 line-through text-sm">￥{{ row.salePrice.toFixed(2) }}</div>
-            <div class="text-orange-500 font-bold">￥{{ SettleEngine.getRealPrice(row, currentMember).toFixed(2) }}</div>
-          </div>
-          <div v-else>￥{{ row.salePrice.toFixed(2) }}</div>
-        </template>
-      </el-table-column>
+        <el-table-column label="商品名称" min-width="220">
+            <template #default="{ row }">
+                <span class="font-bold mr-2">{{ row.name }}</span>
+                <el-tag v-if="row.isCombo === 1" type="warning" size="small" effect="dark" class="mr-1">套餐</el-tag>
+                <el-tag v-if="row.isDiscountParticipable === 1" type="danger" size="small" effect="plain">满减</el-tag>
+            </template>
+        </el-table-column>
 
-      <el-table-column prop="quantity" label="数量" width="160" align="center">
-        <template #default="{row}">
-          <el-input-number v-model="row.quantity" :min="1" size="large" class="!w-full cart-number" />
-        </template>
-      </el-table-column>
+        <el-table-column label="单价" width="120" align="right">
+            <template #default="{ row }">￥{{ row.salePrice?.toFixed(2) }}</template>
+        </el-table-column>
 
-      <el-table-column label="小计" width="140" align="right">
-        <template #default="{row}">
-          <span class="text-red-600 text-xl">￥{{ (SettleEngine.getRealPrice(row, currentMember) * row.quantity).toFixed(2) }}</span>
-        </template>
-      </el-table-column>
+        <el-table-column label="会员价" width="120" align="right">
+            <template #default="{ row }">
+                <span v-if="getMemberPrice(row) !== null" class="text-blue-600 font-bold">￥{{ getMemberPrice(row)?.toFixed(2) }}</span>
+                <span v-else class="text-gray-400">-</span>
+            </template>
+        </el-table-column>
 
-      <el-table-column label="操作" width="90" align="center">
-        <template #default="{$index}">
-          <el-button type="danger" link @click="cartList.splice($index, 1)">
-            <el-icon size="20"><Delete /></el-icon>
-          </el-button>
-        </template>
-      </el-table-column>
+        <el-table-column label="会员券" width="100" align="right">
+            <template #default="{ row }">
+                <span v-if="getMemberCoupon(row) > 0" class="text-green-600">￥{{ getMemberCoupon(row)?.toFixed(2) }}</span>
+                <span v-else class="text-gray-400">-</span>
+            </template>
+        </el-table-column>
 
-      <template #empty>
-        <div class="flex flex-col items-center justify-center h-full text-gray-400 py-10 opacity-60">
-          <el-icon :size="80"><FullScreen /></el-icon>
-          <p class="mt-4 text-2xl tracking-widest font-black">请扫描商品条码或输入首拼</p>
-        </div>
-      </template>
+        <el-table-column label="数量" width="160" align="center">
+            <template #default="{ row }">
+                <el-input-number v-model="row.qty" :min="1" :max="999" size="small" class="!w-28" />
+            </template>
+        </el-table-column>
+
+        <el-table-column label="小计" width="140" align="right">
+            <template #default="{ row }">
+                <span class="text-red-600 font-bold text-lg">￥{{ getSubtotal(row)?.toFixed(2) }}</span>
+            </template>
+        </el-table-column>
+
+        <el-table-column label="操作" width="100" align="center" fixed="right">
+            <template #default="{ $index }">
+                <el-button type="danger" icon="Delete" circle plain @click="removeItem($index)" />
+            </template>
+        </el-table-column>
     </el-table>
-  </div>
 </template>
 
 <script setup>
-import { watch } from 'vue'
-import { Delete, FullScreen } from '@element-plus/icons-vue'
 import { usePosStore } from '../hooks/usePosStore'
-import { SettleEngine } from '../engine/settleEngine'
 
-defineProps(['theme', 'tableHeaderStyle'])
-const { cartList, currentMember } = usePosStore()
+const { cartList, currentMember, removeItem } = usePosStore()
 
-// 🌟 强行逼迫表格重绘：一旦发现切换了会员，就打乱重组购物车数组，让 el-table 必须刷新价格！
-watch(() => currentMember.value, () => {
-    if (cartList.value.length > 0) {
-        cartList.value = [...cartList.value];
-    }
-}, { deep: true })
+// 🌟 纯渲染逻辑：根据会员绑定的品牌等级，从商品矩阵中提取对应价格
+const getLevelCode = (brandId) => {
+    if (!currentMember.value?.id || !brandId) return null;
+    return currentMember.value.brandLevels?.[String(brandId)] || null;
+}
 
+const getMemberPrice = (row) => {
+    const code = getLevelCode(row.brandId);
+    if (code && row.levelPrices && row.levelPrices[code] != null) return row.levelPrices[code];
+    return null; // 没命中特权
+}
+
+const getMemberCoupon = (row) => {
+    const code = getLevelCode(row.brandId);
+    if (code && row.levelCoupons && row.levelCoupons[code] != null) return row.levelCoupons[code];
+    return 0;
+}
+
+const getSubtotal = (row) => {
+    const activePrice = getMemberPrice(row) !== null ? getMemberPrice(row) : (row.salePrice || 0);
+    return activePrice * (row.qty || 1);
+}
 </script>
-
-<style scoped>
-:deep(.cart-number .el-input-number__increase),
-:deep(.cart-number .el-input-number__decrease) { width: 40px; font-size: 18px; }
-:deep(.cart-number .el-input__inner) { font-size: 18px; font-weight: bold; }
-:deep(.el-table__empty-block) { border-bottom: none; }
-:deep(.el-table) { transition: background-color 0.3s; }
-</style>

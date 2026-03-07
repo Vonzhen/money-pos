@@ -3,7 +3,7 @@
         <MoneyRR :money-crud="moneyCrud">
             <el-input v-model="moneyCrud.query.phone" placeholder="搜索手机号" class="md:!w-48" @keyup.enter.native="moneyCrud.doQuery" />
             <el-select v-model="moneyCrud.query.type" placeholder="资金类型" clearable class="md:!w-48">
-                <el-option label="🔵 实体本金 (BALANCE)" value="BALANCE" />
+                <el-option label="🔵 会员余额 (BALANCE)" value="BALANCE" />
                 <el-option label="🟢 会员储值券 (COUPON)" value="COUPON" />
                 <el-option label="🟠 满减优惠券 (VOUCHER)" value="VOUCHER" />
             </el-select>
@@ -22,7 +22,7 @@
             </template>
 
             <template #type="{scope}">
-                <el-tag v-if="scope.row.type === 'BALANCE'" type="primary" effect="light" class="w-[110px] text-center tracking-widest font-bold">🔵 实体本金</el-tag>
+                <el-tag v-if="scope.row.type === 'BALANCE'" type="primary" effect="light" class="w-[110px] text-center tracking-widest font-bold">🔵 会员余额</el-tag>
                 <el-tag v-else-if="scope.row.type === 'COUPON'" type="success" effect="light" class="w-[110px] text-center tracking-widest font-bold">🟢 会员券</el-tag>
                 <el-tag v-else-if="scope.row.type === 'VOUCHER'" type="warning" effect="light" class="w-[110px] text-center tracking-widest font-bold">🟠 满减券</el-tag>
                 <span v-else>{{ scope.row.type }}</span>

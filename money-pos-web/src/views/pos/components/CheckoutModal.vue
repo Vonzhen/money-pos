@@ -14,13 +14,13 @@
                         </div>
                     </div>
                     <div class="flex justify-between items-center bg-white/60 p-2 rounded">
-                        <span class="text-sm text-gray-600 font-bold">本金余额</span><span class="text-lg font-black text-blue-600">￥{{ (currentMember.balance || 0).toFixed(2) }}</span>
+                        <span class="text-sm text-gray-600 font-bold">会员余额</span><span class="text-lg font-black text-blue-600">￥{{ (currentMember.balance || 0).toFixed(2) }}</span>
                     </div>
                     <div class="flex justify-between items-center bg-white/60 p-2 rounded mt-2">
                         <span class="text-sm text-gray-600 font-bold">会员券 (抵扣)</span><span class="text-lg font-black text-teal-600">￥{{ (currentMember.coupon || 0).toFixed(2) }}</span>
                     </div>
                     <div class="flex justify-between items-center bg-white/60 p-2 rounded mt-2">
-                        <span class="text-sm text-gray-600 font-bold">拥有满减券</span><span class="text-lg font-bold text-orange-500">{{ currentMember.couponCount || 0 }} 张</span>
+                        <span class="text-sm text-gray-600 font-bold">拥有满减券</span><span class="text-lg font-bold text-orange-500">{{ currentMember.voucherCount || 0 }} 张</span>
                     </div>
                 </div>
                 <div v-else class="bg-gray-50 p-4 rounded-lg border border-dashed flex flex-col items-center justify-center text-gray-400 h-[215px] shrink-0">
@@ -42,6 +42,9 @@
                                 <el-input-number v-model="usedCouponCount" :min="1" :max="maxUsableCoupons" :step="1" class="!w-[100px]" size="small" @change="recalculatePayments" />
                             </div>
                         </div>
+                        <div v-if="currentMember.id" class="text-[11px] text-gray-400 text-right mt-1">
+                            当前符合满减活动的总额: ￥{{ participatingAmount.toFixed(2) }}
+                        </div>
                     </div>
 
                     <div class="mt-auto flex flex-col">
@@ -50,7 +53,7 @@
                             <el-input-number v-model="manualDiscount" :min="0" :max="totalAmount" :step="1" class="!w-[130px]" placeholder="直减金额" @change="recalculatePayments" />
                         </div>
 
-                        <div class="flex flex-col border-t border-dashed pt-3 mt-1" v-if="currentMember.id && totalCouponNeeded > 0">
+                        <div class="flex flex-col border-t border-dashed pt-3 mt-1" v-if="currentMember.id && actualCouponUsed > 0">
                             <div class="flex justify-between items-center text-teal-600">
                                 <span class="font-bold whitespace-nowrap flex items-center gap-1"><el-icon><PriceTag /></el-icon> 免收会员券:</span>
                                 <el-switch v-model="isWaiveCoupon" active-text="是" inactive-text="否" inline-prompt @change="recalculatePayments" />
@@ -103,7 +106,7 @@ import { ref, computed, watch } from 'vue'
 import { UserFilled, Ticket, PriceTag, Money } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { usePosStore } from '../hooks/usePosStore'
-import { SettleEngine } from '../engine/settleEngine'
+// 🌟 彻底移除了无用的 SettleEngine，完全解耦！
 
 const props = defineProps(['modelValue', 'payMethodDict', 'memberLevelDesc'])
 const emit = defineEmits(['update:modelValue', 'checkout-success', 'closed'])
@@ -115,19 +118,38 @@ const visible = computed({
 
 const submitLoading = ref(false)
 
+// 🌟 引入核心计算器 getCartItemPrices
 const {
     cartList, currentMember, isWaiveCoupon, manualDiscount, selectedCouponRule, usedCouponCount, paymentList,
-    totalAmount, totalCouponNeeded, actualCouponUsed, finalPayAmount, submitOrder
+    totalAmount, actualCouponUsed, finalPayAmount, submitOrder, getCartItemPrices
 } = usePosStore();
 
+// ==========================================
+// 🌟 修复 2：前端同步后端的“满减池”算法
+// ==========================================
+const participatingAmount = computed(() => {
+    return cartList.value.reduce((sum, item) => {
+        // 只有商品标明了参与满减（isDiscountParticipable === 1）才计入
+        if (item.isDiscountParticipable === 1) {
+            const { unitPrice, unitCoupon } = getCartItemPrices(item, currentMember.value);
+            // 计入口径：单品实付价(基准价 - 会员券) * 数量
+            const finalPrice = unitPrice - unitCoupon;
+            return sum + (finalPrice * item.quantity);
+        }
+        return sum;
+    }, 0);
+});
+
+// 计算可用券，严格对比【participatingAmount】而不是总金额！
 const availableCoupons = computed(() => {
     if (!currentMember.value.id || !Array.isArray(currentMember.value.couponList)) return []
-    return currentMember.value.couponList.filter(c => totalAmount.value >= c.threshold)
+    return currentMember.value.couponList.filter(c => participatingAmount.value >= c.threshold)
 })
 
+// 计算最多可用几张，严格按照【participatingAmount】计算！
 const maxUsableCoupons = computed(() => {
     if (!currentMember.value.id || !selectedCouponRule.value) return 0;
-    const maxByAmount = Math.floor(totalAmount.value / selectedCouponRule.value.threshold);
+    const maxByAmount = Math.floor(participatingAmount.value / selectedCouponRule.value.threshold);
     return Math.min(maxByAmount, selectedCouponRule.value.availableCount || 0);
 })
 
@@ -177,7 +199,16 @@ const handlePaymentChange = (index, val) => {
 const submitOrderAction = async () => {
     if (unpaidAmount.value > 0) return ElMessage.error(`实付不足 ￥${unpaidAmount.value.toFixed(2)}`);
     const validPayments = paymentList.value.filter(p => p.amount > 0).map(p => ({ payMethodCode: p.code, payMethodName: p.name, payAmount: p.amount }));
-    const orderDetails = cartList.value.map(item => ({ goodsId: item.id, quantity: item.quantity, goodsPrice: SettleEngine.getRealPrice(item, currentMember.value) }));
+
+    // 🌟 后端现在只认 goodsId 和 quantity，前面的 goodsPrice 是盲传，直接传最终单品实付价就行了
+    const orderDetails = cartList.value.map(item => {
+        const { unitPrice, unitCoupon } = getCartItemPrices(item, currentMember.value);
+        return {
+            goodsId: item.id,
+            quantity: item.quantity,
+            goodsPrice: unitPrice - unitCoupon
+        };
+    });
 
     submitLoading.value = true
     try {
@@ -186,7 +217,6 @@ const submitOrderAction = async () => {
             usedCouponRuleId: selectedCouponRule.value?.ruleId,
             usedCouponCount: usedCouponCount.value,
             waiveCoupon: isWaiveCoupon.value,
-            // 🌟 核心补齐：前端将整单优惠装进快递盒，交由后端处理！
             manualDiscountAmount: manualDiscount.value || 0,
             orderDetail: orderDetails,
             payments: validPayments
@@ -195,7 +225,7 @@ const submitOrderAction = async () => {
         emit('checkout-success', { total: finalPayAmount.value, paid: totalPaid.value, change: changeAmount.value })
         visible.value = false;
     } catch (error) {
-        ElMessage.error('结账失败')
+        ElMessage.error(error.message || '结账失败，后端计算拦截')
     } finally {
         submitLoading.value = false
     }
