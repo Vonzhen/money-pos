@@ -8,7 +8,7 @@
                         <div class="overflow-hidden">
                             <div class="font-black text-lg text-gray-800 truncate">{{ currentMember.name }}</div>
                             <div class="text-xs text-gray-500 mt-1 flex items-center gap-2">
-                                <span class="bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-bold border border-blue-200">{{ memberLevelDesc }}</span>
+                                <span class="bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-bold border border-blue-200">{{ memberLevelDesc || '会员' }}</span>
                                 <span class="font-mono">{{ currentMember.phone }}</span>
                             </div>
                         </div>
@@ -68,7 +68,7 @@
                 <div class="bg-red-50 p-5 border-b border-red-100 flex justify-between items-center text-red-600 shrink-0">
                     <div>
                         <div class="text-2xl font-black">最终应收</div>
-                        <div v-if="currentMember.id && actualCouponUsed > 0" class="text-sm font-bold text-teal-600 mt-1">(含扣减会员券: ￥{{ actualCouponUsed.toFixed(2) }})</div>
+                        <div v-if="currentMember.id && actualCouponUsed > 0" class="text-sm font-bold text-teal-600 mt-1">(将从账户扣除会员券: ￥{{ actualCouponUsed.toFixed(2) }})</div>
                     </div>
                     <span class="text-6xl font-black tracking-tighter">￥{{ finalPayAmount.toFixed(2) }}</span>
                 </div>
@@ -106,7 +106,6 @@ import { ref, computed, watch } from 'vue'
 import { UserFilled, Ticket, PriceTag, Money } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { usePosStore } from '../hooks/usePosStore'
-// 🌟 彻底移除了无用的 SettleEngine，完全解耦！
 
 const props = defineProps(['modelValue', 'payMethodDict', 'memberLevelDesc'])
 const emit = defineEmits(['update:modelValue', 'checkout-success', 'closed'])
@@ -118,35 +117,27 @@ const visible = computed({
 
 const submitLoading = ref(false)
 
-// 🌟 引入核心计算器 getCartItemPrices
 const {
     cartList, currentMember, isWaiveCoupon, manualDiscount, selectedCouponRule, usedCouponCount, paymentList,
     totalAmount, actualCouponUsed, finalPayAmount, submitOrder, getCartItemPrices
 } = usePosStore();
 
-// ==========================================
-// 🌟 修复 2：前端同步后端的“满减池”算法
-// ==========================================
 const participatingAmount = computed(() => {
     return cartList.value.reduce((sum, item) => {
-        // 只有商品标明了参与满减（isDiscountParticipable === 1）才计入
         if (item.isDiscountParticipable === 1) {
-            const { unitPrice, unitCoupon } = getCartItemPrices(item, currentMember.value);
-            // 计入口径：单品实付价(基准价 - 会员券) * 数量
-            const finalPrice = unitPrice - unitCoupon;
-            return sum + (finalPrice * item.quantity);
+            const { unitPrice } = getCartItemPrices(item, currentMember.value);
+            // 🌟 核心致命修复：unitPrice 已经是应收现金，绝不再减 unitCoupon！
+            return sum + (unitPrice * (Number(item.qty) || 1));
         }
         return sum;
     }, 0);
 });
 
-// 计算可用券，严格对比【participatingAmount】而不是总金额！
 const availableCoupons = computed(() => {
     if (!currentMember.value.id || !Array.isArray(currentMember.value.couponList)) return []
     return currentMember.value.couponList.filter(c => participatingAmount.value >= c.threshold)
 })
 
-// 计算最多可用几张，严格按照【participatingAmount】计算！
 const maxUsableCoupons = computed(() => {
     if (!currentMember.value.id || !selectedCouponRule.value) return 0;
     const maxByAmount = Math.floor(participatingAmount.value / selectedCouponRule.value.threshold);
@@ -186,7 +177,7 @@ const handlePaymentChange = (index, val) => {
     let newVal = val || 0;
     if (paymentList.value[index].code.includes('BALANCE')) {
         const maxBal = currentMember.value.balance || 0;
-        if (newVal > maxBal) { newVal = maxBal; ElMessage.warning('已限制为最大可用本金余额！'); }
+        if (newVal > maxBal) { newVal = maxBal; ElMessage.warning('已限制为最大可用会员余额！'); }
     }
     paymentList.value[index].amount = newVal;
     const aggIndex = paymentList.value.findIndex(p => p.code.includes('AGGREGATE'));
@@ -198,33 +189,48 @@ const handlePaymentChange = (index, val) => {
 
 const submitOrderAction = async () => {
     if (unpaidAmount.value > 0) return ElMessage.error(`实付不足 ￥${unpaidAmount.value.toFixed(2)}`);
-    const validPayments = paymentList.value.filter(p => p.amount > 0).map(p => ({ payMethodCode: p.code, payMethodName: p.name, payAmount: p.amount }));
 
-    // 🌟 后端现在只认 goodsId 和 quantity，前面的 goodsPrice 是盲传，直接传最终单品实付价就行了
+    const validPayments = paymentList.value
+        .filter(p => p.amount > 0)
+        .map(p => ({
+            payMethodCode: p.code,
+            payMethodName: p.name,
+            payAmount: p.amount
+        }));
+
     const orderDetails = cartList.value.map(item => {
-        const { unitPrice, unitCoupon } = getCartItemPrices(item, currentMember.value);
+        const { unitPrice } = getCartItemPrices(item, currentMember.value);
         return {
             goodsId: item.id,
-            quantity: item.quantity,
-            goodsPrice: unitPrice - unitCoupon
+            quantity: Number(item.qty) || 1,
+            // 🌟 核心致命修复：直接向后端传递真正的现金价，不再瞎减券
+            goodsPrice: unitPrice
         };
     });
 
     submitLoading.value = true
     try {
-        await submitOrder({
+        const payload = {
             member: currentMember.value.id || null,
-            usedCouponRuleId: selectedCouponRule.value?.ruleId,
-            usedCouponCount: usedCouponCount.value,
+            usedCouponRuleId: selectedCouponRule.value?.ruleId || null,
+            usedCouponCount: selectedCouponRule.value ? usedCouponCount.value : 0,
             waiveCoupon: isWaiveCoupon.value,
             manualDiscountAmount: manualDiscount.value || 0,
             orderDetail: orderDetails,
             payments: validPayments
-        })
+        };
+
+        await submitOrder(payload)
         ElMessage.success('收款成功！订单已真实入库！')
-        emit('checkout-success', { total: finalPayAmount.value, paid: totalPaid.value, change: changeAmount.value })
+
+        emit('checkout-success', {
+            total: totalAmount.value,
+            paid: totalPaid.value,
+            couponUsed: actualCouponUsed.value
+        })
         visible.value = false;
     } catch (error) {
+        console.error("结账异常", error);
         ElMessage.error(error.message || '结账失败，后端计算拦截')
     } finally {
         submitLoading.value = false

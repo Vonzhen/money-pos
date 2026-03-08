@@ -52,6 +52,7 @@ defineEmits(['action'])
 
 <style scoped>
 .nav-item {
-    @apply flex items-center gap-1.5 cursor-pointer text-sm text-gray-300 hover:text-blue-400 transition-colors duration-200;
+    /* 增加 font-bold 统一加粗 */
+    @apply flex items-center gap-1.5 cursor-pointer text-sm font-bold text-gray-300 hover:text-blue-400 transition-colors duration-200;
 }
 </style>

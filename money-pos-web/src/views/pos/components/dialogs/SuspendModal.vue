@@ -3,13 +3,15 @@
         <el-table :data="suspendedList" border stripe>
             <el-table-column prop="time" label="时间" width="100" align="center" />
             <el-table-column label="会员" width="120" align="center">
-                <template #default="{row}">{{ row.member.name || '普通散客' }}</template>
+                <template #default="{row}">{{ row.member?.name || '普通散客' }}</template>
             </el-table-column>
             <el-table-column label="商品" min-width="150" show-overflow-tooltip>
                 <template #default="{row}">{{ row.cart.map(c => c.name).join(', ') }}</template>
             </el-table-column>
-            <el-table-column label="应收" width="90" align="right">
-                <template #default="{row}"><span class="text-red-500 font-bold">￥{{ row.total.toFixed(2) }}</span></template>
+            <el-table-column label="当时应收" width="110" align="right">
+                <template #default="{row}">
+                    <span class="text-red-500 font-bold">￥{{ (parseFloat(row.total) || 0).toFixed(2) }}</span>
+                </template>
             </el-table-column>
             <el-table-column label="操作" width="90" align="center">
                 <template #default="{$index}">

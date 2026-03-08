@@ -20,9 +20,9 @@
                     <span class="text-gray-500">手机号码: <b class="text-gray-800 font-mono ml-1">{{ form.memberPhone }}</b></span>
                 </div>
                 <div class="flex justify-between items-center pt-1">
-                    <span class="text-gray-500">现有本金: <b class="text-gray-800 ml-1">￥{{ (form.currentBalance || 0).toFixed(2) }}</b></span>
-                    <span class="text-gray-500">现有会员券: <b class="text-gray-800 ml-1">￥{{ (form.currentCoupon || 0).toFixed(2) }}</b></span>
-                    <span class="text-gray-500">现有满减券: <b class="text-gray-800 ml-1">{{ form.currentCouponCount || 0 }} 张</b></span>
+                    <span class="text-gray-500">会员余额: <b class="text-gray-800 ml-1">￥{{ (form.currentBalance || 0).toFixed(2) }}</b></span>
+                    <span class="text-gray-500">会员券: <b class="text-gray-800 ml-1">￥{{ (form.currentCoupon || 0).toFixed(2) }}</b></span>
+                    <span class="text-gray-500">满减券: <b class="text-gray-800 ml-1">{{ form.currentVoucherCount || 0 }} 张</b></span>
                 </div>
             </div>
         </div>
@@ -31,14 +31,14 @@
             <el-form :model="form" label-width="105px" label-position="left">
                 <el-form-item label="业务类型">
                     <el-radio-group v-model="form.type" class="w-full flex">
-                        <el-radio-button value="BALANCE" class="flex-1 text-center">充值本金</el-radio-button>
+                        <el-radio-button value="BALANCE" class="flex-1 text-center">充值余额</el-radio-button>
                         <el-radio-button value="COUPON" class="flex-1 text-center">充值会员券</el-radio-button>
                         <el-radio-button value="VOUCHER" class="flex-1 text-center">发满减券</el-radio-button>
                     </el-radio-group>
                 </el-form-item>
 
                 <template v-if="form.type === 'BALANCE'">
-                    <el-form-item label="实收本金" required><el-input-number v-model="form.amount" :min="0" :step="100" class="!w-full" :controls="false" placeholder="输入充值金额" /></el-form-item>
+                    <el-form-item label="充值余额" required><el-input-number v-model="form.amount" :min="0" :step="100" class="!w-full" :controls="false" placeholder="输入充值金额" /></el-form-item>
                     <el-form-item label="赠送会员券"><el-input-number v-model="form.giftCoupon" :min="0" :step="50" class="!w-full" :controls="false" placeholder="选填，输入赠送金额" /></el-form-item>
                 </template>
 
@@ -54,6 +54,10 @@
                     </el-form-item>
                     <el-form-item label="发放张数" required><el-input-number v-model="form.quantity" :min="1" :step="1" class="!w-full" /></el-form-item>
                 </template>
+
+                <el-form-item label="备注信息">
+                    <el-input v-model="form.remark" type="textarea" :rows="2" placeholder="选填，可输入充值或发券备注（如：店庆活动赠送）" />
+                </el-form-item>
             </el-form>
         </div>
 
@@ -81,7 +85,7 @@ const allCouponRulesList = ref([])
 
 const form = ref({
     memberId: null, memberName: '', memberPhone: '',
-    currentBalance: 0, currentCoupon: 0, currentCouponCount: 0,
+    currentBalance: 0, currentCoupon: 0, currentVoucherCount: 0,
     type: 'BALANCE', amount: undefined, giftCoupon: undefined,
     ruleId: null, quantity: 1, remark: ''
 })
@@ -89,7 +93,7 @@ const form = ref({
 const initData = async () => {
     form.value = {
         memberId: null, memberName: '', memberPhone: '',
-        currentBalance: 0, currentCoupon: 0, currentCouponCount: 0,
+        currentBalance: 0, currentCoupon: 0, currentVoucherCount: 0,
         type: 'BALANCE', amount: undefined, giftCoupon: undefined,
         ruleId: null, quantity: 1, remark: ''
     }
@@ -123,7 +127,7 @@ const handleSelect = (val) => {
     form.value.memberPhone = item.phone;
     form.value.currentBalance = item.balance || 0;
     form.value.currentCoupon = item.coupon || 0;
-    form.value.currentCouponCount = item.couponCount || 0;
+    form.value.currentVoucherCount = item.voucherCount || item.couponCount || 0;
 
     options.value = [item]
 }
@@ -147,8 +151,12 @@ const submit = async () => {
                 currentMember.value.balance += form.value.amount;
                 currentMember.value.coupon += (form.value.giftCoupon || 0)
             }
-            else if (form.value.type === 'COUPON') currentMember.value.coupon += form.value.amount
-            else if (form.value.type === 'VOUCHER') currentMember.value.couponCount += form.value.quantity
+            else if (form.value.type === 'COUPON') {
+                currentMember.value.coupon += form.value.amount
+            }
+            else if (form.value.type === 'VOUCHER') {
+                currentMember.value.voucherCount = (currentMember.value.voucherCount || 0) + form.value.quantity;
+            }
         }
         visible.value = false
     } catch(e) {
