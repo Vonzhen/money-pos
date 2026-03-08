@@ -38,11 +38,11 @@
 
         <el-table-column label="数量" width="160" align="center">
             <template #default="{ row }">
-                <el-input-number v-model="row.qty" :min="1" :max="999" size="small" class="!w-28" />
+                <el-input-number v-model="row.qty" :min="1" :max="9999" size="small" class="!w-28" />
             </template>
         </el-table-column>
 
-        <el-table-column label="小计" width="140" align="right">
+        <el-table-column label="小计" width="160" align="right">
             <template #default="{ row }">
                 <span class="text-red-600 font-bold text-lg">￥{{ getSubtotal(row)?.toFixed(2) }}</span>
             </template>

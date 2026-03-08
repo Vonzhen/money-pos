@@ -8,6 +8,8 @@ import com.money.mapper.PosMemberCouponMapper;
 import com.money.service.OmsOrderDetailService;
 import com.money.service.OmsOrderService;
 import com.money.service.UmsMemberService;
+import com.money.service.GmsGoodsService;
+import com.money.service.GmsBrandService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.Data;
@@ -35,15 +37,13 @@ public class FinanceController {
     private final OmsOrderService omsOrderService;
     private final OmsOrderPayMapper omsOrderPayMapper;
     private final UmsMemberService umsMemberService;
-
-    // 【新增注入】为了三大新功能，引入明细和满减券通道
     private final OmsOrderDetailService omsOrderDetailService;
     private final PosCouponRuleMapper posCouponRuleMapper;
     private final PosMemberCouponMapper posMemberCouponMapper;
+    private final GmsGoodsService gmsGoodsService;
+    private final GmsBrandService gmsBrandService;
 
-    // ==========================================
-    // 1. 原有的：首页今日财务大屏接口
-    // ==========================================
+    // ... [保留 dashboard, profit-ranking 接口不变] ...
     @Operation(summary = "获取今日核心财务数据及图表")
     @GetMapping("/dashboard")
     public FinanceDashboardVO getDashboardData() {
@@ -93,30 +93,22 @@ public class FinanceController {
         return vo;
     }
 
-    // ==========================================
-    // 2. 【全新】🥇 利润暴击榜（商品毛利排行）
-    // ==========================================
     @Operation(summary = "商品利润排行榜(默认近30天)")
     @GetMapping("/profit-ranking")
     public List<ProfitRankVO> getProfitRanking() {
         LocalDateTime startOf30DaysAgo = LocalDateTime.of(LocalDate.now().minusDays(30), LocalTime.MIN);
-
-        // 拿到近30天成功支付的主订单号
         List<String> paidOrderNos = omsOrderService.list(new LambdaQueryWrapper<OmsOrder>()
                         .ge(OmsOrder::getPaymentTime, startOf30DaysAgo).eq(OmsOrder::getStatus, "PAID"))
                 .stream().map(OmsOrder::getOrderNo).collect(Collectors.toList());
 
         if (paidOrderNos.isEmpty()) return new ArrayList<>();
 
-        // 拿到这些订单的所有商品明细
         List<OmsOrderDetail> details = omsOrderDetailService.list(new LambdaQueryWrapper<OmsOrderDetail>()
                 .in(OmsOrderDetail::getOrderNo, paidOrderNos));
 
-        // 按商品名称分组，聚合计算毛利润
         Map<String, ProfitRankVO> rankMap = new HashMap<>();
         for (OmsOrderDetail d : details) {
             BigDecimal qty = new BigDecimal(d.getQuantity());
-            // 单件毛利 = 实际售价 - 进货价
             BigDecimal unitProfit = d.getGoodsPrice().subtract(d.getPurchasePrice() != null ? d.getPurchasePrice() : BigDecimal.ZERO);
             BigDecimal totalProfit = unitProfit.multiply(qty);
             BigDecimal totalSales = d.getGoodsPrice().multiply(qty);
@@ -128,72 +120,155 @@ public class FinanceController {
             rankMap.put(d.getGoodsName(), vo);
         }
 
-        // 按利润从高到低排序，取前 50 名
         return rankMap.values().stream()
                 .sorted((a, b) -> b.getTotalProfit().compareTo(a.getTotalProfit()))
                 .limit(50).collect(Collectors.toList());
     }
 
     // ==========================================
-    // 3. 【全新】💰 收银交接班对账单
+    // 🌟 终极版：绝对自信的实体直接抓取法
     // ==========================================
     @Operation(summary = "收银交接班对账单")
     @GetMapping("/shift-handover")
-    public ShiftHandoverVO getShiftHandover(@RequestParam String startTime) {
-        // 收银员点击交班时，传入她今天上班的时间 (格式 yyyy-MM-dd HH:mm:ss)
+    public ShiftHandoverVO getShiftHandover(@RequestParam String startTime, @RequestParam(required = false) String cashierName) {
         DateTimeFormatter dtf = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
         LocalDateTime shiftStart = LocalDateTime.parse(startTime, dtf);
         LocalDateTime now = LocalDateTime.now();
 
-        // 抓取这段时间的流水
-        List<OmsOrderPay> shiftPays = omsOrderPayMapper.selectList(new LambdaQueryWrapper<OmsOrderPay>()
-                .ge(OmsOrderPay::getCreateTime, shiftStart).le(OmsOrderPay::getCreateTime, now));
-
         ShiftHandoverVO vo = new ShiftHandoverVO();
         vo.setShiftStartTime(startTime);
         vo.setShiftEndTime(now.format(dtf));
+        vo.setCashierName(cashierName != null ? cashierName : "当前当班收银员");
 
-        // 按支付方式分组求和
-        Map<String, BigDecimal> breakdown = shiftPays.stream().collect(Collectors.groupingBy(
-                OmsOrderPay::getPayMethodName, Collectors.mapping(OmsOrderPay::getPayAmount, Collectors.reducing(BigDecimal.ZERO, BigDecimal::add))));
+        // 1. 实收对账 & 会员余额支付 (提取支付流水表)
+        List<OmsOrderPay> shiftPays = omsOrderPayMapper.selectList(new LambdaQueryWrapper<OmsOrderPay>()
+                .ge(OmsOrderPay::getCreateTime, shiftStart).le(OmsOrderPay::getCreateTime, now));
 
-        List<PayPieData> list = new ArrayList<>();
-        BigDecimal totalIncome = BigDecimal.ZERO;
-        for (Map.Entry<String, BigDecimal> entry : breakdown.entrySet()) {
-            list.add(new PayPieData(entry.getKey(), entry.getValue()));
-            // 如果不是本金扣除，就计入抽屉/手机的应有实收总额
-            if (!entry.getKey().contains("余额") && !entry.getKey().contains("本金")) {
-                totalIncome = totalIncome.add(entry.getValue());
+        BigDecimal cashPay = BigDecimal.ZERO;
+        BigDecimal scanPay = BigDecimal.ZERO;
+        BigDecimal balancePay = BigDecimal.ZERO;
+
+        for (OmsOrderPay pay : shiftPays) {
+            if (pay.getPayMethodCode() != null) {
+                if (pay.getPayMethodCode().contains("CASH")) {
+                    cashPay = cashPay.add(pay.getPayAmount());
+                } else if (pay.getPayMethodCode().contains("AGGREGATE") || pay.getPayMethodCode().contains("WXPAY") || pay.getPayMethodCode().contains("ALIPAY")) {
+                    scanPay = scanPay.add(pay.getPayAmount());
+                } else if (pay.getPayMethodCode().contains("BALANCE")) {
+                    balancePay = balancePay.add(pay.getPayAmount());
+                }
             }
         }
-        vo.setPayBreakdown(list);
-        vo.setExpectedTotalIncome(totalIncome);
+        vo.setCashPay(cashPay);
+        vo.setScanPay(scanPay);
+        vo.setBalancePay(balancePay);
+
+        // 2. 抓取主订单：直接读取数据库精准持久化的金额
+        List<OmsOrder> shiftOrders = omsOrderService.list(new LambdaQueryWrapper<OmsOrder>()
+                .ge(OmsOrder::getPaymentTime, shiftStart).le(OmsOrder::getPaymentTime, now)
+                .eq(OmsOrder::getStatus, "PAID"));
+
+        BigDecimal manualDiscount = BigDecimal.ZERO;
+        BigDecimal totalVoucherDiscount = BigDecimal.ZERO;
+        BigDecimal totalMemberCoupon = BigDecimal.ZERO;
+        Integer totalVoucherCount = 0;
+
+        Map<String, BrandContributionVO> brandMap = new HashMap<>();
+
+        if (!shiftOrders.isEmpty()) {
+            List<String> orderNos = shiftOrders.stream().map(OmsOrder::getOrderNo).collect(Collectors.toList());
+
+            // 🌟 直接信任底层数据：提取整单优惠、满减券总抵扣、会员券总耗
+            for (OmsOrder order : shiftOrders) {
+                if (order.getManualDiscountAmount() != null) {
+                    manualDiscount = manualDiscount.add(order.getManualDiscountAmount());
+                }
+                if (order.getUseVoucherAmount() != null) {
+                    totalVoucherDiscount = totalVoucherDiscount.add(order.getUseVoucherAmount());
+                }
+                if (order.getCouponAmount() != null) {
+                    totalMemberCoupon = totalMemberCoupon.add(order.getCouponAmount());
+                }
+            }
+
+            // 仅为获取券的张数去查一下满减券表
+            totalVoucherCount = Math.toIntExact(posMemberCouponMapper.selectCount(new LambdaQueryWrapper<PosMemberCoupon>()
+                    .eq(PosMemberCoupon::getStatus, "USED")
+                    .in(PosMemberCoupon::getOrderNo, orderNos)));
+
+            // 3. 动态回查品牌贡献矩阵 (提取精准的单品营业额与单品会员券耗)
+            List<OmsOrderDetail> details = omsOrderDetailService.list(new LambdaQueryWrapper<OmsOrderDetail>()
+                    .in(OmsOrderDetail::getOrderNo, orderNos));
+
+            Map<Long, String> brandNameCache = new HashMap<>();
+
+            for (OmsOrderDetail d : details) {
+                String brandName = "未知品牌";
+                if (d.getGoodsId() != null) {
+                    if (brandNameCache.containsKey(d.getGoodsId())) {
+                        brandName = brandNameCache.get(d.getGoodsId());
+                    } else {
+                        GmsGoods goods = gmsGoodsService.getById(d.getGoodsId());
+                        if (goods != null && goods.getBrandId() != null) {
+                            GmsBrand brand = gmsBrandService.getById(goods.getBrandId());
+                            if (brand != null && brand.getName() != null) {
+                                brandName = brand.getName();
+                            }
+                        }
+                        brandNameCache.put(d.getGoodsId(), brandName);
+                    }
+                }
+
+                BigDecimal qty = new BigDecimal(d.getQuantity() != null ? d.getQuantity() : 0);
+
+                // 单品营业额 = 实际售价 * 数量 (OmsOrderDetail 里的 goodsPrice 就是最终单价)
+                BigDecimal itemRevenue = BigDecimal.ZERO;
+                if (d.getGoodsPrice() != null) {
+                    itemRevenue = d.getGoodsPrice().multiply(qty);
+                }
+
+                // 单品会员券消耗 = 单品券额 * 数量 (OmsOrderDetail 里的 coupon 就是单品券耗)
+                BigDecimal itemCoupon = BigDecimal.ZERO;
+                if (d.getCoupon() != null) {
+                    itemCoupon = d.getCoupon().multiply(qty);
+                }
+
+                BrandContributionVO bvo = brandMap.getOrDefault(brandName, new BrandContributionVO(brandName, BigDecimal.ZERO, BigDecimal.ZERO));
+                bvo.setRevenue(bvo.getRevenue().add(itemRevenue));
+                bvo.setCouponConsumption(bvo.getCouponConsumption().add(itemCoupon));
+                brandMap.put(brandName, bvo);
+            }
+        }
+
+        vo.setManualDiscount(manualDiscount);
+        vo.setVoucherDiscount(totalVoucherDiscount);
+        vo.setVoucherCount(totalVoucherCount);
+        vo.setMemberCouponPay(totalMemberCoupon);
+
+        List<BrandContributionVO> brandMatrixList = new ArrayList<>(brandMap.values());
+        brandMatrixList.sort((a, b) -> b.getRevenue().compareTo(a.getRevenue()));
+        vo.setBrandMatrix(brandMatrixList);
+        vo.setExpectedTotalIncome(cashPay.add(scanPay));
 
         return vo;
     }
 
-    // ==========================================
-    // 4. 【全新】📉 满减活动“大放血”复盘
-    // ==========================================
+    // ... [保留 campaign-review 接口不变] ...
     @Operation(summary = "满减活动复盘分析")
     @GetMapping("/campaign-review")
     public List<CampaignReviewVO> getCampaignReview() {
-        // 找到所有被核销过的满减券记录
         List<PosMemberCoupon> usedCoupons = posMemberCouponMapper.selectList(new LambdaQueryWrapper<PosMemberCoupon>()
                 .eq(PosMemberCoupon::getStatus, "USED"));
 
         if (usedCoupons.isEmpty()) return new ArrayList<>();
 
-        // 提取这些满减券关联的订单号
         List<String> orderNos = usedCoupons.stream().map(PosMemberCoupon::getOrderNo).filter(Objects::nonNull).distinct().collect(Collectors.toList());
         List<OmsOrder> campaignOrders = orderNos.isEmpty() ? new ArrayList<>() : omsOrderService.list(new LambdaQueryWrapper<OmsOrder>().in(OmsOrder::getOrderNo, orderNos));
         Map<String, OmsOrder> orderMap = campaignOrders.stream().collect(Collectors.toMap(OmsOrder::getOrderNo, o -> o));
 
-        // 提取所有的满减规则
         List<PosCouponRule> allRules = posCouponRuleMapper.selectList(null);
         Map<Long, PosCouponRule> ruleMap = allRules.stream().collect(Collectors.toMap(PosCouponRule::getId, r -> r));
 
-        // 按满减规则ID分组统计
         Map<Long, CampaignReviewVO> reviewMap = new HashMap<>();
 
         for (PosMemberCoupon uc : usedCoupons) {
@@ -202,12 +277,9 @@ public class FinanceController {
             if (rule == null) continue;
 
             CampaignReviewVO vo = reviewMap.getOrDefault(ruleId, new CampaignReviewVO(rule.getName(), 0, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO));
-
-            // 累计核销张数和让利金额
             vo.setUsedCount(vo.getUsedCount() + 1);
             vo.setTotalDiscountGived(vo.getTotalDiscountGived().add(rule.getDiscountAmount()));
 
-            // 如果这笔订单还没被统计过营业额，就加进去 (防止一单用多张券导致营业额重复计算)
             OmsOrder order = orderMap.get(uc.getOrderNo());
             if (order != null && !vo.getTrackedOrderNos().contains(order.getOrderNo())) {
                 vo.setTotalRevenueBrought(vo.getTotalRevenueBrought().add(order.getFinalSalesAmount() != null ? order.getFinalSalesAmount() : BigDecimal.ZERO));
@@ -216,20 +288,15 @@ public class FinanceController {
             reviewMap.put(ruleId, vo);
         }
 
-        // 计算 ROI (投入产出比) 并排序
         List<CampaignReviewVO> result = new ArrayList<>(reviewMap.values());
         for (CampaignReviewVO vo : result) {
             if (vo.getTotalDiscountGived().compareTo(BigDecimal.ZERO) > 0) {
-                // 撬动杠杆 = 带来的营业额 / 让利金额 (比如让利20元，带来100元营业额，杠杆就是 5倍)
                 vo.setRoiMultiplier(vo.getTotalRevenueBrought().divide(vo.getTotalDiscountGived(), 2, RoundingMode.HALF_UP));
             }
         }
         return result.stream().sorted((a, b) -> b.getRoiMultiplier().compareTo(a.getRoiMultiplier())).collect(Collectors.toList());
     }
 
-    // ==========================================
-    // 数据快递盒 (DTO/VO) 区域
-    // ==========================================
     @Data
     public static class FinanceDashboardVO {
         private BigDecimal todayIncome;
@@ -263,19 +330,40 @@ public class FinanceController {
     public static class ShiftHandoverVO {
         private String shiftStartTime;
         private String shiftEndTime;
+        private String cashierName;
+
+        private BigDecimal cashPay;
+        private BigDecimal scanPay;
         private BigDecimal expectedTotalIncome;
-        private List<PayPieData> payBreakdown;
+
+        private BigDecimal balancePay;
+        private BigDecimal memberCouponPay;
+
+        private BigDecimal voucherDiscount;
+        private Integer voucherCount;
+        private BigDecimal manualDiscount;
+
+        private List<BrandContributionVO> brandMatrix;
+    }
+
+    @Data
+    public static class BrandContributionVO {
+        private String brandName;
+        private BigDecimal revenue;
+        private BigDecimal couponConsumption;
+        public BrandContributionVO(String brandName, BigDecimal revenue, BigDecimal couponConsumption) {
+            this.brandName = brandName; this.revenue = revenue; this.couponConsumption = couponConsumption;
+        }
     }
 
     @Data
     public static class CampaignReviewVO {
         private String ruleName;
         private Integer usedCount;
-        private BigDecimal totalDiscountGived; // 放血多少
-        private BigDecimal totalRevenueBrought; // 带来多少营业额
-        private BigDecimal roiMultiplier; // 撬动杠杆倍数
-        private Set<String> trackedOrderNos = new HashSet<>(); // 内部防重复记账用
-
+        private BigDecimal totalDiscountGived;
+        private BigDecimal totalRevenueBrought;
+        private BigDecimal roiMultiplier;
+        private Set<String> trackedOrderNos = new HashSet<>();
         public CampaignReviewVO(String ruleName, Integer usedCount, BigDecimal totalDiscountGived, BigDecimal totalRevenueBrought, BigDecimal roiMultiplier) {
             this.ruleName = ruleName; this.usedCount = usedCount; this.totalDiscountGived = totalDiscountGived; this.totalRevenueBrought = totalRevenueBrought; this.roiMultiplier = roiMultiplier;
         }

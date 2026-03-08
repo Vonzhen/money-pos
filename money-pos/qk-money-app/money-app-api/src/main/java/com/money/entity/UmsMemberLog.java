@@ -25,4 +25,8 @@ public class UmsMemberLog {
      * 关联订单号(消费/退款等业务)
      */
     private String orderNo;
+    // ==========================================
+    // 🌟 核心新增：充值时实际收到的现金（用于核算发券成本）
+    // ==========================================
+    private BigDecimal realAmount;
 }

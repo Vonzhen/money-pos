@@ -45,13 +45,21 @@ public class PosServiceImpl implements PosService {
 
     private final SysBrandConfigMapper sysBrandConfigMapper;
     private final UmsMemberBrandLevelMapper umsMemberBrandLevelMapper;
-
-    // 🌟 新增：为了拆解套餐扣库存，必须注入这个 Mapper
     private final GmsGoodsComboMapper gmsGoodsComboMapper;
 
+    // ==========================================
+    // 🌟 核心重构：实现条码、名称、拼音三合一搜索
+    // ==========================================
     @Override
     public List<PosGoodsVO> listGoods(String barcode) {
-        List<GmsGoods> gmsGoodsList = gmsGoodsService.lambdaQuery().like(StrUtil.isNotBlank(barcode), GmsGoods::getBarcode, barcode).list();
+        // 使用 LambdaQuery 的 or 嵌套逻辑
+        List<GmsGoods> gmsGoodsList = gmsGoodsService.lambdaQuery()
+                .and(StrUtil.isNotBlank(barcode), w ->
+                        w.like(GmsGoods::getBarcode, barcode)
+                                .or().like(GmsGoods::getName, barcode)
+                                .or().like(GmsGoods::getMnemonicCode, barcode.toUpperCase())
+                ).list();
+
         List<PosGoodsVO> posGoodsVOS = BeanMapUtil.to(gmsGoodsList, PosGoodsVO::new);
 
         if (!posGoodsVOS.isEmpty()) {
@@ -144,9 +152,6 @@ public class PosServiceImpl implements PosService {
         Long memberId = settleAccountsDTO.getMember();
         boolean isVip = memberId != null;
 
-        // ==========================================
-        // 🌟 核心优化：批量预加载所有数据，消灭 N+1 查询
-        // ==========================================
         List<Long> goodsIds = settleAccountsDTO.getOrderDetail().stream().map(OmsOrderDetailDTO::getGoodsId).collect(Collectors.toList());
         Map<Long, GmsGoods> goodsMap = gmsGoodsService.listByIds(goodsIds).stream().collect(Collectors.toMap(GmsGoods::getId, g -> g));
 
@@ -154,7 +159,6 @@ public class PosServiceImpl implements PosService {
                 .map(g -> g.getBrandId() != null ? String.valueOf(g.getBrandId()) : "0")
                 .collect(Collectors.toSet());
 
-        // 1. 预加载品牌策略
         Map<String, Boolean> brandCouponStrategyMap = new HashMap<>();
         if (!brandIdSet.isEmpty()) {
             List<SysBrandConfig> configs = sysBrandConfigMapper.selectList(new LambdaQueryWrapper<SysBrandConfig>().in(SysBrandConfig::getBrand, brandIdSet));
@@ -163,7 +167,6 @@ public class PosServiceImpl implements PosService {
             }
         }
 
-        // 2. 预加载会员在这个购物车所有品牌的特权等级
         Map<String, String> memberBrandLevels = new HashMap<>();
         if (isVip && !brandIdSet.isEmpty()) {
             List<UmsMemberBrandLevel> brandLevels = umsMemberBrandLevelMapper.selectList(
@@ -174,7 +177,6 @@ public class PosServiceImpl implements PosService {
             }
         }
 
-        // 3. 预加载这些商品的所有矩阵价格
         Map<Long, Map<String, PosSkuLevelPrice>> goodsLevelPriceMap = new HashMap<>();
         if (!goodsIds.isEmpty()) {
             List<PosSkuLevelPrice> prices = posSkuLevelPriceMapper.selectList(new LambdaQueryWrapper<PosSkuLevelPrice>().in(PosSkuLevelPrice::getSkuId, goodsIds));
@@ -189,9 +191,6 @@ public class PosServiceImpl implements PosService {
         BigDecimal participatingAmount = BigDecimal.ZERO;
         List<OmsOrderDetail> orderDetails = new ArrayList<>();
 
-        // ==========================================
-        // 💰 开始光速计费循环 (纯内存计算)
-        // ==========================================
         for (OmsOrderDetailDTO dto : settleAccountsDTO.getOrderDetail()) {
             GmsGoods goods = goodsMap.get(dto.getGoodsId());
             if (goods == null) throw new BaseException("购物车中存在无效商品，请重新扫码");
@@ -348,9 +347,6 @@ public class PosServiceImpl implements PosService {
         }
         omsOrderDetailService.saveBatch(orderDetails);
 
-        // ==========================================
-        // 📦 修复扣库地雷：判断套餐并拆解子件扣除
-        // ==========================================
         List<Long> comboGoodsIds = goodsMap.values().stream().filter(g -> g.getIsCombo() != null && g.getIsCombo() == 1).map(GmsGoods::getId).collect(Collectors.toList());
         Map<Long, List<GmsGoodsCombo>> comboMap = new HashMap<>();
         if (!comboGoodsIds.isEmpty()) {
@@ -362,7 +358,6 @@ public class PosServiceImpl implements PosService {
             GmsGoods goods = goodsMap.get(detail.getGoodsId());
 
             if (goods.getIsCombo() != null && goods.getIsCombo() == 1) {
-                // 拆解套餐，扣减真实子件库存
                 List<GmsGoodsCombo> combos = comboMap.get(goods.getId());
                 if (combos != null && !combos.isEmpty()) {
                     for (GmsGoodsCombo combo : combos) {
@@ -387,7 +382,6 @@ public class PosServiceImpl implements PosService {
                     }
                 }
             } else {
-                // 普通单品直接扣库
                 goods.setStock((goods.getStock() == null ? 0 : goods.getStock()) - detail.getQuantity());
                 gmsGoodsService.updateById(goods);
 

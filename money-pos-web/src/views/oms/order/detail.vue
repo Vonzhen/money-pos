@@ -19,61 +19,88 @@
 
         <div class="flex flex-col md:flex-row gap-4 mb-6">
             <el-descriptions class="flex-1 shadow-sm rounded-lg overflow-hidden border border-gray-100" title="📋 业务基础信息" :column="2" border>
-                <el-descriptions-item label="交易时间" label-class-name="bg-gray-50 w-28 font-bold text-gray-600">
-                    <span class="font-mono">{{ order.createTime }}</span>
+                <el-descriptions-item label="交易时间" label-class-name="bg-gray-50 w-24 font-bold text-gray-600">
+                    <span class="font-mono text-sm">{{ order.createTime }}</span>
                 </el-descriptions-item>
-                <el-descriptions-item label="收银人员" label-class-name="bg-gray-50 w-28 font-bold text-gray-600">
-                    <span class="font-bold text-gray-800">{{ log.length > 0 ? log[0].createBy : 'System' }}</span>
+                <el-descriptions-item label="收银人员" label-class-name="bg-gray-50 w-24 font-bold text-gray-600">
+                    <span class="font-bold text-gray-800">{{ log.length > 0 ? log[log.length-1].createBy : 'System' }}</span>
                 </el-descriptions-item>
-                <el-descriptions-item label="订单备注" :span="2" label-class-name="bg-gray-50 w-28 font-bold text-gray-600">
+                <el-descriptions-item label="订单备注" :span="2" label-class-name="bg-gray-50 w-24 font-bold text-gray-600">
                     {{ order.remark || '无' }}
                 </el-descriptions-item>
             </el-descriptions>
 
             <el-descriptions class="flex-1 shadow-sm rounded-lg overflow-hidden border border-blue-100" title="👤 会员身份信息" :column="2" border>
-                <el-descriptions-item label="会员姓名" label-class-name="bg-blue-50 w-28 font-bold text-blue-700">
+                <el-descriptions-item label="会员姓名" label-class-name="bg-blue-50 w-24 font-bold text-blue-700">
                     <span class="font-bold text-blue-600">{{ member?.name || order.member || '散客' }}</span>
                 </el-descriptions-item>
-                <el-descriptions-item label="联系电话" label-class-name="bg-blue-50 w-28 font-bold text-blue-700">
+                <el-descriptions-item label="联系电话" label-class-name="bg-blue-50 w-24 font-bold text-blue-700">
                     <span class="font-mono">{{ member?.phone || '-' }}</span>
                 </el-descriptions-item>
-                <el-descriptions-item label="会员类型" label-class-name="bg-blue-50 w-28 font-bold text-blue-700">
-                    {{ member?.type ? dict?.memberTypeKv?.[member.type] : '普通顾客' }}
-                </el-descriptions-item>
-                <el-descriptions-item label="联系地址" label-class-name="bg-blue-50 w-28 font-bold text-blue-700">
-                    {{ (order.province || '') + (order.city || '') + (order.district || '') + (order.address || '-') }}
+                <el-descriptions-item label="多品牌矩阵" :span="2" label-class-name="bg-blue-50 w-24 font-bold text-blue-700">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <span v-if="!member?.brandLevels || Object.keys(member.brandLevels).length === 0" class="font-bold text-gray-500">
+                            普通顾客
+                        </span>
+                        <template v-else>
+                            <el-tag v-for="(levelCode, brand) in member.brandLevels" :key="brand" effect="dark" type="warning" size="small" class="tracking-widest font-bold">
+                                {{ dict?.memberTypeKv?.[levelCode] || levelCode }}
+                            </el-tag>
+                        </template>
+                    </div>
                 </el-descriptions-item>
             </el-descriptions>
         </div>
 
-        <h4 class="mb-3 font-black text-gray-800 flex items-center gap-2 text-lg">
-            <el-icon class="text-orange-500"><Money /></el-icon>财务对账单 (The Ledger)
+        <h4 class="mb-3 font-black text-gray-800 flex items-center gap-2 text-lg mt-6">
+            <el-icon class="text-orange-500"><Money /></el-icon>财务对账单 (Waterfall Ledger)
         </h4>
-        <el-descriptions class="mb-6 shadow-md rounded-lg overflow-hidden border-2 border-orange-100" :column="5" border direction="vertical">
-            <el-descriptions-item label="应收总价" label-class-name="bg-gray-100 text-center font-bold text-gray-600 text-base" class-name="text-center font-bold text-gray-800 text-lg">
-                ￥{{ order.totalAmount || 0 }}
-            </el-descriptions-item>
 
-            <el-descriptions-item label="会员券 (单品直减)" label-class-name="bg-orange-50 text-center font-bold text-orange-600 text-base" class-name="text-center font-bold text-orange-600 text-lg">
-                - ￥{{ order.couponAmount || 0 }}
-                <div v-if="returnCoupon > 0" class="text-xs text-gray-400 mt-1 font-normal">(已退回 ￥{{ returnCoupon }})</div>
-            </el-descriptions-item>
+        <div class="flex items-center justify-between bg-white border border-gray-200 rounded-lg p-4 shadow-sm mb-6 overflow-x-auto">
+            <div class="text-center min-w-[70px]">
+                <div class="text-xs text-gray-500 font-bold mb-1">应收总价</div>
+                <div class="text-lg font-black text-gray-800">￥{{ order.totalAmount || 0 }}</div>
+            </div>
+            <div class="text-gray-300 font-black text-xl">-</div>
 
-            <el-descriptions-item label="满减券 (达标满减)" label-class-name="bg-orange-50 text-center font-bold text-orange-600 text-base" class-name="text-center font-bold text-orange-600 text-lg">
-                - ￥{{ order.useVoucherAmount || 0 }}
-            </el-descriptions-item>
+            <div class="text-center min-w-[70px]">
+                <div class="text-xs text-orange-500 font-bold mb-1">会员券抵扣</div>
+                <div class="text-lg font-black text-orange-500">￥{{ order.couponAmount || 0 }}</div>
+                <div class="text-[10px] text-gray-400 font-bold tracking-widest mt-0.5" v-if="returnCoupon > 0">(退回 ￥{{ returnCoupon }})</div>
+            </div>
+            <div class="text-gray-300 font-black text-xl">-</div>
 
-            <el-descriptions-item label="整单优惠 (手工调整)" label-class-name="bg-red-50 text-center font-bold text-red-500 text-base" class-name="text-center font-bold text-red-500 text-lg">
-                - ￥{{ order.manualDiscountAmount || 0 }}
-            </el-descriptions-item>
+            <div class="text-center min-w-[70px]">
+                <div class="text-xs text-red-400 font-bold mb-1">满减券抵扣</div>
+                <div class="text-lg font-black text-red-500">￥{{ order.useVoucherAmount || 0 }}</div>
+            </div>
+            <div class="text-gray-300 font-black text-xl">-</div>
 
-            <el-descriptions-item label="最终实付" label-class-name="bg-red-100 text-center font-black text-red-700 text-base" class-name="text-center font-black text-red-600 text-2xl">
-                ￥{{ order.payAmount || 0 }}
-                <div v-if="returnPrice > 0" class="text-xs text-gray-500 mt-1 font-bold tracking-widest">(已退款 ￥{{ returnPrice }})</div>
-            </el-descriptions-item>
-        </el-descriptions>
+            <div class="text-center min-w-[70px]">
+                <div class="text-xs text-red-400 font-bold mb-1">整单抹零</div>
+                <div class="text-lg font-black text-red-500">￥{{ order.manualDiscountAmount || 0 }}</div>
+            </div>
+            <div class="text-gray-300 font-black text-xl">=</div>
 
-        <h4 class="mb-3 font-black text-gray-800 flex items-center gap-2 text-lg">
+            <div class="text-center min-w-[70px]">
+                <div class="text-xs text-blue-600 font-bold mb-1">最终实付</div>
+                <div class="text-lg font-black text-blue-600">￥{{ order.payAmount || 0 }}</div>
+            </div>
+            <div class="text-gray-300 font-black text-xl">-</div>
+
+            <div class="text-center min-w-[70px]">
+                <div class="text-xs text-gray-500 font-bold mb-1">现金退款</div>
+                <div class="text-lg font-black text-gray-600">￥{{ returnPrice }}</div>
+            </div>
+            <div class="text-gray-300 font-black text-xl">=</div>
+
+            <div class="text-center bg-green-50 p-2 rounded-xl border-2 border-green-200 min-w-[90px] shadow-inner">
+                <div class="text-xs text-green-700 font-black mb-0.5">当前净收</div>
+                <div class="text-2xl font-black text-green-600">￥{{ netIncome }}</div>
+            </div>
+        </div>
+
+        <h4 class="mb-3 font-black text-gray-800 flex items-center gap-2 text-lg mt-6">
             <el-icon class="text-green-600"><Goods /></el-icon>商品明细审计
         </h4>
         <el-table class="mb-6 border rounded-lg" :data="detail" border :summary-method="getSummaries" show-summary stripe>
@@ -83,27 +110,32 @@
                 <template #default="{row}"><span class="font-bold">{{ row.goodsName }}</span></template>
             </el-table-column>
 
-            <el-table-column prop="salePrice" label="系统零售价" align="right" width="110">
-                <template #default="{row}"><span class="text-gray-400 line-through">￥{{ row.salePrice }}</span></template>
-            </el-table-column>
-            <el-table-column prop="goodsPrice" label="实际成交单价" align="right" width="120">
-                <template #default="{row}"><span class="font-bold text-red-500">￥{{ row.goodsPrice }}</span></template>
+            <el-table-column label="系统价 -> 成交价" align="center" width="160">
+                <template #default="{row}">
+                    <div class="flex items-center justify-center gap-2">
+                        <span class="text-gray-400 line-through text-xs">￥{{ row.salePrice }}</span>
+                        <el-icon class="text-gray-300"><Right /></el-icon>
+                        <span class="font-bold text-red-500">￥{{ row.goodsPrice }}</span>
+                    </div>
+                </template>
             </el-table-column>
 
-            <el-table-column prop="quantity" label="购买数量" align="center" width="100">
-                <template #default="{row}"><span class="font-black text-lg">{{ row.quantity }}</span></template>
+            <el-table-column label="数量状态" align="center" width="120">
+                <template #default="{row}">
+                    <div class="font-black text-lg">{{ row.quantity }}</div>
+                    <div v-if="row.returnQuantity > 0" class="text-xs text-red-500 font-bold">- 已退 {{ row.returnQuantity }}</div>
+                </template>
             </el-table-column>
 
-            <el-table-column label="单品小计(实付)" align="right" width="130">
+            <el-table-column label="单品小计(成交价)" align="right" width="140">
                 <template #default="{ row }">
                     <span class="font-bold">￥{{ NP.times(row.quantity, row.goodsPrice) }}</span>
                 </template>
             </el-table-column>
 
-            <el-table-column label="售后操作" align="center" width="160" fixed="right">
+            <el-table-column label="售后操作" align="center" width="100" fixed="right">
                 <template #default="{ row }">
                     <el-button type="danger" plain size="small" @click="handleReturnGoods(row)" :disabled="row.returnQuantity >= row.quantity || order.status === 'RETURN'">退货</el-button>
-                    <div v-if="row.returnQuantity > 0" class="text-xs font-bold text-red-500 mt-1">已退 x{{ row.returnQuantity }}</div>
                 </template>
             </el-table-column>
         </el-table>
@@ -127,8 +159,8 @@
 
 <script setup>
 import PrintOrder from "@/views/pos/printOrder.vue";
-import { Document, Printer, Money, Goods, Clock } from '@element-plus/icons-vue'
-import { onBeforeMount, ref } from 'vue'
+import { Document, Printer, Money, Goods, Clock, Right } from '@element-plus/icons-vue'
+import { onBeforeMount, ref, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessageBox, ElMessage } from 'element-plus'
 
@@ -146,9 +178,9 @@ const detail = ref([])
 const member = ref({})
 const log = ref([])
 
-// 独立的状态变量，在拿到数据时一次性计算好，坚决不在渲染阶段做加减法！
 const returnPrice = ref(0)
 const returnCoupon = ref(0)
+const netIncome = computed(() => NP.minus(order.value.payAmount || 0, returnPrice.value))
 
 onBeforeMount(async () => {
     dict.value = await dictApi.loadDict(["orderStatus", "memberType"])
@@ -162,17 +194,12 @@ async function loadDetail() {
     member.value = res.member || {}
     log.value = res.orderLog || []
 
-    // 🌟 在这里把“已退金额”算好，保持渲染层纯粹
     returnPrice.value = detail.value.reduce((sum, item) => NP.plus(sum, NP.times(item.returnQuantity || 0, item.goodsPrice || 0)), 0)
     returnCoupon.value = detail.value.reduce((sum, item) => NP.plus(sum, NP.times(item.returnQuantity || 0, item.coupon || 0)), 0)
 }
 
 function print() {
-    printOrder.value.print({
-        info: order.value,
-        detail: detail.value,
-        member: member.value
-    })
+    printOrder.value.print({ info: order.value, detail: detail.value, member: member.value })
 }
 
 function handleReturnGoods(row) {
@@ -183,34 +210,28 @@ function handleReturnGoods(row) {
         inputErrorMessage: '请输入大于 0 的正整数',
     }).then(({ value }) => {
         const qty = parseInt(value)
-        if (qty > (row.quantity - (row.returnQuantity || 0))) {
-            ElMessage.warning('退货数量不能超过当前可退数量！')
-            return
-        }
-        const params = { id: row.id, quantity: qty }
-        orderApi.returnGoods(params).then(() => {
+        if (qty > (row.quantity - (row.returnQuantity || 0))) return ElMessage.warning('退货数量不能超过当前可退数量！')
+        orderApi.returnGoods({ id: row.id, quantity: qty }).then(() => {
             ElMessage.success('退货成功，财务和库存已同步更新！')
-            loadDetail() // 重新拉取最新的绝对真实数据
+            loadDetail()
         })
     }).catch(() => {})
 }
 
-// 纯粹的表格列合计，没有任何业务副作用！
 function getSummaries(param) {
     const { columns, data } = param
     const sums = []
     columns.forEach((column, index) => {
         if (index === 0) { sums[index] = '总计'; return; }
-        if (index === 1 || index === 2 || index === 3 || index === 7) { sums[index] = ''; return; } // 不参与合计的列
+        if (index === 1 || index === 2 || index === 3 || index === 6) { sums[index] = ''; return; }
 
-        // 计算数量、原单价合计、实付单价合计、小计合计
-        if (column.property === 'quantity' || column.label === '单品小计(实付)') {
+        if (column.property === 'quantity' || column.label === '单品小计(成交价)') {
             const values = data.map(item => {
                 if (column.property === 'quantity') return Number(item.quantity)
-                return Number(NP.times(item.quantity || 0, item.goodsPrice || 0)) // 小计
+                return Number(NP.times(item.quantity || 0, item.goodsPrice || 0))
             })
             sums[index] = values.reduce((prev, curr) => !isNaN(curr) ? NP.plus(prev, curr) : prev, 0)
-            if (column.label === '单品小计(实付)') sums[index] = '￥' + sums[index]
+            if (column.label === '单品小计(成交价)') sums[index] = '￥' + sums[index]
         } else {
             sums[index] = ''
         }
@@ -220,7 +241,5 @@ function getSummaries(param) {
 </script>
 
 <style scoped>
-:deep(.el-descriptions__label) {
-    vertical-align: middle !important;
-}
+:deep(.el-descriptions__label) { vertical-align: middle !important; }
 </style>

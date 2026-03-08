@@ -16,4 +16,5 @@ public class UmsMemberLogVO {
     private String remark;      // 备注
     private LocalDateTime createTime;
     private String orderNo;
+    private BigDecimal realAmount;
 }

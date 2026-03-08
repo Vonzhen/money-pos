@@ -140,13 +140,16 @@
                         <el-input-number v-model="rechargeForm.amount" :precision="2" :step="100" class="!w-full" placeholder="顾客实际支付充值的金额(元)" />
                     </el-form-item>
                     <el-form-item label="赠送会员券" prop="giftCoupon">
-                        <el-input-number v-model="rechargeForm.giftCoupon" :precision="2" :step="10" class="!w-full" placeholder="额外赠送的1:1会员抵用券(无则留空)" />
+                        <el-input-number v-model="rechargeForm.giftCoupon" :precision="2" :step="10" class="!w-full" placeholder="额外赠送的会员抵用券(无则留空)" />
                     </el-form-item>
                 </template>
 
                 <template v-if="rechargeForm.type === 'COUPON'">
-                    <el-form-item label="充值会员券" prop="amount" :rules="[{required: true, type: 'number', message: '请输入充值额度'}]">
-                        <el-input-number v-model="rechargeForm.amount" :precision="2" :step="50" class="!w-full" placeholder="单独充值会员抵用券(元)" />
+                    <el-form-item label="充入会员券" prop="amount" :rules="[{required: true, type: 'number', message: '请输入充值额度'}]">
+                        <el-input-number v-model="rechargeForm.amount" :precision="2" :step="100" class="!w-full" placeholder="系统账户增加的虚拟券额 (如：1000)" />
+                    </el-form-item>
+                    <el-form-item label="实收金额" prop="realAmount" :rules="[{required: true, type: 'number', message: '必须输入顾客实际支付现金'}]">
+                        <el-input-number v-model="rechargeForm.realAmount" :precision="2" :step="10" class="!w-full" placeholder="顾客实际支付的现金 (如：100)" />
                     </el-form-item>
                 </template>
 
@@ -184,7 +187,6 @@ import MoneyRR from "@/components/crud/MoneyRR.vue";
 import MoneyCUD from "@/components/crud/MoneyCUD.vue";
 import MoneyUD from "@/components/crud/MoneyUD.vue";
 import MoneyForm from "@/components/crud/MoneyForm.vue";
-import ComputeInput from "@/components/ComputeInput.vue";
 
 import { ref, watch, reactive } from "vue";
 import { useUserStore } from "@/store/index.js";
@@ -223,7 +225,6 @@ const hookedMemberApi = {
     }
 }
 
-// 🌟 统一列名
 const columns = [
     {prop: 'code', label: '会员号', show: false},
     {prop: 'name', label: '会员名称', width: 120},
@@ -340,15 +341,17 @@ const rechargeLoading = ref(false)
 const currentMember = ref({})
 const rechargeFormRef = ref()
 const ruleList = ref([])
-const rechargeForm = ref({ type: 'BALANCE', amount: undefined, giftCoupon: undefined, ruleId: undefined, quantity: 1, remark: '' })
+const rechargeForm = ref({ type: 'BALANCE', amount: undefined, giftCoupon: undefined, realAmount: undefined, ruleId: undefined, quantity: 1, remark: '' })
 
 async function openRecharge(row) {
     currentMember.value = row;
+    // 🌟 重置表单，包含 realAmount
     rechargeForm.value = {
         memberId: row.id,
         type: 'BALANCE',
         amount: undefined,
         giftCoupon: undefined,
+        realAmount: undefined,
         ruleId: undefined,
         quantity: 1,
         remark: ''
@@ -368,6 +371,7 @@ function submitRecharge() {
         if (valid) {
             rechargeLoading.value = true;
             try {
+                // 提交表单
                 await memberApi.recharge(rechargeForm.value);
                 ElMessage.success('业务办理成功，财务台账已自动同步！');
                 rechargeVisible.value = false;

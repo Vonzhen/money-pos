@@ -1,6 +1,7 @@
 package com.money.service.impl;
 
 import cn.hutool.core.util.StrUtil;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.money.web.exception.BaseException;
@@ -18,7 +19,9 @@ import com.money.dto.UmsMember.UmsMemberVO;
 import com.money.entity.OmsOrder;
 import com.money.entity.OmsOrderDetail;
 import com.money.entity.OmsOrderLog;
+import com.money.entity.UmsMemberBrandLevel;
 import com.money.mapper.OmsOrderMapper;
+import com.money.mapper.UmsMemberBrandLevelMapper;
 import com.money.service.GmsGoodsService;
 import com.money.service.OmsOrderDetailService;
 import com.money.service.OmsOrderLogService;
@@ -31,7 +34,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -45,6 +50,8 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
     private final OmsOrderDetailService omsOrderDetailService;
     private final OmsOrderLogService omsOrderLogService;
     private final com.money.mapper.GmsStockLogMapper gmsStockLogMapper;
+    // 🌟 核心引入：用于查询会员的多品牌矩阵信息
+    private final UmsMemberBrandLevelMapper umsMemberBrandLevelMapper;
 
     @Override
     public PageVO<OmsOrderVO> list(OmsOrderQueryDTO queryDTO) {
@@ -84,9 +91,6 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
         return vo;
     }
 
-    // =========================================================================
-    // 🌟 核心重构：所有订单详情的获取，必须经过这个“绝对计算中枢”！
-    // =========================================================================
     @Override
     public OrderDetailVO getOrderDetail(Long id) {
         OrderDetailVO vo = new OrderDetailVO();
@@ -95,20 +99,33 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
 
         OmsOrderVO orderVO = BeanMapUtil.to(order, OmsOrderVO::new);
 
-        // 🌟 贯彻解耦定律：在这里对所有的金额进行终极配平，确保前后端统一。
         BigDecimal total = orderVO.getTotalAmount() != null ? orderVO.getTotalAmount() : BigDecimal.ZERO;
         BigDecimal pay = orderVO.getPayAmount() != null ? orderVO.getPayAmount() : BigDecimal.ZERO;
         BigDecimal coupon = orderVO.getCouponAmount() != null ? orderVO.getCouponAmount() : BigDecimal.ZERO;
         BigDecimal voucher = orderVO.getUseVoucherAmount() != null ? orderVO.getUseVoucherAmount() : BigDecimal.ZERO;
 
-        // 公式兜底计算：解决历史老订单没有存“整单优惠”字段的问题
-        // 整单优惠 = 应收总价 - 实付 - 会员券 - 满减券
         BigDecimal manual = total.subtract(pay).subtract(coupon).subtract(voucher);
         orderVO.setManualDiscountAmount(manual.compareTo(BigDecimal.ZERO) < 0 ? BigDecimal.ZERO : manual);
 
-        // 装入统一的数据包装盒
         vo.setOrder(orderVO);
-        vo.setMember(BeanMapUtil.to(umsMemberService.getById(order.getMemberId()), UmsMemberVO::new));
+
+        // 🌟 核心修复：组装多品牌身份矩阵，传递给前端
+        UmsMemberVO memberVO = null;
+        if (order.getMemberId() != null) {
+            memberVO = BeanMapUtil.to(umsMemberService.getById(order.getMemberId()), UmsMemberVO::new);
+            if (memberVO != null) {
+                List<UmsMemberBrandLevel> levels = umsMemberBrandLevelMapper.selectList(
+                        new LambdaQueryWrapper<UmsMemberBrandLevel>().eq(UmsMemberBrandLevel::getMemberId, memberVO.getId())
+                );
+                Map<String, String> levelMap = new HashMap<>();
+                for (UmsMemberBrandLevel bl : levels) {
+                    levelMap.put(bl.getBrand(), bl.getLevelCode());
+                }
+                memberVO.setBrandLevels(levelMap);
+            }
+        }
+        vo.setMember(memberVO);
+
         vo.setOrderDetail(BeanMapUtil.to(omsOrderDetailService.listByOrderNo(order.getOrderNo()), OmsOrderDetailVO::new));
         vo.setOrderLog(BeanMapUtil.to(omsOrderLogService.listByOrderId(id), OmsOrderLogVO::new));
 

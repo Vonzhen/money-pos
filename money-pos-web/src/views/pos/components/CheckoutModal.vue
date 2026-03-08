@@ -1,76 +1,94 @@
 <template>
     <el-dialog v-model="visible" title="混合收银工作站" width="900px" top="6vh" destroy-on-close class="checkout-dialog" @closed="$emit('closed')">
         <div class="flex gap-4 p-4 pb-0 h-[480px]">
-            <div class="w-[42%] flex flex-col gap-3">
-                <div v-if="currentMember.id" class="bg-gradient-to-br from-blue-50 to-indigo-50 p-4 rounded-lg border border-blue-200 shadow-inner shrink-0">
-                    <div class="flex items-center gap-3 mb-3 border-b border-blue-100 pb-3">
-                        <el-avatar :size="45" class="bg-blue-500 font-bold text-lg">{{ currentMember.name?.charAt(0) || 'V' }}</el-avatar>
+            <div class="w-[42%] flex flex-col gap-2">
+                <div v-if="currentMember.id" class="bg-gradient-to-br from-blue-50 to-indigo-50 p-3 rounded-lg border border-blue-200 shadow-inner shrink-0">
+                    <div class="flex items-center gap-3 mb-2 border-b border-blue-100 pb-2">
+                        <el-avatar :size="40" class="bg-blue-500 font-bold">{{ currentMember.name?.charAt(0) || 'V' }}</el-avatar>
                         <div class="overflow-hidden">
-                            <div class="font-black text-lg text-gray-800 truncate">{{ currentMember.name }}</div>
-                            <div class="text-xs text-gray-500 mt-1 flex items-center gap-2">
-                                <span class="bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-bold border border-blue-200">{{ memberLevelDesc || '会员' }}</span>
+                            <div class="font-black text-base text-gray-800 truncate">{{ currentMember.name }}</div>
+                            <div class="text-xs text-gray-500 mt-0.5 flex items-center gap-2">
+                                <span class="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-bold border border-blue-200">{{ memberLevelDesc || '会员' }}</span>
                                 <span class="font-mono">{{ currentMember.phone }}</span>
                             </div>
                         </div>
                     </div>
-                    <div class="flex justify-between items-center bg-white/60 p-2 rounded">
-                        <span class="text-sm text-gray-600 font-bold">会员余额</span><span class="text-lg font-black text-blue-600">￥{{ (currentMember.balance || 0).toFixed(2) }}</span>
-                    </div>
-                    <div class="flex justify-between items-center bg-white/60 p-2 rounded mt-2">
-                        <span class="text-sm text-gray-600 font-bold">会员券 (抵扣)</span><span class="text-lg font-black text-teal-600">￥{{ (currentMember.coupon || 0).toFixed(2) }}</span>
-                    </div>
-                    <div class="flex justify-between items-center bg-white/60 p-2 rounded mt-2">
-                        <span class="text-sm text-gray-600 font-bold">拥有满减券</span><span class="text-lg font-bold text-orange-500">{{ currentMember.voucherCount || 0 }} 张</span>
+                    <div class="space-y-1.5">
+                        <div class="flex justify-between items-center bg-white/60 px-2 py-1 rounded">
+                            <span class="text-xs text-gray-600 font-bold">会员余额</span><span class="text-base font-black text-blue-600">￥{{ (currentMember.balance || 0).toFixed(2) }}</span>
+                        </div>
+                        <div class="flex justify-between items-center bg-white/60 px-2 py-1 rounded">
+                            <span class="text-xs text-gray-600 font-bold">会员券 (抵扣)</span><span class="text-base font-black text-teal-600">￥{{ (currentMember.coupon || 0).toFixed(2) }}</span>
+                        </div>
+                        <div class="flex justify-between items-center bg-white/60 px-2 py-1 rounded">
+                            <span class="text-xs text-gray-600 font-bold">拥有满减券</span><span class="text-base font-bold text-orange-500">{{ currentMember.voucherCount || 0 }} 张</span>
+                        </div>
                     </div>
                 </div>
-                <div v-else class="bg-gray-50 p-4 rounded-lg border border-dashed flex flex-col items-center justify-center text-gray-400 h-[215px] shrink-0">
+                <div v-else class="bg-gray-50 p-4 rounded-lg border border-dashed flex flex-col items-center justify-center text-gray-400 h-[180px] shrink-0">
                     <el-icon :size="40" class="mb-2"><UserFilled /></el-icon><p class="tracking-widest font-bold">普通散客，无会员特权</p>
                 </div>
 
-                <div class="flex-1 bg-gray-50 p-4 rounded-lg border flex flex-col overflow-y-auto">
-                    <div class="flex flex-col gap-2 mb-2 text-orange-600">
+                <div class="flex-1 bg-gray-50 p-3.5 rounded-lg border flex flex-col justify-between">
+                    <div class="flex flex-col gap-2 text-orange-600">
                         <div class="flex justify-between items-center">
                             <span class="font-bold flex items-center gap-1 whitespace-nowrap"><el-icon><Ticket /></el-icon> 满减券</span>
                             <el-select v-model="selectedCouponRule" placeholder="请选择使用券" class="w-[160px]" size="default" @change="handleCouponRuleChange" clearable value-key="ruleId">
                                 <el-option v-for="c in availableCoupons" :key="c.ruleId" :label="c.name" :value="c" />
                             </el-select>
                         </div>
-                        <div class="flex justify-between items-center mt-2" v-if="selectedCouponRule">
-                            <span class="text-xs text-green-600 font-bold">最多可用 {{ maxUsableCoupons }} 张</span>
-                            <div class="flex items-center gap-2">
-                                <span class="text-sm text-gray-500 whitespace-nowrap">使用张数:</span>
-                                <el-input-number v-model="usedCouponCount" :min="1" :max="maxUsableCoupons" :step="1" class="!w-[100px]" size="small" @change="recalculatePayments" />
-                            </div>
+                        <div class="flex justify-between items-center mt-1 min-h-[32px]">
+                            <template v-if="selectedCouponRule">
+                                <span class="text-xs text-green-600 font-bold">最多可用 {{ maxUsableCoupons }} 张</span>
+                                <div class="flex items-center gap-2">
+                                    <span class="text-xs text-gray-500 whitespace-nowrap">使用:</span>
+                                    <el-input-number v-model="usedCouponCount" :min="1" :max="maxUsableCoupons" :step="1" class="!w-[90px]" size="small" @change="recalculatePayments" />
+                                </div>
+                            </template>
                         </div>
-                        <div v-if="currentMember.id" class="text-[11px] text-gray-400 text-right mt-1">
+                        <div v-if="currentMember.id" class="text-[10px] text-gray-400 text-right">
                             当前符合满减活动的总额: ￥{{ participatingAmount.toFixed(2) }}
                         </div>
                     </div>
 
-                    <div class="mt-auto flex flex-col">
-                        <div class="flex justify-between items-center text-blue-600 border-t pt-3 mb-1">
+                    <div class="flex flex-col mt-2">
+                        <div class="flex justify-between items-center text-blue-600 border-t border-gray-200 pt-3">
                             <span class="font-bold whitespace-nowrap">🏷️ 整单优惠:</span>
                             <el-input-number v-model="manualDiscount" :min="0" :max="totalAmount" :step="1" class="!w-[130px]" placeholder="直减金额" @change="recalculatePayments" />
                         </div>
 
-                        <div class="flex flex-col border-t border-dashed pt-3 mt-1" v-if="currentMember.id && actualCouponUsed > 0">
+                        <div class="flex flex-col border-t border-dashed border-gray-300 pt-3 mt-3 min-h-[45px]" v-show="currentMember.id && theoreticalCouponUsed > 0">
                             <div class="flex justify-between items-center text-teal-600">
                                 <span class="font-bold whitespace-nowrap flex items-center gap-1"><el-icon><PriceTag /></el-icon> 免收会员券:</span>
                                 <el-switch v-model="isWaiveCoupon" active-text="是" inactive-text="否" inline-prompt @change="recalculatePayments" />
                             </div>
-                            <div v-if="!isWaiveCoupon && (currentMember.coupon || 0) < actualCouponUsed" class="text-xs text-red-500 text-right mt-1 font-bold animate-pulse">⚠️ 当前会员券余额不足，请充值或开启免收！</div>
+                            <div v-if="!isWaiveCoupon && (currentMember.coupon || 0) < theoreticalCouponUsed" class="text-[10px] text-red-500 text-right mt-1.5 font-bold animate-pulse leading-tight">
+                                ⚠️ 余额不足以抵扣 ￥{{ theoreticalCouponUsed.toFixed(2) }}，请充值或开启免收！
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <div class="w-[58%] flex flex-col border rounded-lg overflow-hidden shadow-sm">
-                <div class="bg-red-50 p-5 border-b border-red-100 flex justify-between items-center text-red-600 shrink-0">
-                    <div>
-                        <div class="text-2xl font-black">最终应收</div>
-                        <div v-if="currentMember.id && actualCouponUsed > 0" class="text-sm font-bold text-teal-600 mt-1">(将从账户扣除会员券: ￥{{ actualCouponUsed.toFixed(2) }})</div>
+            <div class="w-[65%] flex flex-col border rounded-lg overflow-hidden shadow-sm">
+                <div class="bg-red-50 p-4 lg:p-5 border-b border-red-100 flex justify-between items-center text-red-600 shrink-0">
+                    <div class="flex flex-col justify-center shrink-0 mr-2">
+                        <div class="text-2xl font-black whitespace-nowrap">最终应收</div>
+                        <div v-if="currentMember.id && theoreticalCouponUsed > 0 && !isWaiveCoupon" class="text-xs font-bold text-teal-600 mt-1 whitespace-nowrap">
+                            (扣除会员券: ￥{{ theoreticalCouponUsed.toFixed(2) }})
+                        </div>
+                        <div v-else-if="currentMember.id && theoreticalCouponUsed > 0 && isWaiveCoupon" class="text-xs font-bold text-gray-400 line-through mt-1 whitespace-nowrap">
+                            (免扣会员券: ￥{{ theoreticalCouponUsed.toFixed(2) }})
+                        </div>
                     </div>
-                    <span class="text-6xl font-black tracking-tighter">￥{{ finalPayAmount.toFixed(2) }}</span>
+                    <div class="text-right flex-1 flex justify-end items-center overflow-hidden">
+                        <span
+                            class="font-black tracking-tighter"
+                            :class="finalPayAmount >= 100000 ? 'text-4xl' : (finalPayAmount >= 10000 ? 'text-5xl' : 'text-6xl')"
+                        >
+                            ￥{{ finalPayAmount.toFixed(2) }}
+                        </span>
+                    </div>
                 </div>
                 <div class="flex-1 bg-white p-4 overflow-y-auto">
                     <div class="text-gray-500 font-bold mb-3 flex justify-between items-center border-b pb-2">
@@ -94,7 +112,7 @@
                 </div>
                 <div class="flex gap-3 flex-1 justify-end ml-4">
                     <el-button size="large" class="w-28 font-bold text-base" @click="visible = false">取消(Esc)</el-button>
-                    <el-button type="danger" size="large" class="!text-2xl font-black tracking-widest shadow-md px-8" @click="submitOrderAction" :loading="submitLoading" :disabled="unpaidAmount > 0 || (!isWaiveCoupon && currentMember.id && currentMember.coupon < actualCouponUsed)">确认收款</el-button>
+                    <el-button type="danger" size="large" class="!text-2xl font-black tracking-widest shadow-md px-8" @click="submitOrderAction" :loading="submitLoading" :disabled="unpaidAmount > 0 || (!isWaiveCoupon && currentMember.id && currentMember.coupon < theoreticalCouponUsed)">确认收款</el-button>
                 </div>
             </div>
         </template>
@@ -122,11 +140,24 @@ const {
     totalAmount, actualCouponUsed, finalPayAmount, submitOrder, getCartItemPrices
 } = usePosStore();
 
+// 🌟 核心：计算理论上需要扣减的会员券金额（即使开启免收，这个值依然存在，用于维持组件显示）
+const theoreticalCouponUsed = computed(() => {
+    if (!currentMember.value.id) return 0;
+    return cartList.value.reduce((sum, item) => {
+        // 在这里，我们强制不传入 isWaiveCoupon，从而获取如果“不免收”时的应扣券金额
+        const levelCode = currentMember.value.brandLevels?.[String(item.brandId)] || null;
+        let coupon = 0;
+        if (levelCode && item.levelCoupons && item.levelCoupons[levelCode] != null) {
+            coupon = Number(item.levelCoupons[levelCode]);
+        }
+        return sum + (coupon * (Number(item.qty) || 1));
+    }, 0);
+});
+
 const participatingAmount = computed(() => {
     return cartList.value.reduce((sum, item) => {
         if (item.isDiscountParticipable === 1) {
             const { unitPrice } = getCartItemPrices(item, currentMember.value);
-            // 🌟 核心致命修复：unitPrice 已经是应收现金，绝不再减 unitCoupon！
             return sum + (unitPrice * (Number(item.qty) || 1));
         }
         return sum;
@@ -203,7 +234,6 @@ const submitOrderAction = async () => {
         return {
             goodsId: item.id,
             quantity: Number(item.qty) || 1,
-            // 🌟 核心致命修复：直接向后端传递真正的现金价，不再瞎减券
             goodsPrice: unitPrice
         };
     });

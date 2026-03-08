@@ -9,11 +9,11 @@ export default {
     getProfitRanking() {
         return req({ url: '/finance/profit-ranking', method: 'get' })
     },
-    // 3. 获取交接班对账单
-    getShiftHandover(startTime) {
-        return req({ url: '/finance/shift-handover', method: 'get', params: { startTime } })
+    // 3. 🌟 修复：直接接收 params 对象，完美透传 startTime 和 cashierName
+    getShiftHandover(params) {
+        return req({ url: '/finance/shift-handover', method: 'get', params: params })
     },
-    // 4. 获取满减营销复盘分析 (新增)
+    // 4. 获取满减营销复盘分析
     getCampaignReview() {
         return req({ url: '/finance/campaign-review', method: 'get' })
     }

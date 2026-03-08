@@ -42,44 +42,14 @@
             </template>
         </MoneyCrudTable>
 
-        <el-dialog v-model="detailVisible" :title="detailTitle" width="750px" destroy-on-close>
+        <OrderDetailModal v-model="orderDetailVisible" :order-no="currentSearchOrderNo" />
 
-            <div v-if="(detailType === 'SALE' || detailType === 'RETURN') && orderSummary.order" class="mb-4 bg-gray-50 p-4 rounded-lg border border-gray-200 shadow-sm">
-                <el-descriptions :column="2" size="default" border>
-                    <el-descriptions-item label="👤 会员名字" label-class-name="whitespace-nowrap bg-blue-50 w-28 text-center" class-name="font-bold text-blue-600">
-                        {{ orderSummary.member?.name || '散客' }}
-                    </el-descriptions-item>
-                    <el-descriptions-item label="📱 会员电话" label-class-name="whitespace-nowrap bg-blue-50 w-28 text-center" class-name="font-mono">
-                        {{ orderSummary.member?.phone || '-' }}
-                    </el-descriptions-item>
-
-                    <el-descriptions-item label="💰 应收总价" label-class-name="whitespace-nowrap bg-gray-100 w-28 text-center" class-name="font-bold text-gray-700 text-base">
-                        ￥{{ orderSummary.order?.totalAmount || 0 }}
-                    </el-descriptions-item>
-                    <el-descriptions-item label="💰 最终实付" label-class-name="whitespace-nowrap bg-red-50 w-28 text-center" class-name="font-black text-red-500 text-lg">
-                        ￥{{ orderSummary.order?.payAmount || 0 }}
-                    </el-descriptions-item>
-
-                    <el-descriptions-item label="🎫 各项优惠" :span="2" label-class-name="whitespace-nowrap bg-orange-50 w-28 text-center" class-name="text-orange-600 font-bold leading-relaxed">
-                                            <div class="flex gap-6">
-                                                <span>会员券: ￥{{ orderSummary.order?.couponAmount || 0 }}</span>
-                                                <span>满减券: ￥{{ orderSummary.order?.useVoucherAmount || 0 }}</span>
-                                                <span class="text-red-500">整单优惠: ￥{{ orderSummary.order?.manualDiscountAmount || 0 }}</span>
-                                            </div>
-                                        </el-descriptions-item>
-                </el-descriptions>
-            </div>
-
+        <el-dialog v-model="otherDetailVisible" :title="detailTitle" width="750px" destroy-on-close>
             <el-table :data="detailList" v-loading="detailLoading" stripe border size="default" class="w-full">
                 <el-table-column type="index" label="#" width="50" align="center" />
                 <el-table-column prop="goodsName" label="商品名称" show-overflow-tooltip>
                     <template #default="{row}"><span class="font-bold text-gray-700">{{ row.goodsName }}</span></template>
                 </el-table-column>
-
-                <el-table-column v-if="detailType === 'SALE' || detailType === 'RETURN'" prop="goodsPrice" label="交易单价" width="100" align="right">
-                    <template #default="{row}">￥{{ row.goodsPrice }}</template>
-                </el-table-column>
-
                 <el-table-column prop="quantity" label="数量变动" width="120" align="center">
                     <template #default="{row}">
                         <span class="font-black text-lg" :class="row.quantity > 0 ? 'text-green-600' : 'text-red-600'">
@@ -102,6 +72,9 @@ import { req } from "@/api/index.js";
 import { ref } from "vue";
 import { Document } from "@element-plus/icons-vue";
 
+// 🌟 核心引入
+import OrderDetailModal from "@/components/OrderDetailModal.vue";
+
 const columns = [
     {prop: 'createTime', label: '发生时间', width: 170},
     {prop: 'goodsName', label: '商品名称', minWidth: 160, showOverflowTooltip: true},
@@ -121,43 +94,36 @@ const moneyCrud = ref(new MoneyCrud({
 
 moneyCrud.value.init(moneyCrud)
 
-const detailVisible = ref(false)
+// 用于销售单/退货单的组件状态
+const orderDetailVisible = ref(false)
+const currentSearchOrderNo = ref('')
+
+// 用于非销售单（盘点、入库、报损）的旧状态
+const otherDetailVisible = ref(false)
 const detailLoading = ref(false)
 const detailList = ref([])
 const detailTitle = ref('')
-const detailType = ref('')
-const orderSummary = ref({})
 
 const showDetail = async (row) => {
-    detailVisible.value = true
-    detailLoading.value = true
-    detailList.value = []
-    orderSummary.value = {}
-    detailType.value = row.type
-
-    const typeName = { 'SALE': '销售单', 'RETURN': '退货单', 'INBOUND': '采购入库单', 'CHECK': '盘点单', 'SCRAP': '报损单' }[row.type] || '单据'
-    detailTitle.value = `📦 ${typeName}明细 - ${row.orderNo}`
-
-    try {
-        if (row.type === 'SALE' || row.type === 'RETURN') {
-            const res = await req({ url: '/oms/order/fullDetailByOrderNo', method: 'GET', params: { orderNo: row.orderNo } })
-            const data = res.data || res || {}
-
-            orderSummary.value = data
-
-            detailList.value = (data.orderDetail || []).map(item => ({
-                goodsName: item.goodsName,
-                goodsPrice: item.goodsPrice,
-                quantity: row.type === 'SALE' ? -item.quantity : item.quantity
-            }))
-        } else {
+    if (row.type === 'SALE' || row.type === 'RETURN') {
+        // 如果是卖东西，直接召唤顶级的统一弹窗！
+        currentSearchOrderNo.value = row.orderNo;
+        orderDetailVisible.value = true;
+    } else {
+        // 其他情况（入库、盘点），使用普通弹窗查看明细
+        const typeName = { 'INBOUND': '采购入库单', 'CHECK': '盘点单', 'SCRAP': '报损单' }[row.type] || '单据'
+        detailTitle.value = `📦 ${typeName}明细 - ${row.orderNo}`
+        otherDetailVisible.value = true;
+        detailLoading.value = true;
+        detailList.value = [];
+        try {
             const res = await req({ url: '/gms/stockLog', method: 'GET', params: { orderNo: row.orderNo, size: 500 } })
             detailList.value = res.data?.records || []
+        } catch (e) {
+            console.error(e)
+        } finally {
+            detailLoading.value = false
         }
-    } catch (e) {
-        console.error("单据穿透失败", e)
-    } finally {
-        detailLoading.value = false
     }
 }
 </script>

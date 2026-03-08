@@ -183,12 +183,44 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
 
     @Override
     public void consume(Long id, BigDecimal amount, BigDecimal coupon) {
-        this.lambdaUpdate().setSql("consume_amount = consume_amount + " + amount + ", consume_coupon = consume_coupon + " + coupon + ", coupon = coupon - " + coupon + ", consume_times = consume_times + 1").eq(UmsMember::getId, id).update();
+        this.lambdaUpdate()
+                .setSql("consume_amount = consume_amount + " + amount)
+                .setSql("consume_coupon = consume_coupon + " + coupon)
+                .setSql("coupon = coupon - " + coupon)
+                .setSql("consume_times = consume_times + 1")
+                .eq(UmsMember::getId, id).update();
     }
 
     @Override
     public void rebate(Long id, BigDecimal amount, BigDecimal coupon, boolean increaseCancelTimes) {
-        this.lambdaUpdate().setSql("consume_amount = consume_amount - " + amount + ", consume_coupon = consume_coupon - " + coupon + ", coupon = coupon + " + coupon).setSql(increaseCancelTimes, "cancel_times = cancel_times + 1").eq(UmsMember::getId, id).update();
+        UmsMember member = this.getById(id);
+        if (member == null) return;
+
+        LocalDateTime now = LocalDateTime.now();
+        BigDecimal currentCoupon = member.getCoupon() == null ? BigDecimal.ZERO : member.getCoupon();
+
+        if (coupon != null && coupon.compareTo(BigDecimal.ZERO) > 0) {
+            BigDecimal afterCoupon = currentCoupon.add(coupon);
+            UmsMemberLog couponLog = new UmsMemberLog();
+            couponLog.setMemberId(id);
+            couponLog.setType("COUPON");
+            couponLog.setOperateType("REFUND");
+            couponLog.setAmount(coupon);
+            couponLog.setAfterAmount(afterCoupon);
+            couponLog.setRemark("售后退货：原路返还关联品牌会员券");
+            couponLog.setCreateTime(now);
+            umsMemberLogMapper.insert(couponLog);
+
+            member.setCoupon(afterCoupon);
+        }
+
+        this.lambdaUpdate()
+                .set(UmsMember::getCoupon, member.getCoupon())
+                .setSql("consume_amount = consume_amount - " + (amount != null ? amount : BigDecimal.ZERO))
+                .setSql("consume_coupon = consume_coupon - " + (coupon != null ? coupon : BigDecimal.ZERO))
+                .setSql(increaseCancelTimes, "cancel_times = cancel_times + 1")
+                .eq(UmsMember::getId, id)
+                .update();
     }
 
     @Override
@@ -201,20 +233,50 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
 
         if ("BALANCE".equals(dto.getType())) {
             member.setBalance(member.getBalance().add(dto.getAmount()));
-            UmsMemberLog log = new UmsMemberLog(); log.setMemberId(member.getId()); log.setType("BALANCE"); log.setOperateType("RECHARGE");
-            // 🌟 统一命名
-            log.setAmount(dto.getAmount()); log.setAfterAmount(member.getBalance()); log.setRemark(StrUtil.isNotBlank(dto.getRemark()) ? dto.getRemark() : "前台办理充值会员余额"); log.setCreateTime(now); umsMemberLogMapper.insert(log);
+            UmsMemberLog log = new UmsMemberLog();
+            log.setMemberId(member.getId());
+            log.setType("BALANCE");
+            log.setOperateType("RECHARGE");
+            log.setAmount(dto.getAmount());
+            // 记录余额充值时的实收金额（通常实收等于充值面额，但也可能因为折扣不同）
+            log.setRealAmount(dto.getRealAmount() != null ? dto.getRealAmount() : dto.getAmount());
+            log.setAfterAmount(member.getBalance());
+            log.setRemark(StrUtil.isNotBlank(dto.getRemark()) ? dto.getRemark() : "前台办理充值会员余额");
+            log.setCreateTime(now);
+            umsMemberLogMapper.insert(log);
+
             if (dto.getGiftCoupon() != null && dto.getGiftCoupon().compareTo(BigDecimal.ZERO) > 0) {
                 member.setCoupon(member.getCoupon().add(dto.getGiftCoupon()));
-                UmsMemberLog giftLog = new UmsMemberLog(); giftLog.setMemberId(member.getId()); giftLog.setType("COUPON"); giftLog.setOperateType("GIFT");
-                giftLog.setAmount(dto.getGiftCoupon()); giftLog.setAfterAmount(member.getCoupon()); giftLog.setRemark("充值附送会员券"); giftLog.setCreateTime(now); umsMemberLogMapper.insert(giftLog);
+                UmsMemberLog giftLog = new UmsMemberLog();
+                giftLog.setMemberId(member.getId());
+                giftLog.setType("COUPON");
+                giftLog.setOperateType("GIFT");
+                giftLog.setAmount(dto.getGiftCoupon());
+                giftLog.setRealAmount(BigDecimal.ZERO); // 赠送的券没有实收现金
+                giftLog.setAfterAmount(member.getCoupon());
+                giftLog.setRemark("充值附送会员券");
+                giftLog.setCreateTime(now);
+                umsMemberLogMapper.insert(giftLog);
             }
             this.updateById(member);
+
         } else if ("COUPON".equals(dto.getType())) {
             member.setCoupon(member.getCoupon().add(dto.getAmount()));
-            UmsMemberLog log = new UmsMemberLog(); log.setMemberId(member.getId()); log.setType("COUPON"); log.setOperateType("RECHARGE");
-            log.setAmount(dto.getAmount()); log.setAfterAmount(member.getCoupon()); log.setRemark(StrUtil.isNotBlank(dto.getRemark()) ? dto.getRemark() : "前台直充会员券"); log.setCreateTime(now); umsMemberLogMapper.insert(log);
+
+            // 🌟 核心：改造了充值会员券逻辑，注入了 realAmount
+            UmsMemberLog log = new UmsMemberLog();
+            log.setMemberId(member.getId());
+            log.setType("COUPON");
+            log.setOperateType("RECHARGE");
+            log.setAmount(dto.getAmount()); // 充入的券数值 (如1000)
+            log.setRealAmount(dto.getRealAmount()); // 🌟 实际收到的真金白银 (如100)
+            log.setAfterAmount(member.getCoupon());
+            log.setRemark(StrUtil.isNotBlank(dto.getRemark()) ? dto.getRemark() : "前台直充会员券");
+            log.setCreateTime(now);
+            umsMemberLogMapper.insert(log);
+
             this.updateById(member);
+
         } else if ("VOUCHER".equals(dto.getType())) {
             if (dto.getRuleId() == null || dto.getQuantity() == null || dto.getQuantity() <= 0) throw new BaseException("发券参数错误");
             List<PosMemberCoupon> coupons = new ArrayList<>();
@@ -252,7 +314,6 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
                     this.updateById(member);
 
                     if (member.getBalance().compareTo(BigDecimal.ZERO) > 0) {
-                        // 🌟 统一命名
                         UmsMemberLog log = new UmsMemberLog(); log.setMemberId(member.getId()); log.setType("BALANCE"); log.setOperateType("IMPORT"); log.setAmount(member.getBalance()); log.setAfterAmount(member.getBalance()); log.setRemark("老会员恢复及重新导入会员余额"); log.setCreateTime(now); umsMemberLogMapper.insert(log);
                     }
                     if (member.getCoupon().compareTo(BigDecimal.ZERO) > 0) {
@@ -271,7 +332,6 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
                 this.save(member);
 
                 if (member.getBalance().compareTo(BigDecimal.ZERO) > 0) {
-                    // 🌟 统一命名
                     UmsMemberLog log = new UmsMemberLog(); log.setMemberId(member.getId()); log.setType("BALANCE"); log.setOperateType("IMPORT"); log.setAmount(member.getBalance()); log.setAfterAmount(member.getBalance()); log.setRemark("老会员初始会员余额导入"); log.setCreateTime(now); umsMemberLogMapper.insert(log);
                 }
                 if (member.getCoupon().compareTo(BigDecimal.ZERO) > 0) {

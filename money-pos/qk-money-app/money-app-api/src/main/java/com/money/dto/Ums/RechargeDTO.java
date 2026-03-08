@@ -12,4 +12,5 @@ public class RechargeDTO {
     private Long ruleId;
     private Integer quantity;
     private String remark;
+    private BigDecimal realAmount;
 }

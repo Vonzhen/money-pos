@@ -62,6 +62,7 @@
 
                 <div class="w-full mt-auto">
                     <el-autocomplete
+                        :key="autocompleteKey"
                         ref="scannerInput"
                         v-model="scanKeyword"
                         :fetch-suggestions="querySearchAsync"
@@ -70,6 +71,7 @@
                         class="w-full scanner-input"
                         value-key="name"
                         :trigger-on-focus="false"
+                        :hide-loading="true"
                         @select="handleSelect"
                         @keyup.enter="handleScan"
                     >
@@ -128,7 +130,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, nextTick } from 'vue'
 import { Search, Delete, User, Unlock, Tickets, Timer, Monitor } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { req } from '@/api/index.js'
@@ -141,10 +143,19 @@ const { cartList, currentMember } = usePosStore()
 const scanKeyword = ref('')
 const scannerInput = ref(null)
 
-// 🌟 核心修复 1：剥离焦点以瞬间销毁残留提示框，随后延时 100ms 无缝重新聚焦
+// 🌟 新增：核武器开关，用于强制销毁并重建 el-autocomplete 组件
+const autocompleteKey = ref(0)
+
+// 🌟 物理重置法：只要调用这个方法，旧的搜索框直接灰飞烟灭，换个全新的上来
+const resetScanner = async () => {
+    scanKeyword.value = '';
+    autocompleteKey.value++; // Vue 检测到 Key 变化，立即执行组件销毁与重建
+    await nextTick();        // 等待新的组件渲染完毕
+    scannerInput.value?.focus(); // 给全新的组件赋予焦点
+}
+
 const focusInput = () => {
-    scannerInput.value?.blur();
-    setTimeout(() => { scannerInput.value?.focus() }, 100);
+    scannerInput.value?.focus();
 }
 
 const getLevelName = (code) => {
@@ -193,7 +204,10 @@ const computedCouponUsed = computed(() => {
 });
 
 const querySearchAsync = async (queryString, cb) => {
-    if (!queryString) { cb([]); return; }
+    if (!queryString || queryString.trim() === '') {
+        cb([]);
+        return;
+    }
     try {
         const res = await req({ url: '/pos/goods', method: 'GET', params: { barcode: queryString } });
         cb(res.data || []);
@@ -209,32 +223,29 @@ const handleSelect = (item) => {
     } else {
         cartList.value.push({ ...item, qty: 1 });
     }
-    scanKeyword.value = '';
-    focusInput();
+    // 选中商品后，直接用核武器重建输入框
+    resetScanner();
 }
 
 const handleScan = async () => {
     if (!scanKeyword.value) return;
 
-    // 🌟 核心修复 2：按下回车的瞬间，立刻切断焦点，强杀下拉提示框
-    scannerInput.value?.blur();
-
     try {
         const res = await req({ url: '/pos/goods', method: 'GET', params: { barcode: scanKeyword.value } });
         const items = res.data || [];
+
         if (items.length === 1) {
             handleSelect(items[0]);
         } else if (items.length > 1) {
             ElMessage.warning('匹配到多个商品，请在列表中手动选择');
-            // 只有当有多个商品必须让人选的时候，才重新主动聚焦拉出提示框
-            setTimeout(() => { scannerInput.value?.focus() }, 100);
+            scannerInput.value?.focus();
         } else {
             ElMessage.error('未找到该商品条码');
-            scanKeyword.value = '';
-            focusInput();
+            // 没找到商品，也要重建输入框
+            resetScanner();
         }
     } catch (e) {
-        focusInput();
+        resetScanner();
     }
 }
 

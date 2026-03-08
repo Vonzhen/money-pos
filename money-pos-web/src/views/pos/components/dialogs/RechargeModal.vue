@@ -43,7 +43,12 @@
                 </template>
 
                 <template v-if="form.type === 'COUPON'">
-                    <el-form-item label="充值会员券" required><el-input-number v-model="form.amount" :min="0" :step="50" class="!w-full" :controls="false" placeholder="输入充值券额" /></el-form-item>
+                    <el-form-item label="充值会员券" required>
+                        <el-input-number v-model="form.amount" :min="0" :step="100" class="!w-full" :controls="false" placeholder="输入系统增加的券额 (如：1000)" />
+                    </el-form-item>
+                    <el-form-item label="实收金额" required>
+                        <el-input-number v-model="form.realAmount" :min="0" :step="10" class="!w-full" :controls="false" placeholder="输入顾客实际支付的现金 (如：100)" />
+                    </el-form-item>
                 </template>
 
                 <template v-if="form.type === 'VOUCHER'">
@@ -63,7 +68,7 @@
 
         <template #footer>
             <el-button @click="visible = false" size="large">取消</el-button>
-            <el-button type="primary" class="w-32 font-bold" size="large" :disabled="!form.memberId" @click="submit" :loading="submitLoading">确定办理</el-button>
+            <el-button type="primary" class="w-32 font-bold" size="large" :disabled="!form.memberId || (form.type === 'COUPON' && (form.amount == null || form.realAmount == null))" @click="submit" :loading="submitLoading">确定办理</el-button>
         </template>
     </el-dialog>
 </template>
@@ -86,7 +91,7 @@ const allCouponRulesList = ref([])
 const form = ref({
     memberId: null, memberName: '', memberPhone: '',
     currentBalance: 0, currentCoupon: 0, currentVoucherCount: 0,
-    type: 'BALANCE', amount: undefined, giftCoupon: undefined,
+    type: 'BALANCE', amount: undefined, giftCoupon: undefined, realAmount: undefined, // 🌟 增加 realAmount
     ruleId: null, quantity: 1, remark: ''
 })
 
@@ -94,7 +99,7 @@ const initData = async () => {
     form.value = {
         memberId: null, memberName: '', memberPhone: '',
         currentBalance: 0, currentCoupon: 0, currentVoucherCount: 0,
-        type: 'BALANCE', amount: undefined, giftCoupon: undefined,
+        type: 'BALANCE', amount: undefined, giftCoupon: undefined, realAmount: undefined,
         ruleId: null, quantity: 1, remark: ''
     }
     options.value = []
@@ -139,6 +144,7 @@ const submit = async () => {
             memberId: form.value.memberId,
             type: form.value.type,
             amount: form.value.amount || 0,
+            realAmount: form.value.type === 'COUPON' ? (form.value.realAmount || 0) : undefined, // 🌟 传入实收金额
             giftCoupon: form.value.giftCoupon || 0,
             ruleId: form.value.ruleId,
             quantity: form.value.quantity || 0,
