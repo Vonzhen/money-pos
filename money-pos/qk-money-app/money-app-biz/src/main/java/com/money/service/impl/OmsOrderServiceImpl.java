@@ -157,7 +157,8 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
                 stockLog.setCreateTime(LocalDateTime.now());
                 gmsStockLogMapper.insert(stockLog);
             });
-            umsMemberService.rebate(order.getMemberId(), returnPrice.get(), returnCoupon.get(), true);
+            // 🌟 核心修复：整单退货，传入单号
+            umsMemberService.rebate(order.getMemberId(), returnPrice.get(), returnCoupon.get(), true, order.getOrderNo());
             order.setFinalSalesAmount(BigDecimal.ZERO);
             order.setStatus(OrderStatusEnum.RETURN.name());
             this.updateById(order);
@@ -188,7 +189,10 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
         this.updateById(order);
 
         BigDecimal returnCoupon = orderDetail.getCoupon().multiply(new BigDecimal(returnQty));
-        umsMemberService.rebate(order.getMemberId(), returnPrice, returnCoupon, false);
+
+        // 🌟 核心修复：单品退货，传入单号
+        umsMemberService.rebate(order.getMemberId(), returnPrice, returnCoupon, false, order.getOrderNo());
+
         gmsGoodsService.updateStock(orderDetail.getGoodsId(), returnQty);
 
         com.money.entity.GmsGoods goods = gmsGoodsService.getById(orderDetail.getGoodsId());

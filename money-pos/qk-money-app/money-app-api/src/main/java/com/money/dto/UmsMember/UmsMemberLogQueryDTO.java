@@ -29,5 +29,6 @@ public class UmsMemberLogQueryDTO extends PageQueryRequest {
     public Map<String, String> sortKeyMap() {
         // 资金流水默认按时间倒序，不需要特殊的排序字段映射，返回空即可防止报错
         return Collections.emptyMap();
+
     }
 }

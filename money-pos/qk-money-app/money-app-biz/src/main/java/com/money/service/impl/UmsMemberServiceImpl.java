@@ -192,7 +192,7 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
     }
 
     @Override
-    public void rebate(Long id, BigDecimal amount, BigDecimal coupon, boolean increaseCancelTimes) {
+    public void rebate(Long id, BigDecimal amount, BigDecimal coupon, boolean increaseCancelTimes, String orderNo) {
         UmsMember member = this.getById(id);
         if (member == null) return;
 
@@ -208,6 +208,8 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
             couponLog.setAmount(coupon);
             couponLog.setAfterAmount(afterCoupon);
             couponLog.setRemark("售后退货：原路返还关联品牌会员券");
+            // 🌟 核心修复：将会员券退回流水与订单号强绑定！
+            couponLog.setOrderNo(orderNo);
             couponLog.setCreateTime(now);
             umsMemberLogMapper.insert(couponLog);
 

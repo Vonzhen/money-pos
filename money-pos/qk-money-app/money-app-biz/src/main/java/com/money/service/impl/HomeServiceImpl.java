@@ -43,4 +43,21 @@ public class HomeServiceImpl implements HomeService {
         homeCountVO.setInventoryValue(gmsGoodsService.getCurrentStockValue());
         return homeCountVO;
     }
+    private final com.money.mapper.OmsOrderDetailMapper omsOrderDetailMapper;
+    private final com.money.mapper.UmsMemberBrandLevelMapper umsMemberBrandLevelMapper;
+
+    @Override
+    public com.money.dto.Home.HomeChartsVO getChartsData() {
+        com.money.dto.Home.HomeChartsVO chartsVO = new com.money.dto.Home.HomeChartsVO();
+
+        // 获取7天前的时间零点
+        LocalDateTime sevenDaysAgo = LocalDateTime.now().minusDays(6).withHour(0).withMinute(0).withSecond(0).withNano(0);
+
+        // 强类型安全装载数据
+        chartsVO.setTrendData(omsOrderDetailMapper.getTrendData(sevenDaysAgo));
+        chartsVO.setPieData(omsOrderDetailMapper.getBrandPieData());
+        chartsVO.setBarData(umsMemberBrandLevelMapper.getMemberBarData());
+
+        return chartsVO;
+    }
 }

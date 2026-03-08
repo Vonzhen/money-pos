@@ -78,16 +78,16 @@ import { Document } from '@element-plus/icons-vue'
 // 🌟 核心引入
 import OrderDetailModal from "@/components/OrderDetailModal.vue";
 
-// 🌟 在列定义中加入 realAmount
+// 🌟 核心修复：拓宽变动明细、实收现金、变动后余额的列宽
 const columns = [
     {prop: 'createTime', label: '发生时间', width: 165},
     {prop: 'memberName', label: '会员姓名', width: 100},
     {prop: 'memberPhone', label: '手机号', width: 120},
     {prop: 'operateType', label: '业务类型', width: 100, align: 'center'},
     {prop: 'type', label: '资金账户', width: 140, align: 'center'},
-    {prop: 'amount', label: '变动明细', width: 130, align: 'right'},
-    {prop: 'realAmount', label: '实收现金', width: 110, align: 'right'}, // 🌟 新增字段
-    {prop: 'afterAmount', label: '变动后余额', width: 130, align: 'right'},
+    {prop: 'amount', label: '变动明细', width: 160, align: 'right'}, // 拓宽至 160
+    {prop: 'realAmount', label: '实收现金', width: 120, align: 'right'}, // 拓宽至 120
+    {prop: 'afterAmount', label: '变动后余额', width: 160, align: 'right'}, // 拓宽至 160
     {prop: 'orderNo', label: '关联单号', width: 180, align: 'center'},
     {prop: 'remark', label: '备注说明', minWidth: 150},
 ]

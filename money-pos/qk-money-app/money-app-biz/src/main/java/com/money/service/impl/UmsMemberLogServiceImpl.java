@@ -27,23 +27,50 @@ public class UmsMemberLogServiceImpl extends ServiceImpl<UmsMemberLogMapper, Ums
 
     @Override
     public PageVO<UmsMemberLogVO> list(UmsMemberLogQueryDTO queryDTO) {
+
+        // 🌟 修复手机号搜索
+        Long searchMemberId = queryDTO.getMemberId();
+        if (StrUtil.isNotBlank(queryDTO.getPhone())) {
+            UmsMember member = umsMemberMapper.selectOne(
+                    new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<UmsMember>()
+                            .eq(UmsMember::getPhone, queryDTO.getPhone())
+            );
+            if (member != null) {
+                searchMemberId = member.getId();
+            } else {
+                // 🌟 修复编译报错：如果查不到人，赋一个绝对不存在的 ID (-1L)
+                // 让底下的标准分页查询去查，自然会完美返回 0 条记录的标准 PageVO 格式
+                searchMemberId = -1L;
+            }
+        }
+
         // 1. 分页查询流水表
         Page<UmsMemberLog> page = this.lambdaQuery()
-                .eq(queryDTO.getMemberId() != null, UmsMemberLog::getMemberId, queryDTO.getMemberId())
+                .eq(searchMemberId != null, UmsMemberLog::getMemberId, searchMemberId)
                 .eq(StrUtil.isNotBlank(queryDTO.getType()), UmsMemberLog::getType, queryDTO.getType())
                 .eq(StrUtil.isNotBlank(queryDTO.getOperateType()), UmsMemberLog::getOperateType, queryDTO.getOperateType())
                 .orderByDesc(UmsMemberLog::getCreateTime)
                 .page(PageUtil.toPage(queryDTO));
 
-        // 2. 转换并关联查询会员名称
+        // 2. 转换 VO
         PageVO<UmsMemberLogVO> pageVO = PageUtil.toPageVO(page, UmsMemberLogVO::new);
 
-        if (!pageVO.getRecords().isEmpty()) {
-            List<Long> memberIds = pageVO.getRecords().stream().map(log -> this.getById(log.getId()).getMemberId()).collect(Collectors.toList());
-            // 为了简单直接，我们在这里循环补全一下名字（实际大规模数据建议用 Join 或 Map）
-            for (UmsMemberLogVO vo : pageVO.getRecords()) {
-                UmsMemberLog rawLog = this.getById(vo.getId());
-                UmsMember m = umsMemberMapper.selectById(rawLog.getMemberId());
+        if (page.getRecords() != null && !page.getRecords().isEmpty()) {
+            java.util.Set<Long> memberIds = page.getRecords().stream()
+                    .map(UmsMemberLog::getMemberId)
+                    .collect(java.util.stream.Collectors.toSet());
+
+            java.util.Map<Long, UmsMember> memberMap = new java.util.HashMap<>();
+            if (!memberIds.isEmpty()) {
+                java.util.List<UmsMember> members = umsMemberMapper.selectBatchIds(memberIds);
+                memberMap = members.stream().collect(java.util.stream.Collectors.toMap(UmsMember::getId, m -> m));
+            }
+
+            for (int i = 0; i < page.getRecords().size(); i++) {
+                UmsMemberLog rawLog = page.getRecords().get(i);
+                UmsMemberLogVO vo = pageVO.getRecords().get(i);
+
+                UmsMember m = memberMap.get(rawLog.getMemberId());
                 if (m != null) {
                     vo.setMemberName(m.getName());
                     vo.setMemberPhone(m.getPhone());

@@ -45,7 +45,7 @@ public interface UmsMemberService extends IService<UmsMember> {
      * @param coupon              优惠券
      * @param increaseCancelTimes 增加退单次数
      */
-    void rebate(Long id, BigDecimal amount, BigDecimal coupon, boolean increaseCancelTimes);
+    void rebate(Long id, BigDecimal amount, BigDecimal coupon, boolean increaseCancelTimes, String orderNo);
 
     void recharge(com.money.dto.Ums.RechargeDTO dto);
 

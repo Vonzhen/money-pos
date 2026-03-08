@@ -250,6 +250,21 @@ public class GmsGoodsServiceImpl extends ServiceImpl<GmsGoodsMapper, GmsGoods> i
 
     @Override
     public BigDecimal getCurrentStockValue() {
+        try {
+            // 🌟 严格遵守后端计算原则：在底层通过框架安全聚合，前端只拿结果
+            com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<com.money.entity.GmsGoods> wrapper = new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<>();
+
+            // 让数据库直接算出 SUM(库存 * 进价)，并过滤掉库存不足 0 的异常数据
+            wrapper.select("IFNULL(SUM(stock * purchase_price), 0) AS totalValue")
+                    .gt("stock", 0);
+
+            java.util.Map<String, Object> map = this.getMap(wrapper);
+            if (map != null && map.get("totalValue") != null) {
+                return new BigDecimal(map.get("totalValue").toString());
+            }
+        } catch (Exception e) {
+            log.error("库存总货值计算异常: ", e);
+        }
         return BigDecimal.ZERO;
     }
 

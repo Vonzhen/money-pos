@@ -17,4 +17,6 @@ public interface HomeService {
      * @return {@link HomeCountVO}
      */
     HomeCountVO homeCount();
+    // 返回我们定义好的强类型大包装对象
+    com.money.dto.Home.HomeChartsVO getChartsData();
 }

@@ -25,4 +25,10 @@ public class HomeController {
         return homeService.homeCount();
     }
 
+    @io.swagger.v3.oas.annotations.Operation(summary = "大屏图表聚合数据")
+    @GetMapping("/charts")
+    public com.money.dto.Home.HomeChartsVO getChartsData() {
+        return homeService.getChartsData();
+    }
+
 }
