@@ -4,19 +4,19 @@
             <el-card shadow="hover" class="w-full" :body-style="{ padding: '20px' }">
                 <div class="flex items-center gap-4">
                     <el-icon class="text-3xl text-warning"><Aim /></el-icon>
-                    <el-input
+
+                    <SmartGoodsSelector
                         ref="scanInputRef"
-                        v-model.trim="scanBarcode"
-                        placeholder="扫码枪滴入要盘点的商品，或输入条码回车"
-                        class="!w-1/2 !text-lg"
-                        size="large"
-                        clearable
-                        @keyup.enter="handleScan"
-                    >
-                        <template #append>
-                            <el-button type="warning" @click="handleScan">定位商品</el-button>
-                        </template>
-                    </el-input>
+                        v-model="scanBarcode"
+                        mode="report"
+                        placeholder="扫码枪滴入要盘点的商品，或拼音联想点选"
+                        class="!w-1/2"
+                        @select="handleSelectGoods"
+                        @search="handleScan"
+                    />
+
+                    <el-button type="warning" @click="handleScan(scanBarcode)">定位商品</el-button>
+
                     <div class="ml-auto text-gray-500 text-sm">
                         输入货架上的【实际数量】，系统将直接用该数量覆盖账面库存
                     </div>
@@ -24,7 +24,7 @@
             </el-card>
 
             <el-card shadow="hover" class="flex-1 overflow-hidden" :body-style="{ padding: '10px' }">
-                <el-table :data="checkList" border stripe height="calc(100vh - 380px)" size="large" empty-text="等待扫码盘点...">
+                <el-table :data="checkList" border stripe height="calc(100vh - 380px)" size="large" empty-text="等待扫描盘点...">
                     <el-table-column type="index" label="序号" width="60" align="center" />
                     <el-table-column prop="barcode" label="条码" width="160" />
                     <el-table-column prop="name" label="商品名称" min-width="200" />
@@ -75,11 +75,14 @@
 
 <script setup>
 import PageWrapper from "@/components/PageWrapper.vue";
-import { ref, nextTick } from 'vue';
+import { ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { Aim } from '@element-plus/icons-vue';
 import goodsApi from "@/api/gms/goods.js";
 import inventoryApi from "@/api/gms/inventory.js";
+
+// 🌟 引入刚封装好的智能神器
+import SmartGoodsSelector from '@/components/SmartGoodsSelector.vue';
 
 const scanInputRef = ref(null);
 const scanBarcode = ref('');
@@ -87,53 +90,63 @@ const checkList = ref([]);
 const remark = ref('');
 const submitLoading = ref(false);
 
-// 处理扫码定位商品
-const handleScan = async () => {
-    if (!scanBarcode.value) return;
+// 🌟 核心抽离：将商品塞进盘点单的逻辑
+const addGoodsToList = (goods) => {
+    const existItem = checkList.value.find(item => item.barcode === goods.barcode || item.goodsId === goods.id);
+    if (existItem) {
+        ElMessage.success(`该商品已在下方列表中，请直接修改实际数量`);
+    } else {
+        checkList.value.unshift({
+            goodsId: goods.id,
+            barcode: goods.barcode,
+            name: goods.name,
+            currentStock: goods.stock || 0,
+            qty: goods.stock || 0 // 盘点默认带出系统数量，方便微调
+        });
+    }
+    // 添加完毕后，清空搜索框准备查下一个
+    scanInputRef.value?.resetScanner();
+};
 
-    const barcode = scanBarcode.value;
-    scanBarcode.value = '';
+let isSelecting = false; // 防重复双杀拦截器
 
-    // 如果已经在列表里，提示并高亮（盘点不建议自动加数量，而是让人手动核对总数）
+// 1. 鼠标点选联想列表触发
+const handleSelectGoods = (item) => {
+    isSelecting = true;
+    addGoodsToList(item);
+    setTimeout(() => { isSelecting = false; }, 200);
+};
+
+// 2. 扫码枪或回车键直接触发
+const handleScan = async (val) => {
+    if (isSelecting) return;
+    const barcode = typeof val === 'string' ? val : scanBarcode.value;
+    if (!barcode) return;
+
+    // 先查本地列表
     const existItem = checkList.value.find(item => item.barcode === barcode);
     if (existItem) {
         ElMessage.success(`该商品已在下方列表中，请直接修改实际数量`);
-        focusInput();
+        scanInputRef.value?.resetScanner();
         return;
     }
 
-    // 如果不在列表里，去后台查
+    // 若不在列表中，去后台穿透查询
     try {
         const res = await goodsApi.list({ barcode: barcode, isCombo: 0, current: 1, size: 1 });
         if (res.data.records && res.data.records.length > 0) {
-            const goods = res.data.records[0];
-            // 把查到的商品塞进盘点单，默认实际数量等于系统数量，方便微调
-            checkList.value.unshift({
-                goodsId: goods.id,
-                barcode: goods.barcode,
-                name: goods.name,
-                currentStock: goods.stock,
-                qty: goods.stock // 盘点默认带出系统数量
-            });
+            addGoodsToList(res.data.records[0]);
         } else {
-            ElMessage.warning('未找到条码为 ' + barcode + ' 的商品！');
+            ElMessage.warning('未找到该商品！');
+            scanInputRef.value?.resetScanner();
         }
     } catch (e) {
         console.error(e);
     }
-    focusInput();
 };
 
 const removeItem = (index) => {
     checkList.value.splice(index, 1);
-};
-
-const focusInput = () => {
-    nextTick(() => {
-        if (scanInputRef.value) {
-            scanInputRef.value.focus();
-        }
-    });
 };
 
 // 提交盘点单
@@ -153,7 +166,7 @@ const submitOrder = async () => {
             remark: remark.value,
             details: checkList.value.map(item => ({
                 goodsId: item.goodsId,
-                qty: item.qty // 把实际数量发给后端
+                qty: item.qty // 核心：把人工确认的实际数量发给后端
             }))
         };
 
@@ -163,7 +176,7 @@ const submitOrder = async () => {
 
         checkList.value = [];
         remark.value = '';
-        focusInput();
+        scanInputRef.value?.resetScanner();
 
     } catch (e) {
         console.error(e);

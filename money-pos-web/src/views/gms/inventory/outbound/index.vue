@@ -4,19 +4,19 @@
             <el-card shadow="hover" class="w-full" :body-style="{ padding: '20px' }">
                 <div class="flex items-center gap-4">
                     <el-icon class="text-3xl text-danger"><Delete /></el-icon>
-                    <el-input
+
+                    <SmartGoodsSelector
                         ref="scanInputRef"
-                        v-model.trim="scanBarcode"
-                        placeholder="扫码枪滴入要报损的商品，或输入条码回车"
-                        class="!w-1/2 !text-lg"
-                        size="large"
-                        clearable
-                        @keyup.enter="handleScan"
-                    >
-                        <template #append>
-                            <el-button type="danger" @click="handleScan">定位坏件</el-button>
-                        </template>
-                    </el-input>
+                        v-model="scanBarcode"
+                        mode="report"
+                        placeholder="扫码枪滴入要报损的商品，或拼音联想点选"
+                        class="!w-1/2"
+                        @select="handleSelectGoods"
+                        @search="handleScan"
+                    />
+
+                    <el-button type="danger" @click="handleScan(scanBarcode)">定位坏件</el-button>
+
                     <div class="ml-auto text-gray-500 text-sm">
                         记录过期或破损的商品，系统将自动扣减库存并核算损失金额
                     </div>
@@ -24,7 +24,7 @@
             </el-card>
 
             <el-card shadow="hover" class="flex-1 overflow-hidden" :body-style="{ padding: '10px' }">
-                <el-table :data="outboundList" border stripe height="calc(100vh - 380px)" size="large" empty-text="等待扫码报损...">
+                <el-table :data="outboundList" border stripe height="calc(100vh - 380px)" size="large" empty-text="等待扫描报损...">
                     <el-table-column type="index" label="序号" width="60" align="center" />
                     <el-table-column prop="barcode" label="条码" width="160" />
                     <el-table-column prop="name" label="商品名称" min-width="200" />
@@ -81,11 +81,13 @@
 
 <script setup>
 import PageWrapper from "@/components/PageWrapper.vue";
-import { ref, computed, nextTick } from 'vue';
+import { ref, computed } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { Delete } from '@element-plus/icons-vue';
 import goodsApi from "@/api/gms/goods.js";
 import inventoryApi from "@/api/gms/inventory.js";
+
+import SmartGoodsSelector from '@/components/SmartGoodsSelector.vue'; // 🌟 引入
 
 const scanInputRef = ref(null);
 const scanBarcode = ref('');
@@ -93,19 +95,51 @@ const outboundList = ref([]);
 const remark = ref('');
 const submitLoading = ref(false);
 
-const totalQty = computed(() => {
-    return outboundList.value.reduce((sum, item) => sum + item.qty, 0);
-});
-const totalAmount = computed(() => {
-    return outboundList.value.reduce((sum, item) => sum + (item.price * item.qty), 0);
-});
+const totalQty = computed(() => outboundList.value.reduce((sum, item) => sum + item.qty, 0));
+const totalAmount = computed(() => outboundList.value.reduce((sum, item) => sum + (item.price * item.qty), 0));
 
-const handleScan = async () => {
-    if (!scanBarcode.value) return;
+// 🌟 核心：抽象出添加逻辑
+const addGoodsToList = (goods) => {
+    const existItem = outboundList.value.find(item => item.barcode === goods.barcode || item.goodsId === goods.id);
+    if (existItem) {
+        if (existItem.qty < existItem.currentStock) {
+            existItem.qty += 1;
+        } else {
+            ElMessage.warning('报损数量不能超过当前账面库存！');
+        }
+    } else {
+        if (goods.stock <= 0) {
+            ElMessage.warning('该商品当前库存为 0，无需报损！');
+        } else {
+            outboundList.value.push({
+                goodsId: goods.id,
+                barcode: goods.barcode,
+                name: goods.name,
+                currentStock: goods.stock,
+                price: goods.purchasePrice || 0,
+                qty: 1
+            });
+        }
+    }
+    scanInputRef.value?.resetScanner();
+};
 
-    const barcode = scanBarcode.value;
-    scanBarcode.value = '';
+let isSelecting = false; // 防重复双杀拦截器
 
+// 鼠标点选联想列表触发
+const handleSelectGoods = (item) => {
+    isSelecting = true;
+    addGoodsToList(item);
+    setTimeout(() => { isSelecting = false; }, 200);
+};
+
+// 扫码枪回车触发
+const handleScan = async (val) => {
+    if (isSelecting) return;
+    const barcode = typeof val === 'string' ? val : scanBarcode.value;
+    if (!barcode) return;
+
+    // 先查本地列表，存在直接加一
     const existItem = outboundList.value.find(item => item.barcode === barcode);
     if (existItem) {
         if (existItem.qty < existItem.currentStock) {
@@ -113,83 +147,44 @@ const handleScan = async () => {
         } else {
             ElMessage.warning('报损数量不能超过当前账面库存！');
         }
-        focusInput();
+        scanInputRef.value?.resetScanner();
         return;
     }
 
     try {
         const res = await goodsApi.list({ barcode: barcode, isCombo: 0, current: 1, size: 1 });
         if (res.data.records && res.data.records.length > 0) {
-            const goods = res.data.records[0];
-            if (goods.stock <= 0) {
-                ElMessage.warning('该商品当前库存为 0，无需报损！');
-            } else {
-                outboundList.value.push({
-                    goodsId: goods.id,
-                    barcode: goods.barcode,
-                    name: goods.name,
-                    currentStock: goods.stock,
-                    price: goods.purchasePrice || 0, // 按进价核算亏损
-                    qty: 1
-                });
-            }
+            addGoodsToList(res.data.records[0]);
         } else {
             ElMessage.warning('未找到该商品！');
+            scanInputRef.value?.resetScanner();
         }
     } catch (e) {
         console.error(e);
     }
-    focusInput();
 };
 
-const removeItem = (index) => {
-    outboundList.value.splice(index, 1);
-};
-
-const focusInput = () => {
-    nextTick(() => {
-        if (scanInputRef.value) {
-            scanInputRef.value.focus();
-        }
-    });
-};
+const removeItem = (index) => outboundList.value.splice(index, 1);
 
 const submitOrder = async () => {
     if (outboundList.value.length === 0) return;
+    if (!remark.value) return ElMessage.warning('请务必填写报损原因（如：过期），方便日后查账');
 
-    if (!remark.value) {
-        ElMessage.warning('请务必填写报损原因（如：过期），方便日后查账');
-        return;
-    }
-
-    await ElMessageBox.confirm(`即将扣除这批报损商品的库存，并计入亏损成本，确认提交吗？`, '报损确认', {
-        type: 'warning',
-        confirmButtonText: '确认报损',
-        cancelButtonText: '取消'
-    });
+    await ElMessageBox.confirm(`即将扣除这批报损商品的库存，并计入亏损成本，确认提交吗？`, '报损确认', { type: 'warning', confirmButtonText: '确认报损', cancelButtonText: '取消' });
 
     submitLoading.value = true;
     try {
         const payload = {
             type: 'OUTBOUND',
             remark: remark.value,
-            details: outboundList.value.map(item => ({
-                goodsId: item.goodsId,
-                qty: item.qty,
-                price: item.price
-            }))
+            details: outboundList.value.map(item => ({ goodsId: item.goodsId, qty: item.qty, price: item.price }))
         };
-
         await inventoryApi.createOutbound(payload);
-
         ElMessage.success('报损完成！库存已扣减！');
-
         outboundList.value = [];
         remark.value = '';
-        focusInput();
-
+        scanInputRef.value?.resetScanner();
     } catch (e) {
-        console.error(e);
         ElMessage.error('报损失败，请重试');
     } finally {
         submitLoading.value = false;

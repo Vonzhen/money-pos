@@ -214,4 +214,60 @@ public class OmsSalesAnalysisServiceImpl implements OmsSalesAnalysisService {
 
         return result;
     }
+    @Override
+    public List<MarketingRoiVO> getMarketingRoiAnalysis(String startDate, String endDate) {
+        LocalDate start = (startDate != null && !startDate.isEmpty()) ? LocalDate.parse(startDate) : LocalDate.now().minusDays(29);
+        LocalDate end = (endDate != null && !endDate.isEmpty()) ? LocalDate.parse(endDate) : LocalDate.now();
+
+        // 1. 捞取所有核销过优惠的订单 (包括满减券和会员券)
+        List<OmsOrder> orders = omsOrderService.list(new LambdaQueryWrapper<OmsOrder>()
+                .ge(OmsOrder::getPaymentTime, LocalDateTime.of(start, LocalTime.MIN))
+                .le(OmsOrder::getPaymentTime, LocalDateTime.of(end, LocalTime.MAX))
+                .and(w -> w.gt(OmsOrder::getUseVoucherAmount, 0).or().gt(OmsOrder::getCouponAmount, 0))
+                .eq(OmsOrder::getStatus, "PAID"));
+
+        if (orders.isEmpty()) return new ArrayList<>();
+
+        // 2. 内存聚合分析
+        Map<String, MarketingRoiVO> reportMap = new HashMap<>();
+
+        for (OmsOrder o : orders) {
+            // A. 处理满减券 (Voucher)
+            if (o.getUseVoucherAmount() != null && o.getUseVoucherAmount().compareTo(BigDecimal.ZERO) > 0) {
+                // 假设备注里存了券名称，或者关联了 ruleId，这里简化为汇总
+                String name = (o.getRemark() != null && o.getRemark().contains("券")) ? o.getRemark() : "通用满减活动";
+                updateRoiMap(reportMap, name, "满减券", o.getUseVoucherAmount(), o.getPayAmount());
+            }
+
+            // B. 处理会员券核销 (Member Coupon)
+            if (o.getCouponAmount() != null && o.getCouponAmount().compareTo(BigDecimal.ZERO) > 0) {
+                updateRoiMap(reportMap, "会员专属券核销", "会员资产", o.getCouponAmount(), o.getPayAmount());
+            }
+        }
+
+        // 3. 计算最终倍数
+        List<MarketingRoiVO> results = new ArrayList<>(reportMap.values());
+        for (MarketingRoiVO vo : results) {
+            if (vo.getTotalDiscountGived().compareTo(BigDecimal.ZERO) > 0) {
+                vo.setRoiMultiplier(vo.getTotalRevenueBrought().divide(vo.getTotalDiscountGived(), 2, RoundingMode.HALF_UP));
+            }
+            if (vo.getUsedCount() > 0) {
+                vo.setAvgOrderValue(vo.getTotalRevenueBrought().divide(new BigDecimal(vo.getUsedCount()), 2, RoundingMode.HALF_UP));
+            }
+        }
+
+        // 按 ROI 倍数降序排列
+        results.sort((a, b) -> b.getRoiMultiplier().compareTo(a.getRoiMultiplier()));
+        return results;
+    }
+
+    private void updateRoiMap(Map<String, MarketingRoiVO> map, String name, String type, BigDecimal discount, BigDecimal revenue) {
+        MarketingRoiVO vo = map.getOrDefault(name, new MarketingRoiVO());
+        vo.setRuleName(name);
+        vo.setRuleType(type);
+        vo.setUsedCount((vo.getUsedCount() == null ? 0 : vo.getUsedCount()) + 1);
+        vo.setTotalDiscountGived((vo.getTotalDiscountGived() == null ? BigDecimal.ZERO : vo.getTotalDiscountGived()).add(discount));
+        vo.setTotalRevenueBrought((vo.getTotalRevenueBrought() == null ? BigDecimal.ZERO : vo.getTotalRevenueBrought()).add(revenue));
+        map.put(name, vo);
+    }
 }

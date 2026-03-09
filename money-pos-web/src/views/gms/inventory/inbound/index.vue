@@ -4,19 +4,19 @@
             <el-card shadow="hover" class="w-full" :body-style="{ padding: '20px' }">
                 <div class="flex items-center gap-4">
                     <el-icon class="text-3xl text-primary"><Aim /></el-icon>
-                    <el-input
+
+                    <SmartGoodsSelector
                         ref="scanInputRef"
-                        v-model.trim="scanBarcode"
-                        placeholder="请使用扫码枪滴入商品条码，或手动输入按回车键"
-                        class="!w-1/2 !text-lg"
-                        size="large"
-                        clearable
-                        @keyup.enter="handleScan"
-                    >
-                        <template #append>
-                            <el-button type="primary" @click="handleScan">录入商品</el-button>
-                        </template>
-                    </el-input>
+                        v-model="scanBarcode"
+                        mode="report"
+                        placeholder="请使用扫码枪滴入商品条码，或拼音联想点选"
+                        class="!w-1/2"
+                        @select="handleSelectGoods"
+                        @search="handleScan"
+                    />
+
+                    <el-button type="primary" @click="handleScan(scanBarcode)">录入商品</el-button>
+
                     <div class="ml-auto text-gray-500 text-sm">
                         支持扫码枪连续极速扫码，同商品自动叠加数量
                     </div>
@@ -24,7 +24,7 @@
             </el-card>
 
             <el-card shadow="hover" class="flex-1 overflow-hidden" :body-style="{ padding: '10px' }">
-                <el-table :data="inboundList" border stripe height="calc(100vh - 380px)" size="large" empty-text="等待扫码进货...">
+                <el-table :data="inboundList" border stripe height="calc(100vh - 380px)" size="large" empty-text="等待扫描进货...">
                     <el-table-column type="index" label="序号" width="60" align="center" />
                     <el-table-column prop="barcode" label="条码" width="160" />
                     <el-table-column prop="name" label="商品名称" min-width="200" />
@@ -81,11 +81,13 @@
 
 <script setup>
 import PageWrapper from "@/components/PageWrapper.vue";
-import { ref, computed, nextTick } from 'vue';
+import { ref, computed } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { Aim } from '@element-plus/icons-vue';
 import goodsApi from "@/api/gms/goods.js";
 import inventoryApi from "@/api/gms/inventory.js";
+
+import SmartGoodsSelector from '@/components/SmartGoodsSelector.vue'; // 🌟 引入
 
 const scanInputRef = ref(null);
 const scanBarcode = ref('');
@@ -93,102 +95,86 @@ const inboundList = ref([]);
 const remark = ref('');
 const submitLoading = ref(false);
 
-// 自动计算总数量和总金额
-const totalQty = computed(() => {
-    return inboundList.value.reduce((sum, item) => sum + item.qty, 0);
-});
-const totalAmount = computed(() => {
-    return inboundList.value.reduce((sum, item) => sum + (item.price * item.qty), 0);
-});
+const totalQty = computed(() => inboundList.value.reduce((sum, item) => sum + item.qty, 0));
+const totalAmount = computed(() => inboundList.value.reduce((sum, item) => sum + (item.price * item.qty), 0));
 
-// 🌟 核心：处理扫码枪回车事件
-const handleScan = async () => {
-    if (!scanBarcode.value) return;
+// 🌟 核心：抽象出添加逻辑
+const addGoodsToList = (goods) => {
+    const existItem = inboundList.value.find(item => item.barcode === goods.barcode || item.goodsId === goods.id);
+    if (existItem) {
+        existItem.qty += 1;
+    } else {
+        inboundList.value.push({
+            goodsId: goods.id,
+            barcode: goods.barcode,
+            name: goods.name,
+            currentStock: goods.stock,
+            price: goods.purchasePrice || 0,
+            qty: 1
+        });
+    }
+    scanInputRef.value?.resetScanner();
+};
 
-    const barcode = scanBarcode.value;
-    scanBarcode.value = ''; // 扫完立马清空，准备扫下一个
+let isSelecting = false; // 防重复双杀拦截器
 
-    // 1. 检查是不是已经在列表里了？如果在了，数量直接 +1
+// 鼠标点选联想列表触发
+const handleSelectGoods = (item) => {
+    isSelecting = true;
+    addGoodsToList(item);
+    setTimeout(() => { isSelecting = false; }, 200);
+};
+
+// 扫码枪回车触发
+const handleScan = async (val) => {
+    if (isSelecting) return;
+    const barcode = typeof val === 'string' ? val : scanBarcode.value;
+    if (!barcode) return;
+
+    // 先查本地列表，存在直接加一
     const existItem = inboundList.value.find(item => item.barcode === barcode);
     if (existItem) {
         existItem.qty += 1;
-        focusInput();
+        scanInputRef.value?.resetScanner();
         return;
     }
 
-    // 2. 如果不在列表里，去后台查这个商品
     try {
         const res = await goodsApi.list({ barcode: barcode, isCombo: 0, current: 1, size: 1 });
         if (res.data.records && res.data.records.length > 0) {
-            const goods = res.data.records[0];
-            // 把查到的商品塞进进货篮子
-            inboundList.value.push({
-                goodsId: goods.id,
-                barcode: goods.barcode,
-                name: goods.name,
-                currentStock: goods.stock, // 显示系统里现在的库存
-                price: goods.purchasePrice || 0, // 默认带出上次的进价
-                qty: 1
-            });
+            addGoodsToList(res.data.records[0]);
         } else {
-            ElMessage.warning('未找到条码为 ' + barcode + ' 的普通商品！请先在商品库建档。');
+            ElMessage.warning(`未找到条码为 ${barcode} 的普通商品！请先在商品库建档。`);
+            scanInputRef.value?.resetScanner();
         }
     } catch (e) {
         console.error(e);
     }
-    focusInput(); // 保证焦点永远在输入框，扫码枪可以无缝连续扫
 };
 
-const removeItem = (index) => {
-    inboundList.value.splice(index, 1);
-};
+const removeItem = (index) => inboundList.value.splice(index, 1);
 
-const focusInput = () => {
-    nextTick(() => {
-        if (scanInputRef.value) {
-            scanInputRef.value.focus();
-        }
-    });
-};
-
-// 提交入库单
 const submitOrder = async () => {
     if (inboundList.value.length === 0) return;
 
-    // 检查是否有进价为 0 的商品
     const hasZeroPrice = inboundList.value.some(item => item.price <= 0);
     if (hasZeroPrice) {
-        await ElMessageBox.confirm('您有商品的本次进价为 0 元，确定要继续入库吗？', '提示', {
-            type: 'warning',
-            confirmButtonText: '继续入库',
-            cancelButtonText: '我回去改改'
-        });
+        await ElMessageBox.confirm('您有商品的本次进价为 0 元，确定要继续入库吗？', '提示', { type: 'warning', confirmButtonText: '继续入库', cancelButtonText: '我回去改改' });
     }
 
     submitLoading.value = true;
     try {
-        // 组装发给 Java 后端的数据 (按照我们之前写的 DTO 格式)
         const payload = {
             type: 'INBOUND',
             remark: remark.value,
-            details: inboundList.value.map(item => ({
-                goodsId: item.goodsId,
-                qty: item.qty,
-                price: item.price
-            }))
+            details: inboundList.value.map(item => ({ goodsId: item.goodsId, qty: item.qty, price: item.price }))
         };
-
         await inventoryApi.createInbound(payload);
-
         ElMessage.success('🎉 进货入库成功！库存已自动更新！');
-
-        // 清空战场，准备下一单
         inboundList.value = [];
         remark.value = '';
-        focusInput();
-
+        scanInputRef.value?.resetScanner();
     } catch (e) {
-        console.error(e);
         ElMessage.error('入库失败，请稍后重试');
     } finally {
         submitLoading.value = false;

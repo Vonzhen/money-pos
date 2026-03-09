@@ -77,11 +77,9 @@ const brandPieChartRef = ref(null)
 const memberBarChartRef = ref(null)
 let charts = []
 
-// 🌟 重构：将数据获取与图表渲染严格按先后顺序执行
 const initDashboardData = async () => {
     chartLoading.value = true;
     try {
-        // 1. 获取顶部数字看板
         const dataRes = await homeApi.getHomeCount()
         const data = dataRes.data || dataRes
         inventoryValue.value = data.inventoryValue || 0
@@ -103,7 +101,6 @@ const initDashboardData = async () => {
             {label: '总计', name: 'total', data: flatGet(data.total)}
         ]
 
-        // 2. 获取图表与字典数据
         const dictRes = await dictApi.loadDict(["memberType"])
         memberTypes.value = (dictRes.memberType || []).filter(item => item.value !== 'MEMBER')
 
@@ -114,7 +111,6 @@ const initDashboardData = async () => {
         console.error("Dashboard 初始化异常:", error)
     } finally {
         chartLoading.value = false;
-        // 确保 DOM 遮罩层消失后再画图，防止尺寸计算为 0
         nextTick(() => {
             drawAllCharts();
         })
@@ -143,7 +139,7 @@ const drawAllCharts = () => {
 
         const trendChart = echarts.init(trendChartRef.value)
         trendChart.setOption({
-            tooltip: { trigger: 'axis' },
+            tooltip: { trigger: 'axis', appendToBody: true },
             legend: { data: ['销售额', '净利润'], bottom: 0 },
             grid: { left: '3%', right: '4%', bottom: '10%', top: '5%', containLabel: true },
             xAxis: { type: 'category', boundaryGap: false, data: dates.length ? dates : ['无数据'] },
@@ -158,11 +154,15 @@ const drawAllCharts = () => {
 
     // 2. 饼图
     if (brandPieChartRef.value) {
-        const pie = chartsData.value.pieData || []
+        let pie = chartsData.value.pieData || []
+
+        // 🌟 核心拦截升级：把 "无品牌/未知" 一并斩草除根
+        pie = pie.filter(item => item.name && item.name !== '1' && item.name !== '无品牌/未知' && !item.name.includes('套餐'))
+
         const pieChart = echarts.init(brandPieChartRef.value)
         pieChart.setOption({
-            tooltip: { trigger: 'item', formatter: '{a} <br/>{b}: ￥{c} ({d}%)' },
-            legend: { top: '5%', left: 'center' },
+            tooltip: { trigger: 'item', formatter: '{a} <br/>{b}: ￥{c} ({d}%)', appendToBody: true },
+            legend: { type: 'scroll', top: '5%', left: 'center' },
             series: [{
                 name: '品牌营收贡献', type: 'pie', radius: ['40%', '70%'], avoidLabelOverlap: false,
                 itemStyle: { borderRadius: 10, borderColor: '#fff', borderWidth: 2 },
@@ -175,41 +175,65 @@ const drawAllCharts = () => {
         charts.push(pieChart)
     }
 
-    // 3. 柱状图 (🌟 已加入历史脏数据过滤机制)
-        if (memberBarChartRef.value) {
-            const barData = chartsData.value.barData || []
-            const brandNames = [...new Set(barData.map(item => item.brandName))]
-            const allLevelCodes = [...new Set(barData.map(item => item.levelCode))]
+    // 3. 柱状图
+    if (memberBarChartRef.value) {
+        let barData = chartsData.value.barData || []
 
-            // 🌟 核心拦截：只保留当前字典中真实存在的等级，过滤掉 HJ_VIP 等历史脏数据
-            const validLevelCodes = allLevelCodes.filter(code =>
-                memberTypes.value.some(m => m.value === code)
-            )
+        barData = barData.filter(item => item.brandName && item.brandName !== '1' && item.brandName !== '无品牌/未知' && !item.brandName.includes('套餐'))
 
-            const legendData = []
-            const barSeries = validLevelCodes.map(code => {
-                // 这里绝对能找到，因为上面已经过滤过了
-                const dictItem = memberTypes.value.find(m => m.value === code)
-                const cnName = dictItem.desc
-                legendData.push(cnName)
+        const brandNames = [...new Set(barData.map(item => item.brandName))]
+        const allLevelCodes = [...new Set(barData.map(item => item.levelCode))]
 
-                const counts = brandNames.map(brand => {
-                    const match = barData.find(d => d.brandName === brand && d.levelCode === code)
-                    return match ? match.count : 0
-                })
-                return { name: cnName, type: 'bar', stack: 'total', label: { show: true }, data: counts }
+        const validLevelCodes = allLevelCodes.filter(code =>
+            memberTypes.value.some(m => m.value === code)
+        )
+
+        const legendData = []
+        const barSeries = validLevelCodes.map(code => {
+            const dictItem = memberTypes.value.find(m => m.value === code)
+            const cnName = dictItem.desc
+            legendData.push(cnName)
+
+            const counts = brandNames.map(brand => {
+                const match = barData.find(d => d.brandName === brand && d.levelCode === code)
+                return match ? match.count : 0
             })
+            return {
+                name: cnName,
+                type: 'bar',
+                stack: 'total',
+                barWidth: '40%',
+                label: {
+                    show: true,
+                    // 🌟 核心修复：用 formatter 拦截，数字大于0才显示，等于0直接返回空字符串隐身！
+                    formatter: function(params) {
+                        return params.value > 0 ? params.value : '';
+                    }
+                },
+                data: counts
+            }
+        })
 
-            const barChart = echarts.init(memberBarChartRef.value)
-            barChart.setOption({
-                tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, appendToBody: true },
-                legend: { data: legendData.length ? legendData : ['无数据'], top: 0 },
-                grid: { left: '3%', right: '4%', bottom: '3%', top: '15%', containLabel: true },
-                xAxis: { type: 'value' },
-                yAxis: { type: 'category', data: brandNames.length ? brandNames : ['暂无品牌'] },
-                series: barSeries.length ? barSeries : [{ name: '无数据', type: 'bar', data: [0] }]
-            })
-            charts.push(barChart)
-        }
+        const barChart = echarts.init(memberBarChartRef.value)
+        barChart.setOption({
+            tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, appendToBody: true },
+            legend: { data: legendData.length ? legendData : ['无数据'], top: 0 },
+            grid: { left: '3%', right: '4%', bottom: '3%', top: '15%', containLabel: true },
+            xAxis: {
+                type: 'value',
+                minInterval: 1,
+                axisLabel: { formatter: '{value}' }
+            },
+            yAxis: {
+                type: 'category',
+                data: brandNames.length ? brandNames : ['暂无品牌'],
+                axisTick: { show: false },
+                axisLine: { lineStyle: { color: '#ccc' } },
+                axisLabel: { color: '#666', fontWeight: 'bold' }
+            },
+            series: barSeries.length ? barSeries : [{ name: '无数据', type: 'bar', data: [0] }]
+        })
+        charts.push(barChart)
+    }
 }
 </script>

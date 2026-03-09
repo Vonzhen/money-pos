@@ -1,9 +1,16 @@
 <template>
     <PageWrapper>
         <MoneyRR :money-crud="moneyCrud">
-            <el-input v-model="moneyCrud.query.goodsName" placeholder="搜商品名称" class="md:!w-48" @keyup.enter.native="moneyCrud.doQuery" />
+            <SmartGoodsSelector
+                v-model="moneyCrud.query.goodsName"
+                mode="report"
+                placeholder="搜商品名称 / 条码 / 拼音"
+                class="md:!w-64"
+                @search="moneyCrud.doQuery"
+            />
+
             <el-input v-model="moneyCrud.query.orderNo" placeholder="搜关联单号" class="md:!w-48" @keyup.enter.native="moneyCrud.doQuery" />
-            <el-select v-model="moneyCrud.query.type" placeholder="过滤变动类型" clearable class="md:!w-48">
+            <el-select v-model="moneyCrud.query.type" placeholder="过滤变动类型" clearable class="md:!w-48" @change="moneyCrud.doQuery">
                 <el-option label="🛒 销售出库 (SALE)" value="SALE" />
                 <el-option label="🔄 售后退回 (RETURN)" value="RETURN" />
                 <el-option label="📦 采购入库 (INBOUND)" value="INBOUND" />
@@ -72,8 +79,8 @@ import { req } from "@/api/index.js";
 import { ref } from "vue";
 import { Document } from "@element-plus/icons-vue";
 
-// 🌟 核心引入
 import OrderDetailModal from "@/components/OrderDetailModal.vue";
+import SmartGoodsSelector from '@/components/SmartGoodsSelector.vue'; // 🌟 引入智能搜索组件
 
 const columns = [
     {prop: 'createTime', label: '发生时间', width: 170},
@@ -94,11 +101,9 @@ const moneyCrud = ref(new MoneyCrud({
 
 moneyCrud.value.init(moneyCrud)
 
-// 用于销售单/退货单的组件状态
 const orderDetailVisible = ref(false)
 const currentSearchOrderNo = ref('')
 
-// 用于非销售单（盘点、入库、报损）的旧状态
 const otherDetailVisible = ref(false)
 const detailLoading = ref(false)
 const detailList = ref([])
@@ -106,11 +111,9 @@ const detailTitle = ref('')
 
 const showDetail = async (row) => {
     if (row.type === 'SALE' || row.type === 'RETURN') {
-        // 如果是卖东西，直接召唤顶级的统一弹窗！
         currentSearchOrderNo.value = row.orderNo;
         orderDetailVisible.value = true;
     } else {
-        // 其他情况（入库、盘点），使用普通弹窗查看明细
         const typeName = { 'INBOUND': '采购入库单', 'CHECK': '盘点单', 'SCRAP': '报损单' }[row.type] || '单据'
         detailTitle.value = `📦 ${typeName}明细 - ${row.orderNo}`
         otherDetailVisible.value = true;
