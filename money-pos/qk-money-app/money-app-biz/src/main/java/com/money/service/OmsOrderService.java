@@ -51,4 +51,7 @@ public interface OmsOrderService extends IService<OmsOrder> {
      */
     void returnGoods(ReturnGoodsDTO returnGoodsDTO);
 
+    // 🌟 6.6 真实损益毛利审计
+    com.money.web.vo.PageVO<com.money.dto.OmsOrder.ProfitAuditVO> getProfitAuditPage(com.money.dto.OmsOrder.OmsOrderQueryDTO queryDTO);
+
 }

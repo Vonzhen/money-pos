@@ -50,8 +50,8 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
     private final OmsOrderDetailService omsOrderDetailService;
     private final OmsOrderLogService omsOrderLogService;
     private final com.money.mapper.GmsStockLogMapper gmsStockLogMapper;
-    // 🌟 核心引入：用于查询会员的多品牌矩阵信息
     private final UmsMemberBrandLevelMapper umsMemberBrandLevelMapper;
+    private final com.money.mapper.OmsOrderPayMapper omsOrderPayMapper;
 
     @Override
     public PageVO<OmsOrderVO> list(OmsOrderQueryDTO queryDTO) {
@@ -109,7 +109,6 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
 
         vo.setOrder(orderVO);
 
-        // 🌟 核心修复：组装多品牌身份矩阵，传递给前端
         UmsMemberVO memberVO = null;
         if (order.getMemberId() != null) {
             memberVO = BeanMapUtil.to(umsMemberService.getById(order.getMemberId()), UmsMemberVO::new);
@@ -128,6 +127,37 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
 
         vo.setOrderDetail(BeanMapUtil.to(omsOrderDetailService.listByOrderNo(order.getOrderNo()), OmsOrderDetailVO::new));
         vo.setOrderLog(BeanMapUtil.to(omsOrderLogService.listByOrderId(id), OmsOrderLogVO::new));
+
+        List<com.money.entity.OmsOrderPay> payments = omsOrderPayMapper.selectList(
+                new LambdaQueryWrapper<com.money.entity.OmsOrderPay>()
+                        .eq(com.money.entity.OmsOrderPay::getOrderNo, order.getOrderNo())
+        );
+        vo.setPayments(payments);
+
+        // 🌟 核心重构：将前端的支付渠道拆分逻辑强制收回后端 (坚守架构底线)
+        BigDecimal balanceAmount = BigDecimal.ZERO;
+        BigDecimal scanAmount = BigDecimal.ZERO;
+        BigDecimal cashAmount = BigDecimal.ZERO;
+
+        if (payments != null) {
+            for (com.money.entity.OmsOrderPay p : payments) {
+                String code = p.getPayMethodCode() != null ? p.getPayMethodCode().toUpperCase() : "";
+                BigDecimal amt = p.getPayAmount() != null ? p.getPayAmount() : BigDecimal.ZERO;
+
+                if (code.contains("BALANCE")) {
+                    balanceAmount = balanceAmount.add(amt);
+                } else if (code.contains("CASH")) {
+                    cashAmount = cashAmount.add(amt);
+                } else {
+                    scanAmount = scanAmount.add(amt);
+                }
+            }
+        }
+
+        // 挂载到外层 VO 中，直接喂给前端
+        vo.setBalanceAmount(balanceAmount);
+        vo.setScanAmount(scanAmount);
+        vo.setCashAmount(cashAmount);
 
         return vo;
     }
@@ -157,7 +187,6 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
                 stockLog.setCreateTime(LocalDateTime.now());
                 gmsStockLogMapper.insert(stockLog);
             });
-            // 🌟 核心修复：整单退货，传入单号
             umsMemberService.rebate(order.getMemberId(), returnPrice.get(), returnCoupon.get(), true, order.getOrderNo());
             order.setFinalSalesAmount(BigDecimal.ZERO);
             order.setStatus(OrderStatusEnum.RETURN.name());
@@ -190,7 +219,6 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
 
         BigDecimal returnCoupon = orderDetail.getCoupon().multiply(new BigDecimal(returnQty));
 
-        // 🌟 核心修复：单品退货，传入单号
         umsMemberService.rebate(order.getMemberId(), returnPrice, returnCoupon, false, order.getOrderNo());
 
         gmsGoodsService.updateStock(orderDetail.getGoodsId(), returnQty);
@@ -212,5 +240,13 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
         log.setOrderId(order.getId());
         log.setDescription("<span style=\"color:red\">退货</span>" + orderDetail.getGoodsName() + " X " + returnQty);
         omsOrderLogService.save(log);
+    }
+
+    @Override
+    public PageVO<com.money.dto.OmsOrder.ProfitAuditVO> getProfitAuditPage(OmsOrderQueryDTO queryDTO) {
+        Page<?> page = PageUtil.toPage(queryDTO);
+        Boolean anomalyOnly = "ANOMALY".equals(queryDTO.getStatus());
+        Page<com.money.dto.OmsOrder.ProfitAuditVO> result = baseMapper.getProfitAuditPage(page, queryDTO.getOrderNo(), anomalyOnly);
+        return PageUtil.toPageVO(result, com.money.dto.OmsOrder.ProfitAuditVO::new);
     }
 }

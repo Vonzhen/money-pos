@@ -103,4 +103,10 @@ public class OmsOrderController {
     public void returnGoods(@Valid @RequestBody ReturnGoodsDTO returnGoodsDTO) {
         omsOrderService.returnGoods(returnGoodsDTO);
     }
+
+    @io.swagger.v3.oas.annotations.Operation(summary = "6.6 真实损益毛利审计")
+    @GetMapping("/profit/audit")
+    public PageVO<com.money.dto.OmsOrder.ProfitAuditVO> getProfitAuditPage(OmsOrderQueryDTO queryDTO) {
+        return omsOrderService.getProfitAuditPage(queryDTO);
+    }
 }

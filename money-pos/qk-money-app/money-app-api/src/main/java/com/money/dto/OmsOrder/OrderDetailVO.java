@@ -9,35 +9,36 @@ import lombok.Data;
 import java.util.List;
 
 /**
-* <p>
-* 订单明细表
-* </p>
-*
-* @author money
-* @since 2023-02-27
-*/
+ * <p>
+ * 订单明细表 (含全局审计聚合)
+ * </p>
+ */
 @Data
 @Schema(description = "订单明细表")
 public class OrderDetailVO {
 
-    /**
-     * 会员
-     */
+    @Schema(description = "会员")
     private UmsMemberVO member;
 
-    /**
-     * 订单
-     */
+    @Schema(description = "订单")
     private OmsOrderVO order;
 
-    /**
-     * 订单详情
-     */
+    @Schema(description = "订单详情")
     private List<OmsOrderDetailVO> orderDetail;
 
-    /**
-     * 订单日志
-     */
+    @Schema(description = "订单日志")
     private List<OmsOrderLogVO> orderLog;
 
+    @Schema(description = "支付流水账明细")
+    private List<com.money.entity.OmsOrderPay> payments;
+
+    // 🌟 核心新增：由后端绝对掌管计算的支付渠道聚合
+    @Schema(description = "余额实收聚合")
+    private java.math.BigDecimal balanceAmount;
+
+    @Schema(description = "聚合扫码实收聚合")
+    private java.math.BigDecimal scanAmount;
+
+    @Schema(description = "现金实收聚合")
+    private java.math.BigDecimal cashAmount;
 }

@@ -17,10 +17,7 @@
 
         <div class="flex gap-4 h-[600px]">
             <div class="w-[32%] border rounded flex flex-col overflow-hidden shadow-sm">
-                <el-table
-                    :data="orderList" v-loading="loading" stripe highlight-current-row
-                    height="100%" class="w-full text-sm" @current-change="handleSelectOrder"
-                >
+                <el-table :data="orderList" v-loading="loading" stripe highlight-current-row height="100%" class="w-full text-sm" @current-change="handleSelectOrder">
                     <el-table-column label="时间" width="80">
                         <template #default="{row}">
                             <div class="font-bold">{{ formatTime(row.createTime) }}</div>
@@ -48,13 +45,9 @@
             </div>
 
             <div class="w-[68%] border rounded bg-white flex flex-col overflow-hidden relative shadow-sm">
-                <div v-if="detailLoading" class="absolute inset-0 z-10 bg-white/70 flex items-center justify-center text-blue-500">
-                    <el-icon class="is-loading text-4xl"><Loading /></el-icon>
-                </div>
-
+                <div v-if="detailLoading" class="absolute inset-0 z-10 bg-white/70 flex items-center justify-center text-blue-500"><el-icon class="is-loading text-4xl"><Loading /></el-icon></div>
                 <div v-if="!currentOrderDetail" class="h-full flex flex-col items-center justify-center text-gray-400 bg-gray-50">
-                    <el-icon class="text-5xl mb-2"><Document /></el-icon>
-                    <p>请在左侧选择一笔订单查看详情</p>
+                    <el-icon class="text-5xl mb-2"><Document /></el-icon><p>请在左侧选择一笔订单查看详情</p>
                 </div>
 
                 <div v-else class="h-full flex flex-col">
@@ -70,78 +63,45 @@
 
                     <div class="flex-1 overflow-y-auto p-4 bg-white space-y-4">
                         <div class="border border-blue-100 rounded-lg overflow-hidden text-sm shadow-sm">
-                            <div class="bg-blue-50 px-3 py-1.5 font-bold text-blue-700 border-b border-blue-100 flex items-center gap-2">
-                                <el-icon><User /></el-icon> 会员身份
-                            </div>
+                            <div class="bg-blue-50 px-3 py-1.5 font-bold text-blue-700 border-b border-blue-100 flex items-center gap-2"><el-icon><User /></el-icon> 会员身份</div>
                             <div class="p-3 grid grid-cols-2 gap-y-2">
                                 <div><span class="text-gray-500 mr-2">会员姓名:</span><span class="font-bold text-gray-800">{{ currentOrderDetail.member?.name || currentOrderDetail.member || '散客' }}</span></div>
                                 <div><span class="text-gray-500 mr-2">联系电话:</span><span class="font-mono text-gray-800">{{ currentOrderDetail.member?.phone || '-' }}</span></div>
-                                <div class="col-span-2 flex items-start gap-2 mt-1">
-                                    <span class="text-gray-500 shrink-0">会员类型:</span>
-                                    <div class="flex flex-wrap gap-1.5">
-                                        <span v-if="!currentOrderDetail.member?.brandLevels || Object.keys(currentOrderDetail.member.brandLevels).length === 0" class="font-bold text-gray-500">
-                                            普通顾客
-                                        </span>
-                                        <template v-else>
-                                            <el-tag v-for="(levelCode, brand) in currentOrderDetail.member.brandLevels" :key="brand" effect="dark" type="warning" size="small" class="font-bold tracking-widest">
-                                                {{ dict?.memberTypeKv?.[levelCode] || levelCode }}
-                                            </el-tag>
-                                        </template>
-                                    </div>
+                            </div>
+                        </div>
+
+                        <div>
+                            <div class="border border-gray-200 rounded-lg p-2.5 bg-gray-50 flex items-center justify-between shadow-inner overflow-x-auto">
+                                <div class="flex flex-col items-center flex-1 px-0.5"><div class="text-[10px] text-gray-500 font-bold mb-0.5 whitespace-nowrap">应收</div><div class="text-sm font-black text-gray-800 whitespace-nowrap tracking-tight">￥{{ Number(currentOrderDetail.totalAmount || 0).toFixed(2) }}</div></div>
+                                <div class="text-gray-300 font-black shrink-0 mx-1">-</div>
+                                <div class="flex flex-col items-center flex-1 px-0.5"><div class="text-[10px] text-orange-500 font-bold mb-0.5 whitespace-nowrap">会员券</div><div class="text-sm font-black text-orange-500 whitespace-nowrap tracking-tight">￥{{ Number(currentOrderDetail.couponAmount || 0).toFixed(2) }}</div></div>
+                                <div class="text-gray-300 font-black shrink-0 mx-1">-</div>
+                                <div class="flex flex-col items-center flex-1 px-0.5"><div class="text-[10px] text-red-400 font-bold mb-0.5 whitespace-nowrap">满减券</div><div class="text-sm font-black text-red-500 whitespace-nowrap tracking-tight">￥{{ Number(currentOrderDetail.useVoucherAmount || 0).toFixed(2) }}</div></div>
+                                <div class="text-gray-300 font-black shrink-0 mx-1">-</div>
+                                <div class="flex flex-col items-center flex-1 px-0.5"><div class="text-[10px] text-red-400 font-bold mb-0.5 whitespace-nowrap">整单优惠</div><div class="text-sm font-black text-red-500 whitespace-nowrap tracking-tight">￥{{ Number(currentOrderDetail.manualDiscountAmount || 0).toFixed(2) }}</div></div>
+                                <div class="text-gray-300 font-black shrink-0 mx-1">=</div>
+                                <div class="flex flex-col items-center flex-1 px-0.5"><div class="text-[10px] text-blue-600 font-bold mb-0.5 whitespace-nowrap">实付</div><div class="text-sm font-black text-blue-600 whitespace-nowrap tracking-tight">￥{{ Number(currentOrderDetail.payAmount || 0).toFixed(2) }}</div></div>
+                                <div class="text-gray-300 font-black shrink-0 mx-1">-</div>
+                                <div class="flex flex-col items-center flex-1 px-0.5"><div class="text-[10px] text-gray-500 font-bold mb-0.5 whitespace-nowrap">退款</div><div class="text-sm font-black text-gray-600 whitespace-nowrap tracking-tight">￥{{ Number(returnPrice || 0).toFixed(2) }}</div></div>
+                                <div class="text-gray-300 font-black shrink-0 mx-1">=</div>
+                                <div class="bg-white border border-green-200 p-1.5 px-2 rounded shadow-sm text-center ml-1 shrink-0"><div class="text-[10px] text-green-600 font-black mb-0.5 whitespace-nowrap">净收</div><div class="text-base font-black text-green-500 whitespace-nowrap tracking-tighter">￥{{ Number(netIncome || 0).toFixed(2) }}</div></div>
+                            </div>
+
+                            <div class="mt-2 bg-blue-50/50 border border-blue-100 rounded-lg py-1.5 px-3 flex items-center justify-between text-[11px] shadow-sm">
+                                <span class="text-blue-700 font-bold">实付资金组成：</span>
+                                <div class="flex gap-4">
+                                    <span>会员余额: <span class="font-bold text-gray-800">￥{{ Number(currentOrderDetail.balanceAmount || 0).toFixed(2) }}</span></span>
+                                    <span>聚合扫码: <span class="font-bold text-gray-800">￥{{ Number(currentOrderDetail.scanAmount || 0).toFixed(2) }}</span></span>
+                                    <span>现金收银: <span class="font-bold text-gray-800">￥{{ Number(currentOrderDetail.cashAmount || 0).toFixed(2) }}</span></span>
                                 </div>
                             </div>
                         </div>
 
-                        <div class="border border-gray-200 rounded-lg p-2.5 bg-gray-50 flex items-center justify-between shadow-inner overflow-x-auto">
-                            <div class="flex flex-col items-center flex-1 px-0.5">
-                                <div class="text-[10px] text-gray-500 font-bold mb-0.5 whitespace-nowrap">应收</div>
-                                <div class="text-sm font-black text-gray-800 whitespace-nowrap tracking-tight">￥{{ Number(currentOrderDetail.totalAmount || 0).toFixed(2) }}</div>
-                            </div>
-                            <div class="text-gray-300 font-black shrink-0 mx-1">-</div>
-
-                            <div class="flex flex-col items-center flex-1 px-0.5">
-                                <div class="text-[10px] text-orange-500 font-bold mb-0.5 whitespace-nowrap">会员券</div>
-                                <div class="text-sm font-black text-orange-500 whitespace-nowrap tracking-tight">￥{{ Number(currentOrderDetail.couponAmount || 0).toFixed(2) }}</div>
-                            </div>
-                            <div class="text-gray-300 font-black shrink-0 mx-1">-</div>
-
-                            <div class="flex flex-col items-center flex-1 px-0.5">
-                                <div class="text-[10px] text-red-400 font-bold mb-0.5 whitespace-nowrap">满减券</div>
-                                <div class="text-sm font-black text-red-500 whitespace-nowrap tracking-tight">￥{{ Number(currentOrderDetail.useVoucherAmount || 0).toFixed(2) }}</div>
-                            </div>
-                            <div class="text-gray-300 font-black shrink-0 mx-1">-</div>
-
-                            <div class="flex flex-col items-center flex-1 px-0.5">
-                                <div class="text-[10px] text-red-400 font-bold mb-0.5 whitespace-nowrap">整单优惠</div>
-                                <div class="text-sm font-black text-red-500 whitespace-nowrap tracking-tight">￥{{ Number(currentOrderDetail.manualDiscountAmount || 0).toFixed(2) }}</div>
-                            </div>
-                            <div class="text-gray-300 font-black shrink-0 mx-1">=</div>
-
-                            <div class="flex flex-col items-center flex-1 px-0.5">
-                                <div class="text-[10px] text-blue-600 font-bold mb-0.5 whitespace-nowrap">实付</div>
-                                <div class="text-sm font-black text-blue-600 whitespace-nowrap tracking-tight">￥{{ Number(currentOrderDetail.payAmount || 0).toFixed(2) }}</div>
-                            </div>
-                            <div class="text-gray-300 font-black shrink-0 mx-1">-</div>
-
-                            <div class="flex flex-col items-center flex-1 px-0.5">
-                                <div class="text-[10px] text-gray-500 font-bold mb-0.5 whitespace-nowrap">退款</div>
-                                <div class="text-sm font-black text-gray-600 whitespace-nowrap tracking-tight">￥{{ Number(returnPrice || 0).toFixed(2) }}</div>
-                            </div>
-                            <div class="text-gray-300 font-black shrink-0 mx-1">=</div>
-
-                            <div class="bg-white border border-green-200 p-1.5 px-2 rounded shadow-sm text-center ml-1 shrink-0">
-                                <div class="text-[10px] text-green-600 font-black mb-0.5 whitespace-nowrap">净收</div>
-                                <div class="text-base font-black text-green-500 whitespace-nowrap tracking-tighter">￥{{ Number(netIncome || 0).toFixed(2) }}</div>
-                            </div>
-                        </div>
-
-                        <div class="font-bold text-gray-700 border-l-4 border-green-500 pl-2">商品明细审计</div>
+                        <div class="font-bold text-gray-700 border-l-4 border-green-500 pl-2 mt-4">商品明细</div>
                         <el-table :data="currentOrderDetail.details" border size="small" class="w-full">
                             <el-table-column prop="goodsName" label="商品名称" show-overflow-tooltip min-width="120" />
                             <el-table-column label="成交价" width="100" align="right">
-                                <template #default="{row}">
-                                    <span class="font-bold text-red-500">￥{{ Number(row.goodsPrice || 0).toFixed(2) }}</span>
-                                </template>
+                                <template #default="{row}"><span class="font-bold text-red-500">￥{{ Number(row.goodsPrice || 0).toFixed(2) }}</span></template>
                             </el-table-column>
                             <el-table-column label="数量状态" width="80" align="center">
                                 <template #default="{row}">
@@ -150,9 +110,7 @@
                                 </template>
                             </el-table-column>
                             <el-table-column label="小计" width="110" align="right">
-                                <template #default="{row}">
-                                    <span class="font-bold">￥{{ Number(NP.times(row.quantity, row.goodsPrice)).toFixed(2) }}</span>
-                                </template>
+                                <template #default="{row}"><span class="font-bold">￥{{ Number(NP.times(row.quantity, row.goodsPrice)).toFixed(2) }}</span></template>
                             </el-table-column>
                             <el-table-column label="售后" width="70" align="center" fixed="right" v-if="currentOrderDetail.status !== 'RETURN' && currentOrderDetail.status !== 'REFUNDED'">
                                 <template #default="{row}">
@@ -181,11 +139,10 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onBeforeMount } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { Search, Document, Loading, Printer, RefreshLeft, User } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 import { req } from "@/api/index.js"
-import dictApi from "@/api/system/dict.js"
 import { ElMessage, ElMessageBox } from 'element-plus'
 import NP from "number-precision"
 
@@ -197,11 +154,6 @@ const timeRange = ref('today')
 const searchKeyword = ref('')
 const orderList = ref([]); const loading = ref(false); const currentPage = ref(1); const pageSize = ref(15); const totalRecords = ref(0)
 const currentOrderDetail = ref(null); const detailLoading = ref(false)
-
-const dict = ref({})
-onBeforeMount(async () => {
-    dict.value = await dictApi.loadDict(["memberType"])
-})
 
 const formatTime = (timeStr) => timeStr ? dayjs(timeStr).format('HH:mm') : ''
 const formatDate = (timeStr) => timeStr ? dayjs(timeStr).format('MM-DD') : ''
@@ -245,7 +197,7 @@ const fetchOrders = async () => {
 const handleSelectOrder = async (row) => {
     if (!row || !row.id) return
     detailLoading.value = true
-    currentOrderDetail.value = { ...row, details: [], payments: [], log: [] }
+    currentOrderDetail.value = { ...row, details: [], log: [] }
 
     try {
         const res = await req({ url: '/oms/order/detail', method: 'GET', params: { id: row.id } })
@@ -254,6 +206,10 @@ const handleSelectOrder = async (row) => {
         currentOrderDetail.value = {
             ...row,
             ...orderInfo,
+            // 🌟 直接继承由后端算好的 Java 拆分资金
+            balanceAmount: data.balanceAmount,
+            scanAmount: data.scanAmount,
+            cashAmount: data.cashAmount,
             details: data.orderDetail || [],
             member: data.member || {},
             log: data.orderLog || []

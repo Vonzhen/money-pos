@@ -14,15 +14,15 @@
             </div>
 
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <el-card shadow="hover" class="rounded-lg" header="🏆 Top 10 吸金王 (毛利分布)">
-                    <div ref="barChartRef" style="height: 500px; width: 100%;"></div>
-                    <div v-if="rankingData.length === 0" class="text-center text-gray-400 mt-[-250px]">
+                <el-card shadow="hover" class="rounded-lg" header="🏆 Top 20 吸金王 (绝对毛利额)">
+                    <div ref="barChartRef" style="height: 700px; width: 100%;"></div>
+                    <div v-if="rankingData.length === 0" class="text-center text-gray-400 mt-[-350px]">
                         暂无销售数据
                     </div>
                 </el-card>
 
                 <el-card shadow="hover" class="lg:col-span-2 rounded-lg" header="📋 详细利润账单 (Top 50)">
-                    <el-table :data="rankingData" height="500" stripe style="width: 100%" v-loading="loading">
+                    <el-table :data="rankingData" height="700" stripe style="width: 100%" v-loading="loading">
                         <el-table-column type="index" label="排名" width="80" align="center">
                             <template #default="scope">
                                 <div class="font-bold flex items-center justify-center">
@@ -57,6 +57,22 @@
                                 <span class="text-red-500 font-bold">¥ {{ formatMoney(scope.row.totalProfit) }}</span>
                             </template>
                         </el-table-column>
+
+                        <el-table-column label="单品毛利率" width="120" align="right" sortable :sort-method="sortByMargin">
+                            <template #default="{row}">
+                                <div v-if="row.totalSales > 0">
+                                    <el-tag
+                                        :type="(row.totalProfit / row.totalSales) >= 0.5 ? 'danger' : ((row.totalProfit / row.totalSales) >= 0.3 ? 'warning' : 'info')"
+                                        effect="dark"
+                                        size="small"
+                                        class="font-mono tracking-widest"
+                                    >
+                                        {{ ((row.totalProfit / row.totalSales) * 100).toFixed(2) }}%
+                                    </el-tag>
+                                </div>
+                                <span v-else class="text-gray-400">0.00%</span>
+                            </template>
+                        </el-table-column>
                     </el-table>
                 </el-card>
             </div>
@@ -65,7 +81,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, onMounted, nextTick, onBeforeUnmount } from 'vue'
 import PageWrapper from "@/components/PageWrapper.vue"
 import financeApi from "@/api/finance/finance.js"
 import { Refresh, Trophy } from '@element-plus/icons-vue'
@@ -81,11 +97,8 @@ const fetchData = async () => {
     loading.value = true
     try {
         const res = await financeApi.getProfitRanking()
-        rankingData.value = res.data || []
-
-        nextTick(() => {
-            initBarChart()
-        })
+        rankingData.value = res.data || res || [] // 容错处理
+        nextTick(() => { initBarChart() })
     } catch (error) {
         ElMessage.error("获取利润榜单失败")
     } finally {
@@ -98,32 +111,35 @@ const formatMoney = (val) => {
     return Number(val).toFixed(2)
 }
 
+const sortByMargin = (a, b) => {
+    const marginA = a.totalSales > 0 ? (a.totalProfit / a.totalSales) : 0;
+    const marginB = b.totalSales > 0 ? (b.totalProfit / b.totalSales) : 0;
+    return marginA - marginB;
+}
+
 const initBarChart = () => {
     if (!barChartRef.value || rankingData.value.length === 0) return
     if (!barChart) barChart = echarts.init(barChartRef.value)
 
-    // 取前 10 名画图，并且要把数据倒过来（因为 ECharts 横向柱状图是从下往上画的）
-    const top10 = rankingData.value.slice(0, 10).reverse()
-    const names = top10.map(item => item.goodsName)
-    const profits = top10.map(item => item.totalProfit)
+    // 🌟 核心修复：切片改为 Top 20
+    const top20 = rankingData.value.slice(0, 20).reverse()
+    const names = top20.map(item => item.goodsName)
+    const profits = top20.map(item => item.totalProfit)
 
     barChart.setOption({
         tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-        grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
+        // 🌟 核心修复：把 right 改为 '12%'，给右侧的数字标签腾出足够的物理空间
+        grid: { left: '3%', right: '12%', bottom: '3%', containLabel: true },
         xAxis: { type: 'value', name: '毛利 (元)' },
         yAxis: {
             type: 'category',
             data: names,
-            axisLabel: {
-                interval: 0,
-                width: 100, // 限制宽度
-                overflow: 'truncate' // 超出显示省略号
-            }
+            axisLabel: { interval: 0, width: 100, overflow: 'truncate' }
         },
         series: [{
             name: '创造毛利',
             type: 'bar',
-            barWidth: '60%',
+            barWidth: '55%',
             itemStyle: {
                 color: new echarts.graphic.LinearGradient(1, 0, 0, 0, [
                     { offset: 0, color: '#ff9a9e' },
@@ -131,17 +147,29 @@ const initBarChart = () => {
                 ]),
                 borderRadius: [0, 4, 4, 0]
             },
-            label: { show: true, position: 'right', formatter: '¥ {c}' },
+            label: {
+                show: true,
+                position: 'right',
+                formatter: '¥ {c}',
+                color: '#666',
+                fontWeight: 'bold'
+            },
             data: profits
         }]
     })
 }
 
-window.addEventListener('resize', () => {
+const handleResize = () => {
     if (barChart) barChart.resize()
-})
+}
 
 onMounted(() => {
+    window.addEventListener('resize', handleResize)
     fetchData()
+})
+
+onBeforeUnmount(() => {
+    window.removeEventListener('resize', handleResize)
+    if (barChart) barChart.dispose()
 })
 </script>
