@@ -1,16 +1,16 @@
 package com.money.mapper;
 
-import com.money.entity.GmsGoods;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.money.entity.GmsGoods;
+import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Update;
 
-/**
- * <p>
- * 商品表 Mapper 接口
- * </p>
- *
- * @author money
- * @since 2023-02-27
- */
 public interface GmsGoodsMapper extends BaseMapper<GmsGoods> {
 
+    /**
+     * 原子化库存扣减 (利用 MySQL 行锁防超卖)
+     * 只有当 stock >= qty 时才能更新成功，返回 1；否则返回 0
+     */
+    @Update("UPDATE gms_goods SET stock = stock - #{qty} WHERE id = #{id} AND stock >= #{qty}")
+    int deductStockAtomically(@Param("id") Long id, @Param("qty") Integer qty);
 }
