@@ -82,7 +82,7 @@ import goodsApi from "@/api/gms/goods.js";
 import inventoryApi from "@/api/gms/inventory.js";
 
 // 🌟 引入刚封装好的智能神器
-import SmartGoodsSelector from '@/components/SmartGoodsSelector.vue';
+import SmartGoodsSelector from "@/components/common/SmartGoodsSelector.vue"
 
 const scanInputRef = ref(null);
 const scanBarcode = ref('');

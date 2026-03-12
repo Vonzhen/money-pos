@@ -60,4 +60,8 @@ public class OmsOrderDetail extends BaseEntity {
     @Schema(description="租户id")
     private Long tenantId;
 
+    /**
+     * 品牌ID (数据冗余，专为报表提速)
+     */
+    private Long brandId;
 }

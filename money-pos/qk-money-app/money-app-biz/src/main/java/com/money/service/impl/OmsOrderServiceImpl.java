@@ -55,14 +55,37 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
 
     @Override
     public PageVO<OmsOrderVO> list(OmsOrderQueryDTO queryDTO) {
-        Page<OmsOrder> page = this.lambdaQuery().eq(StrUtil.isNotBlank(queryDTO.getStatus()), OmsOrder::getStatus, queryDTO.getStatus())
+        LambdaQueryWrapper<OmsOrder> wrapper = new LambdaQueryWrapper<>();
+
+        wrapper.eq(StrUtil.isNotBlank(queryDTO.getStatus()), OmsOrder::getStatus, queryDTO.getStatus())
                 .like(StrUtil.isNotBlank(queryDTO.getOrderNo()), OmsOrder::getOrderNo, queryDTO.getOrderNo())
-                .like(StrUtil.isNotBlank(queryDTO.getMember()), OmsOrder::getMember, queryDTO.getMember())
                 .ge(queryDTO.getStartTime() != null, OmsOrder::getCreateTime, queryDTO.getStartTime())
-                .le(queryDTO.getEndTime() != null, OmsOrder::getCreateTime, queryDTO.getEndTime())
-                .orderByDesc(StrUtil.isBlank(queryDTO.getOrderBy()), OmsOrder::getCreateTime)
-                .last(StrUtil.isNotBlank(queryDTO.getOrderBy()), queryDTO.getOrderBySql())
-                .page(PageUtil.toPage(queryDTO));
+                .le(queryDTO.getEndTime() != null, OmsOrder::getCreateTime, queryDTO.getEndTime());
+
+        if (StrUtil.isNotBlank(queryDTO.getMember())) {
+            String keyword = queryDTO.getMember();
+            if (keyword.matches("^1[3-9]\\d{9}$") || keyword.matches("^\\d+$")) {
+                List<Long> memberIds = umsMemberService.lambdaQuery()
+                        .like(com.money.entity.UmsMember::getPhone, keyword)
+                        .list()
+                        .stream()
+                        .map(com.money.entity.UmsMember::getId)
+                        .collect(java.util.stream.Collectors.toList());
+
+                if (!memberIds.isEmpty()) {
+                    wrapper.in(OmsOrder::getMemberId, memberIds);
+                } else {
+                    wrapper.eq(OmsOrder::getId, -1L);
+                }
+            } else {
+                wrapper.like(OmsOrder::getMember, keyword);
+            }
+        }
+
+        wrapper.orderByDesc(StrUtil.isBlank(queryDTO.getOrderBy()), OmsOrder::getCreateTime)
+                .last(StrUtil.isNotBlank(queryDTO.getOrderBy()), queryDTO.getOrderBySql());
+
+        Page<OmsOrder> page = this.page(PageUtil.toPage(queryDTO), wrapper);
         return PageUtil.toPageVO(page, OmsOrderVO::new);
     }
 
@@ -134,7 +157,6 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
         );
         vo.setPayments(payments);
 
-        // 🌟 核心重构：将前端的支付渠道拆分逻辑强制收回后端 (坚守架构底线)
         BigDecimal balanceAmount = BigDecimal.ZERO;
         BigDecimal scanAmount = BigDecimal.ZERO;
         BigDecimal cashAmount = BigDecimal.ZERO;
@@ -154,7 +176,6 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
             }
         }
 
-        // 挂载到外层 VO 中，直接喂给前端
         vo.setBalanceAmount(balanceAmount);
         vo.setScanAmount(scanAmount);
         vo.setCashAmount(cashAmount);
@@ -166,12 +187,10 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
     public void returnOrder(Set<Long> ids) {
         ids.stream().map(this::getById).forEach(order -> {
             List<OmsOrderDetail> orderDetails = omsOrderDetailService.listByOrderNo(order.getOrderNo());
-            AtomicReference<BigDecimal> returnPrice = new AtomicReference<>(BigDecimal.ZERO);
-            AtomicReference<BigDecimal> returnCoupon = new AtomicReference<>(BigDecimal.ZERO);
+
+            // 库存退回必须循环
             orderDetails.forEach(orderDetail -> {
                 int returnQty = orderDetail.getQuantity() - orderDetail.getReturnQuantity();
-                returnPrice.set(returnPrice.get().add(orderDetail.getGoodsPrice().multiply(new BigDecimal(returnQty))));
-                returnCoupon.set(returnCoupon.get().add(orderDetail.getCoupon().multiply(new BigDecimal(returnQty))));
                 gmsGoodsService.updateStock(orderDetail.getGoodsId(), returnQty);
 
                 com.money.entity.GmsGoods goods = gmsGoodsService.getById(orderDetail.getGoodsId());
@@ -187,11 +206,18 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
                 stockLog.setCreateTime(LocalDateTime.now());
                 gmsStockLogMapper.insert(stockLog);
             });
-            umsMemberService.rebate(order.getMemberId(), returnPrice.get(), returnCoupon.get(), true, order.getOrderNo());
+
+            // 🌟 核心修复：整单退款时，扣除会员的历史消费额必须等于这单当时的最终实付款 (而不是通过明细的原价去算)，这样绝不扣超！
+            BigDecimal realReturnPrice = order.getFinalSalesAmount() != null ? order.getFinalSalesAmount() : (order.getPayAmount() != null ? order.getPayAmount() : BigDecimal.ZERO);
+            BigDecimal realReturnCoupon = order.getCouponAmount() != null ? order.getCouponAmount() : BigDecimal.ZERO;
+
+            umsMemberService.processReturn(order.getMemberId(), realReturnPrice, realReturnCoupon, true, order.getOrderNo());
+
             order.setFinalSalesAmount(BigDecimal.ZERO);
             order.setStatus(OrderStatusEnum.RETURN.name());
             this.updateById(order);
             omsOrderDetailService.updateBatchById(orderDetails);
+
             OmsOrderLog log = new OmsOrderLog();
             log.setOrderId(order.getId());
             log.setDescription("<span style=\"color:red\">退单</span>");
@@ -212,14 +238,22 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
         omsOrderDetailService.updateById(orderDetail);
 
         OmsOrder order = this.lambdaQuery().eq(OmsOrder::getOrderNo, orderDetail.getOrderNo()).one();
-        BigDecimal returnPrice = orderDetail.getGoodsPrice().multiply(new BigDecimal(returnQty));
-        BigDecimal finalSalesAmount = order.getFinalSalesAmount().subtract(returnPrice);
+
+        // 🌟 核心修复防卫：部分退货时，保证扣减的金额不能超过整单的剩余实付金额，防止扣穿底线！
+        BigDecimal theoryReturnPrice = orderDetail.getGoodsPrice().multiply(new BigDecimal(returnQty));
+        BigDecimal theoryReturnCoupon = orderDetail.getCoupon().multiply(new BigDecimal(returnQty));
+
+        BigDecimal actualReturnPrice = theoryReturnPrice;
+        if (order.getFinalSalesAmount() != null && theoryReturnPrice.compareTo(order.getFinalSalesAmount()) > 0) {
+            actualReturnPrice = order.getFinalSalesAmount(); // 最多只能退到0
+        }
+
+        BigDecimal finalSalesAmount = order.getFinalSalesAmount().subtract(actualReturnPrice);
         order.setFinalSalesAmount(finalSalesAmount);
         this.updateById(order);
 
-        BigDecimal returnCoupon = orderDetail.getCoupon().multiply(new BigDecimal(returnQty));
-
-        umsMemberService.rebate(order.getMemberId(), returnPrice, returnCoupon, false, order.getOrderNo());
+        // 调用新的退回方法 processReturn
+        umsMemberService.processReturn(order.getMemberId(), actualReturnPrice, theoryReturnCoupon, false, order.getOrderNo());
 
         gmsGoodsService.updateStock(orderDetail.getGoodsId(), returnQty);
 

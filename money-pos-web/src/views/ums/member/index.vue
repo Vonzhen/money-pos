@@ -1,9 +1,13 @@
 <template>
     <PageWrapper>
         <MoneyRR :money-crud="moneyCrud">
-            <el-input v-model="moneyCrud.query.code" placeholder="会员号" class="md:!w-48" @keyup.enter.native="moneyCrud.doQuery" />
-            <el-input v-model="moneyCrud.query.name" placeholder="会员名称" class="md:!w-48" @keyup.enter.native="moneyCrud.doQuery" />
-            <el-input v-model="moneyCrud.query.phone" placeholder="手机号码" class="md:!w-48" @keyup.enter.native="moneyCrud.doQuery" />
+            <MemberSmartSearch
+                class="w-[350px] md:!w-[420px]"
+                size="default"
+                placeholder="快速定位会员 (支持名/号/手机模糊查)"
+                @select="handleMemberSelect"
+                @clear="handleMemberClear"
+            />
         </MoneyRR>
 
         <div class="flex items-center gap-2 mb-3 mt-2">
@@ -67,63 +71,12 @@
             </div>
         </MoneyForm>
 
-        <el-drawer v-model="drawerVisible" :title="`🌟 ${current360Member.name} 的消费画像`" size="420px" destroy-on-close>
-            <div class="flex flex-col gap-5 px-1">
-                <div class="bg-gradient-to-br from-blue-50 to-indigo-50 p-5 rounded-xl border border-blue-100 shadow-sm relative overflow-hidden">
-                    <div class="absolute right-[-10px] top-[-10px] opacity-10 text-6xl"><el-icon><Trophy /></el-icon></div>
-                    <div class="text-sm text-gray-500 font-bold mb-1">历史累计消费金额</div>
-                    <div class="text-3xl font-black text-blue-600 mb-3">￥{{ (current360Member.consumeAmount || 0).toFixed(2) }}</div>
-
-                    <div class="flex flex-col gap-1 text-xs text-gray-500 border-t border-blue-100/50 pt-3">
-                        <div class="flex justify-between">
-                            <span>📱 手机号码:</span> <span class="font-mono text-gray-700">{{ current360Member.phone }}</span>
-                        </div>
-                        <div class="flex justify-between">
-                            <span>💳 会员余额:</span> <span class="font-bold text-gray-700">￥{{ (current360Member.balance || 0).toFixed(2) }}</span>
-                        </div>
-                        <div class="flex justify-between">
-                            <span>🎫 剩余满减券:</span> <span class="font-bold text-orange-500">{{ current360Member.voucherCount || 0 }} 张</span>
-                        </div>
-
-                        <div class="flex justify-between mt-2 pt-2 border-t border-blue-100/50 items-center">
-                            <span class="text-blue-500 font-bold">特权版图:</span>
-                            <div class="flex flex-wrap gap-1 justify-end max-w-[200px]">
-                                <template v-if="current360Member.brandLevels && Object.keys(current360Member.brandLevels).length > 0">
-                                    <el-tag v-for="(levelCode, brandId) in current360Member.brandLevels" :key="brandId" size="small" effect="dark" type="success" class="border-0 shadow-sm">
-                                        {{ getBrandName(brandId) }}: {{ dict.memberTypeKv[levelCode] || levelCode }}
-                                    </el-tag>
-                                </template>
-                                <span v-else class="text-gray-400 border border-gray-300 border-dashed px-2 py-0.5 rounded">仅限普通零售</span>
-                            </div>
-                        </div>
-
-                        <div class="flex justify-between mt-2 pt-2 border-t border-blue-100/50">
-                            <span class="text-blue-500">最后到店时间:</span>
-                            <span class="font-bold text-blue-600">{{ current360Member.lastVisitTime || '暂无消费记录' }}</span>
-                        </div>
-                    </div>
-                </div>
-
-                <div>
-                    <h3 class="font-bold text-gray-800 mb-3 flex items-center gap-2 text-base">
-                        <el-icon class="text-orange-500"><Trophy /></el-icon> 最爱买的商品 Top 10
-                    </h3>
-                    <el-table :data="top10List" v-loading="top10Loading" size="default" stripe border class="w-full">
-                        <el-table-column type="index" label="排" width="45" align="center">
-                            <template #default="scope">
-                                <span :class="{'text-red-500 font-black text-lg': scope.$index === 0, 'text-orange-500 font-bold text-base': scope.$index === 1, 'text-yellow-500 font-bold': scope.$index === 2, 'text-gray-400': scope.$index > 2}">
-                                    {{ scope.$index + 1 }}
-                                </span>
-                            </template>
-                        </el-table-column>
-                        <el-table-column prop="goodsName" label="商品名称" show-overflow-tooltip />
-                        <el-table-column prop="buyCount" label="购买件数" width="80" align="center">
-                            <template #default="{row}"><span class="font-black text-gray-700">{{ row.buyCount }}</span></template>
-                        </el-table-column>
-                    </el-table>
-                </div>
-            </div>
-        </el-drawer>
+        <MemberProfileModal
+            v-model="profileVisible"
+            :member-info="current360Member"
+            :brands-dict="brandsKv"
+            :levels-dict="dict.memberTypeKv"
+        />
 
         <el-dialog v-model="rechargeVisible" :title="'会员业务 - ' + currentMember.name" width="550px" destroy-on-close>
             <el-form :model="rechargeForm" ref="rechargeFormRef" label-width="110px">
@@ -196,6 +149,10 @@ import brandApi from "@/api/gms/brand.js";
 import { req } from "@/api/index.js";
 import { ElMessage } from "element-plus";
 import { Money, Upload, Download, DataLine, Trophy, User } from "@element-plus/icons-vue";
+
+import MemberSmartSearch from "@/components/common/MemberSmartSearch.vue";
+// 🌟 引入全新封装的画像组件
+import MemberProfileModal from "@/components/common/MemberProfileModal.vue";
 
 const userStore = useUserStore()
 
@@ -284,24 +241,24 @@ const getBrandName = (brandId) => {
     return brandsKv.value[brandId] || '未知品牌'
 }
 
-const drawerVisible = ref(false)
-const current360Member = ref({})
-const top10Loading = ref(false)
-const top10List = ref([])
+const handleMemberSelect = (member) => {
+    moneyCrud.value.query.code = member.code;
+    moneyCrud.value.doQuery();
+}
+const handleMemberClear = () => {
+    moneyCrud.value.query.code = null;
+    moneyCrud.value.query.name = null;
+    moneyCrud.value.query.phone = null;
+    moneyCrud.value.doQuery();
+}
 
-const openMember360 = async (row) => {
+// 🌟 极其清爽的画像弹窗调用逻辑
+const profileVisible = ref(false)
+const current360Member = ref({})
+
+const openMember360 = (row) => {
     current360Member.value = row;
-    drawerVisible.value = true;
-    top10Loading.value = true;
-    top10List.value = [];
-    try {
-        const res = await req({ url: '/ums/member/top10Goods', method: 'GET', params: { memberId: row.id } });
-        top10List.value = res.data || res || [];
-    } catch (e) {
-        console.warn("Top 10 接口暂未实现");
-    } finally {
-        top10Loading.value = false;
-    }
+    profileVisible.value = true;
 }
 
 const handleDownloadTemplate = async () => {
@@ -345,7 +302,6 @@ const rechargeForm = ref({ type: 'BALANCE', amount: undefined, giftCoupon: undef
 
 async function openRecharge(row) {
     currentMember.value = row;
-    // 🌟 重置表单，包含 realAmount
     rechargeForm.value = {
         memberId: row.id,
         type: 'BALANCE',
@@ -371,7 +327,6 @@ function submitRecharge() {
         if (valid) {
             rechargeLoading.value = true;
             try {
-                // 提交表单
                 await memberApi.recharge(rechargeForm.value);
                 ElMessage.success('业务办理成功，财务台账已自动同步！');
                 rechargeVisible.value = false;

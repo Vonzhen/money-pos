@@ -109,8 +109,8 @@
 <script setup>
 import { ref, onMounted, nextTick, onBeforeUnmount } from 'vue'
 import PageWrapper from "@/components/PageWrapper.vue"
-// 🌟 核心修复：弃用旧的 financeApi 封装，直接引入底层 req 强制传参
 import { req } from "@/api/index.js"
+import dictApi from "@/api/system/dict.js"
 import { Refresh, Wallet, DataLine, List, Warning } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
@@ -118,11 +118,13 @@ import dayjs from 'dayjs'
 
 const queryDate = ref(dayjs().format('YYYY-MM-DD'))
 const loading = ref(false)
+const payTagDict = ref([])
 
 const data = ref({
     totalAmount: 0, totalDiscount: 0, payAmount: 0, refundAmount: 0, netIncome: 0, grossProfit: 0, externalIncome: 0, totalDebt: 0,
     payBreakdown: [], trendDates: [],
-    trendScan: [], trendCash: [], trendRecharge: [], trendTotal: []
+    trendScan: [], trendCash: [], trendRecharge: [], trendTotal: [],
+    dynamicTrendMap: {}
 })
 
 const lineChartRef = ref(null)
@@ -130,10 +132,25 @@ const pieChartRef = ref(null)
 let lineChart = null
 let pieChart = null
 
+// 🌟 全局拦截器：去掉所有名称里的“流水”二字，让界面清爽
+const getTranslatedName = (rawName) => {
+    let finalName = rawName;
+    if (rawName && rawName.startsWith('TAG:')) {
+        const code = rawName.substring(4);
+        if (code === 'UNKNOWN') {
+            finalName = '未分类扫码';
+        } else {
+            const dictItem = payTagDict.value.find(item => item.value === code);
+            finalName = dictItem ? dictItem.desc : code;
+        }
+    }
+    // 把后端传过来的“现金收银流水”、“聚合扫码流水”里的“流水”暴力切掉
+    return finalName ? finalName.replace(/流水/g, '') : '';
+}
+
 const fetchData = async () => {
     loading.value = true
     try {
-        // 🌟 核心修复：利用 req 直接把 params 挂到 URL 上
         const res = await req({
             url: '/finance/dashboard',
             method: 'GET',
@@ -157,59 +174,88 @@ const initLineChart = () => {
     if (!lineChartRef.value) return
     if (!lineChart) lineChart = echarts.init(lineChartRef.value)
 
+    // 🌟 把基础类目的“流水”也精简掉
+    const legendData = ['全口径大盘总计', '扫码总计', '现金收银', '会员充值'];
+    const seriesData = [
+        {
+            name: '全口径大盘总计', type: 'line', smooth: true,
+            itemStyle: { color: '#67C23A' },
+            lineStyle: { width: 3, type: 'dashed' },
+            data: data.value.trendTotal || []
+        },
+        {
+            name: '扫码总计', type: 'line', smooth: true,
+            areaStyle: { color: 'rgba(64, 158, 255, 0.2)' },
+            itemStyle: { color: '#409EFF' },
+            data: data.value.trendScan || []
+        },
+        {
+            name: '现金收银', type: 'line', smooth: true,
+            areaStyle: { color: 'rgba(156, 39, 176, 0.2)' },
+            itemStyle: { color: '#9C27B0' },
+            data: data.value.trendCash || []
+        },
+        {
+            name: '会员充值', type: 'line', smooth: true,
+            areaStyle: { color: 'rgba(230, 162, 60, 0.2)' },
+            itemStyle: { color: '#E6A23C' },
+            data: data.value.trendRecharge || []
+        }
+    ];
+
+    if (data.value.dynamicTrendMap) {
+        Object.keys(data.value.dynamicTrendMap).forEach(key => {
+            const translatedName = getTranslatedName('TAG:' + key);
+            legendData.push(translatedName);
+            seriesData.push({
+                name: translatedName,
+                type: 'line',
+                smooth: true,
+                lineStyle: { type: 'dotted', width: 2 },
+                symbolSize: 6,
+                data: data.value.dynamicTrendMap[key]
+            });
+        });
+    }
+
     lineChart.setOption({
         tooltip: { trigger: 'axis', appendToBody: true },
-        legend: { data: ['全口径大盘总计', '聚合扫码流水', '现金收银流水', '会员充值吸收'], bottom: '0' },
-        grid: { left: '3%', right: '4%', bottom: '10%', containLabel: true },
+        // 🌟 取消了 type: 'scroll'，允许自然换行
+        legend: { data: legendData, bottom: '0' },
+        // 🌟 把 bottom 从 15% 拉大到了 20%，给两排标签留足空间防止遮挡 x 轴
+        grid: { left: '3%', right: '4%', bottom: '20%', containLabel: true },
         xAxis: { type: 'category', boundaryGap: false, data: data.value.trendDates || [] },
         yAxis: { type: 'value', name: '金额 (元)' },
-        series: [
-            {
-                name: '全口径大盘总计', type: 'line', smooth: true,
-                itemStyle: { color: '#67C23A' }, // 绿色
-                lineStyle: { width: 3, type: 'dashed' },
-                data: data.value.trendTotal || []
-            },
-            {
-                name: '聚合扫码流水', type: 'line', smooth: true,
-                areaStyle: { color: 'rgba(64, 158, 255, 0.2)' },
-                itemStyle: { color: '#409EFF' }, // 经典蓝
-                data: data.value.trendScan || []
-            },
-            {
-                name: '现金收银流水', type: 'line', smooth: true,
-                areaStyle: { color: 'rgba(156, 39, 176, 0.2)' },
-                itemStyle: { color: '#9C27B0' }, // 紫色
-                data: data.value.trendCash || []
-            },
-            {
-                name: '会员充值吸收', type: 'line', smooth: true,
-                areaStyle: { color: 'rgba(230, 162, 60, 0.2)' },
-                itemStyle: { color: '#E6A23C' }, // 橙色
-                data: data.value.trendRecharge || []
-            }
-        ]
-    })
+        series: seriesData
+    }, true)
 }
 
 const initPieChart = () => {
     if (!pieChartRef.value) return
     if (!pieChart) pieChart = echarts.init(pieChartRef.value)
 
+    const translatedPieData = (data.value.payBreakdown || []).map(item => ({
+        name: getTranslatedName(item.name),
+        value: item.value
+    }))
+
     pieChart.setOption({
         tooltip: { trigger: 'item', formatter: '{b}: ¥ {c} ({d}%)', appendToBody: true },
-        legend: { orient: 'horizontal', bottom: 'bottom' },
-        color: ['#409EFF', '#9C27B0', '#909399', '#E6A23C'],
+        // 🌟 同样取消了翻页模式，自然铺开两排
+        legend: { orient: 'horizontal', bottom: '0' },
+        color: ['#409EFF', '#9C27B0', '#67C23A', '#E6A23C', '#F56C6C', '#13CE66', '#FF9900', '#8e44ad', '#e74c3c'],
         series: [{
-            name: '资金占比', type: 'pie', radius: ['40%', '70%'],
+            name: '资金占比', type: 'pie',
+            // 🌟 稍微上移了饼图本体 (center属性)，给底部多行标签腾出位置
+            radius: ['40%', '65%'], center: ['50%', '42%'],
             avoidLabelOverlap: false,
             itemStyle: { borderRadius: 10, borderColor: '#fff', borderWidth: 2 },
             label: { show: false, position: 'center' },
-            emphasis: { label: { show: true, fontSize: 18, fontWeight: 'bold' } },
+            emphasis: { label: { show: true, fontSize: 16, fontWeight: 'bold' } },
             labelLine: { show: false },
-            data: data.value.payBreakdown || []
+            data: translatedPieData
         }]
-    })
+    }, true)
 }
 
 const handleResize = () => {
@@ -217,7 +263,12 @@ const handleResize = () => {
     if (pieChart) pieChart.resize()
 }
 
-onMounted(() => {
+onMounted(async () => {
+    try {
+        const dict = await dictApi.loadDict(["paySubTag"])
+        if (dict.paySubTag) payTagDict.value = dict.paySubTag
+    } catch (e) {}
+
     window.addEventListener('resize', handleResize)
     fetchData()
 })

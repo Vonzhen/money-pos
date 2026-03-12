@@ -87,7 +87,7 @@ import { Aim } from '@element-plus/icons-vue';
 import goodsApi from "@/api/gms/goods.js";
 import inventoryApi from "@/api/gms/inventory.js";
 
-import SmartGoodsSelector from '@/components/SmartGoodsSelector.vue'; // 🌟 引入
+import SmartGoodsSelector from "@/components/common/SmartGoodsSelector.vue" // 🌟 引入
 
 const scanInputRef = ref(null);
 const scanBarcode = ref('');

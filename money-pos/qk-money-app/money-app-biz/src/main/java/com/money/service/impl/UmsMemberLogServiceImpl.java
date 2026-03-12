@@ -1,6 +1,7 @@
 package com.money.service.impl;
 
 import cn.hutool.core.util.StrUtil;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.money.dto.UmsMember.UmsMemberLogQueryDTO;
@@ -15,10 +16,6 @@ import com.money.web.vo.PageVO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
-import java.util.List;
-import java.util.Map;
-import java.util.stream.Collectors;
-
 @Service
 @RequiredArgsConstructor
 public class UmsMemberLogServiceImpl extends ServiceImpl<UmsMemberLogMapper, UmsMemberLog> implements UmsMemberLogService {
@@ -28,23 +25,19 @@ public class UmsMemberLogServiceImpl extends ServiceImpl<UmsMemberLogMapper, Ums
     @Override
     public PageVO<UmsMemberLogVO> list(UmsMemberLogQueryDTO queryDTO) {
 
-        // 🌟 修复手机号搜索
         Long searchMemberId = queryDTO.getMemberId();
+
+        // 手机号预查询保持不变，如果前端传了手机号，先找 ID
         if (StrUtil.isNotBlank(queryDTO.getPhone())) {
             UmsMember member = umsMemberMapper.selectOne(
-                    new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<UmsMember>()
+                    new LambdaQueryWrapper<UmsMember>()
                             .eq(UmsMember::getPhone, queryDTO.getPhone())
+                            .last("LIMIT 1")
             );
-            if (member != null) {
-                searchMemberId = member.getId();
-            } else {
-                // 🌟 修复编译报错：如果查不到人，赋一个绝对不存在的 ID (-1L)
-                // 让底下的标准分页查询去查，自然会完美返回 0 条记录的标准 PageVO 格式
-                searchMemberId = -1L;
-            }
+            searchMemberId = (member != null) ? member.getId() : -1L;
         }
 
-        // 1. 分页查询流水表
+        // 1. 极速分页查询 (利用新加的 idx_member_type_time 复合索引，速度起飞)
         Page<UmsMemberLog> page = this.lambdaQuery()
                 .eq(searchMemberId != null, UmsMemberLog::getMemberId, searchMemberId)
                 .eq(StrUtil.isNotBlank(queryDTO.getType()), UmsMemberLog::getType, queryDTO.getType())
@@ -52,31 +45,7 @@ public class UmsMemberLogServiceImpl extends ServiceImpl<UmsMemberLogMapper, Ums
                 .orderByDesc(UmsMemberLog::getCreateTime)
                 .page(PageUtil.toPage(queryDTO));
 
-        // 2. 转换 VO
-        PageVO<UmsMemberLogVO> pageVO = PageUtil.toPageVO(page, UmsMemberLogVO::new);
-
-        if (page.getRecords() != null && !page.getRecords().isEmpty()) {
-            java.util.Set<Long> memberIds = page.getRecords().stream()
-                    .map(UmsMemberLog::getMemberId)
-                    .collect(java.util.stream.Collectors.toSet());
-
-            java.util.Map<Long, UmsMember> memberMap = new java.util.HashMap<>();
-            if (!memberIds.isEmpty()) {
-                java.util.List<UmsMember> members = umsMemberMapper.selectBatchIds(memberIds);
-                memberMap = members.stream().collect(java.util.stream.Collectors.toMap(UmsMember::getId, m -> m));
-            }
-
-            for (int i = 0; i < page.getRecords().size(); i++) {
-                UmsMemberLog rawLog = page.getRecords().get(i);
-                UmsMemberLogVO vo = pageVO.getRecords().get(i);
-
-                UmsMember m = memberMap.get(rawLog.getMemberId());
-                if (m != null) {
-                    vo.setMemberName(m.getName());
-                    vo.setMemberPhone(m.getPhone());
-                }
-            }
-        }
-        return pageVO;
+        // 2. 转换 VO (直接映射，彻底砍掉 N+1 查库和内存 Map 组装！)
+        return PageUtil.toPageVO(page, UmsMemberLogVO::new);
     }
 }

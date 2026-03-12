@@ -20,7 +20,13 @@
             @suspend="handleSuspendRetrieve"
         />
 
-        <CheckoutModal v-model="checkoutVisible" :pay-method-dict="payMethodDict" @checkout-success="handleCheckoutSuccess" @closed="keepFocus" />
+        <CheckoutModal
+            v-model="checkoutVisible"
+            :pay-method-dict="payMethodDict"
+            :pay-tag-dict="payTagDict"
+            @checkout-success="handleCheckoutSuccess"
+            @closed="keepFocus"
+        />
         <RestockModal v-model="restockVisible" @closed="keepFocus" />
         <MemberBindModal v-model="memberBindVisible" @select="handleMemberSelect" @closed="keepFocus" />
         <RechargeModal v-model="rechargeVisible" @closed="keepFocus" />
@@ -41,6 +47,8 @@ import dictApi from "@/api/system/dict.js"
 
 import { usePosStore } from './hooks/usePosStore'
 import { useScanner } from './hooks/useScanner'
+// 🌟 核心引入：通讯特种部队
+import { useDisplaySync } from './hooks/useDisplaySync'
 
 import HeaderBar from './components/HeaderBar.vue'
 import CartTable from './components/CartTable.vue'
@@ -71,6 +79,9 @@ const suspendListVisible = ref(false);
 const salesVisible = ref(false);
 const shiftVisible = ref(false);
 
+// 🌟 核心部署：启动通讯基站监听器，并获取广播命令函数
+const { notifyPaySuccess, notifyIdle, notifyMemberBind } = useDisplaySync(checkoutVisible);
+
 useScanner({
     onEnter: () => {
         if (!checkoutVisible.value && !memberBindVisible.value && !restockVisible.value && !memberAddVisible.value && !rechargeVisible.value && !salesVisible.value && !shiftVisible.value && !suspendListVisible.value && cartList.value.length > 0) {
@@ -84,15 +95,19 @@ const currentOrderNo = ref('POS' + dayjs().format('YYYYMMDDHHmmss'))
 const currentTime = ref(dayjs().format('YYYY-MM-DD HH:mm:ss'))
 const lastOrder = ref({ total: 0, paid: 0, couponUsed: 0 })
 const suspendedOrderList = ref([])
-const payMethodDict = ref([]); const memberTypesDict = ref([])
+
+const payMethodDict = ref([])
+const payTagDict = ref([])
+const memberTypesDict = ref([])
 
 const cashierName = computed(() => userStore.name || '未知收银员')
 
 onMounted(async () => {
     try {
-        const dict = await dictApi.loadDict(["memberType", "pos_payment_method"])
+        const dict = await dictApi.loadDict(["memberType", "pos_payment_method", "paySubTag"])
         if (dict.memberType) memberTypesDict.value = dict.memberType
         if (dict.pos_payment_method) payMethodDict.value = dict.pos_payment_method
+        if (dict.paySubTag) payTagDict.value = dict.paySubTag
     } catch (e) { }
     keepFocus(); setInterval(() => currentTime.value = dayjs().format('YYYY-MM-DD HH:mm:ss'), 1000)
 })
@@ -106,11 +121,27 @@ const handleNavAction = (action) => {
     else if (action === 'addMember') memberAddVisible.value = true
 }
 
-const handleClear = () => { clearAll(); currentOrderNo.value = 'POS' + dayjs().format('YYYYMMDDHHmmss'); keepFocus(); }
+const handleClear = () => {
+    clearAll();
+    currentOrderNo.value = 'POS' + dayjs().format('YYYYMMDDHHmmss');
+    keepFocus();
+    notifyIdle(); // 🌟 发射信号：清空购物车，客显切回待机广告
+}
+
 const openDrawer = () => ElMessage.success('指令：弹开钱箱')
 const openCheckout = () => { cartList.value.length ? checkoutVisible.value = true : ElMessage.warning('空单'); }
-const handleCheckoutSuccess = (orderSummary) => { lastOrder.value = orderSummary; openDrawer(); handleClear(); }
-const handleMemberSelect = (member) => { currentMember.value = member; }
+
+const handleCheckoutSuccess = (orderSummary) => {
+    lastOrder.value = orderSummary;
+    openDrawer();
+    handleClear();
+    notifyPaySuccess(orderSummary.total); // 🌟 发射信号：支付成功，触发客显打勾动画
+}
+
+const handleMemberSelect = (member) => {
+    currentMember.value = member;
+    notifyMemberBind(member); // 🌟 发射信号：绑定会员，触发客显满减诱导
+}
 
 const handleSuspendRetrieve = () => {
     if (cartList.value.length > 0) {
@@ -142,5 +173,6 @@ const retrieveOrder = (index) => {
     restoreOrder(order.cart, order.member);
     suspendedOrderList.value.splice(index, 1);
     ElMessage.success('订单已取回');
+    notifyMemberBind(order.member); // 🌟 发射信号：取回订单后立刻刷新客显明细
 }
 </script>

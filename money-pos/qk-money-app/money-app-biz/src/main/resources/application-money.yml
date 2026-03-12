@@ -19,13 +19,9 @@ money:
       default-time-zone: GMT+08:00
   # 多租户
   tenant:
-    # 开关
     enabled: true
-    # 请求头
     header: Y-tenant
-    # 默认租户id
     default-tenant-id: "0"
-    # 忽略的表
     ignore-table:
       - sys_tenant
       - sys_dict
@@ -33,50 +29,38 @@ money:
       - provinces
   # 缓存
   cache:
-    # 本地缓存
     local:
-      # 提供者 hutool（默认）、caffeine
       provider: hutool
-      # hutool-cache参数
       hutool:
-        # 失效策略：LRU（默认）、LFU、FIFO、TIMED、WEAK
         strategy: LRU
-        # 容量
         capacity: 102400
-        # 过期时间：ms，0代表永不过期
         ttl: 86400000
-    # redis 缓存
     redis:
-      # 开关，默认关闭
       enabled: false
-      # 过期时间：ms，主要用于@Cacheable相关注解的过期时间
       ttl: 86400000
-  # 安全
+  # 安全配置中心
   security:
-    # Token 配置
+    # 🌟 找回丢失的 Token 核心配置 (解决报错的关键)
     token:
-      # Token 请求头键名
       header: Authorization
-      # 令牌类型：完整 Token："{tokenType} {accessToken}"
       token-type: Bearer
-      # 密钥
       secret: money
-      # Access Token 过期时间（ms），默认8小时
       ttl: 2592000000
-      # Refresh Token 过期时间（ms），默认30天
       refresh-ttl: 2592000000
-      # 策略：jwt（自动过期，默认）、redis
       strategy: jwt
-      # 缓存键名前缀
       cache-key: "security:token:"
-    # 忽略的 URL
+    # 忽略的白名单
     ignore:
       get:
         - /tenants/byCode
         - /auth/refreshToken
+        - /common/display-settings
       post:
         - /auth/login
         - /auth/logout
+        - /common/upload
+      put:
+        - /common/display-settings
       pattern:
         - /error/**
         - /actuator/**
@@ -84,19 +68,28 @@ money:
         - /webjars/**
         - /v3/**
         - /assets/**
+        - /ws/** # 🌟 核心规范新增：放行 WebSocket 握手协议
+
   # 邮件服务
   mail:
-    host: smtp.shahow.top # 邮箱服务器
-    username: qk-money@money.shahow.top # 账号
+    host: smtp.shahow.top
+    username: qk-money@money.shahow.top
     password: Vv123456#
     properties:
       mail:
         smtp:
           auth: true
-          starttls: # 使用SSL安全协议，必须配置如下
+          starttls:
             enable: true
             required: true
-    port: 465  # 端口
-    protocol: smtps # 协议
+    port: 465
+    protocol: smtps
     default-encoding: utf-8
-    fromAlias: 麦尼 # 发件人别名
+    fromAlias: 麦尼
+
+# 🌟 严格执行：spring 必须顶格，不能缩进在 money 里面！
+spring:
+  sql:
+    init:
+      mode: never
+      continue-on-error: true

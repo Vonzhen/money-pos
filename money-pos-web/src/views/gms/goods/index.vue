@@ -7,8 +7,14 @@
 
             <div class="grid gap-6 flex-1">
                 <MoneyRR :money-crud="moneyCrud">
-                    <el-input v-model="moneyCrud.query.barcode" placeholder="条码" class="md:!w-48" @keyup.enter.native="moneyCrud.doQuery" />
-                    <el-input v-model="moneyCrud.query.name" placeholder="名称" class="md:!w-48" @keyup.enter.native="moneyCrud.doQuery" />
+                    <SmartGoodsSelector
+                        class="w-full md:!w-[350px]"
+                        size="default"
+                        placeholder="智能搜商品(支持名称/条码/拼音)"
+                        @select="handleGoodsSelect"
+                        @clear="handleGoodsClear"
+                    />
+
                     <el-select v-model="moneyCrud.query.brandId" clearable class="w-full md:!w-48" placeholder="品牌" @change="moneyCrud.doQuery">
                         <el-option v-for="item in brands" :key="item.value" :label="item.label" :value="item.value" />
                     </el-select>
@@ -27,9 +33,17 @@
                 <MoneyCrudTable :money-crud="moneyCrud">
                     <template #brand="{scope}">{{ brandsKv[scope.row.brandId] }}</template>
                     <template #status="{scope}"><el-tag :type="statusColor[scope.row.status] || 'primary'">{{ dict.goodsStatusKv[scope.row.status] }}</el-tag></template>
+
+                    <template #salePrice="{scope}">
+                        <MoneyDisplay :value="scope.row.salePrice" color="text-red-600" />
+                    </template>
+                    <template #purchasePrice="{scope}">
+                        <MoneyDisplay :value="scope.row.purchasePrice" color="text-gray-400" />
+                    </template>
+
                     <template #stock="{scope}">
                         <el-input v-if="editCell.id === scope.row.id" v-model="scope.row.stock" style="width: 55px" @change="value => updateCell(value, scope.row)" @focusout="updateCell(null, scope.row)" />
-                        <span v-else @click="startEditCell(scope.row.id, 'stock', scope.row.stock)">{{ scope.row.stock }}</span>
+                        <span v-else @click="startEditCell(scope.row.id, 'stock', scope.row.stock)" class="font-mono font-bold cursor-pointer hover:text-blue-500">{{ scope.row.stock }}</span>
                     </template>
                     <template #opt="{scope}"><MoneyUD :money-crud="moneyCrud" :scope="scope" /></template>
                 </MoneyCrudTable>
@@ -157,6 +171,9 @@ import MoneyForm from "@/components/crud/MoneyForm.vue";
 import ComputeInput from "@/components/ComputeInput.vue";
 import GoodsCategory from "@/views/gms/goods/GoodsCategory.vue";
 
+// 🌟 引入刚刚归入 Common 的智能搜货组件
+import SmartGoodsSelector from "@/components/common/SmartGoodsSelector.vue";
+
 import { ref, watch, reactive, computed } from "vue";
 import { useUserStore } from "@/store/index.js";
 import brandApi from "@/api/gms/brand.js"
@@ -167,9 +184,6 @@ import { req } from '@/api/index.js'
 import { Goods, Money, Warning } from '@element-plus/icons-vue'
 import NP from 'number-precision'
 
-// ==========================================
-// 1. 全局状态及字典定义
-// ==========================================
 const userStore = useUserStore()
 const dict = ref({})
 const brands = ref([])
@@ -177,10 +191,6 @@ const brandsKv = ref({})
 const categories = ref([])
 const statusColor = { 'SOLD_OUT': 'warning', 'UN_SHELVE': 'info' }
 
-// ==========================================
-// 2. 绝对隔离的内存舱与快照库
-// ==========================================
-// 矩阵工作区
 const matrix = reactive({
     loading: false,
     couponEnabled: false,
@@ -189,24 +199,18 @@ const matrix = reactive({
     coupons: {}
 });
 
-// 坚不可摧的数据库快照：只存最初的样子
 const dbSnapshot = reactive({
     brandId: null,
     prices: {},
     coupons: {}
 });
 
-// ==========================================
-// 3. 数据清洗与容错引擎
-// ==========================================
-// 完美解析后端 JSON，洗掉所有恶心符号
 const parseCodes = (data) => {
     if (!data) return [];
     if (Array.isArray(data)) return data.map(String);
     return String(data).replace(/[\[\]"'\s]/g, '').split(',').filter(Boolean);
 };
 
-// 响应式匹配：如果 dict 晚到了 0.1 秒，只要它一有数据，格子瞬间弹出，绝杀死锁！
 const validLevels = computed(() => {
     const allDict = dict.value.memberType || [];
     const codes = matrix.rawCodes || [];
@@ -224,9 +228,6 @@ const getCleanedMap = (sourceObj) => {
     return result;
 }
 
-// ==========================================
-// 4. 高精度联动计算
-// ==========================================
 const calcCoupon = (code) => {
     if (!matrix.couponEnabled) return;
     const saleP = Number(moneyCrud.value.form.salePrice) || 0;
@@ -244,9 +245,6 @@ const syncAllCoupons = () => {
     Object.keys(matrix.prices).forEach(code => calcCoupon(code));
 }
 
-// ==========================================
-// 5. 核心拦截与通信
-// ==========================================
 const hookedGoodsApi = {
     ...goodsApi,
     add: (data) => {
@@ -268,12 +266,12 @@ const hookedGoodsApi = {
 const columns = [
     {prop: 'barcode', label: '条码', width: 140},
     {prop: 'brand', label: '品牌', show: false},
-    {prop: 'name', label: '名称', width: 140},
-    {prop: 'status', label: '状态'},
-    {prop: 'salePrice', label: '零售价', minWidth: 90},
-    {prop: 'purchasePrice', label: '进价'},
-    {prop: 'stock', label: '库存'},
-    {prop: 'sales', label: '销量', sortable: 'custom'},
+    {prop: 'name', label: '名称', minWidth: 140},
+    {prop: 'status', label: '状态', width: 80},
+    {prop: 'salePrice', label: '零售价', minWidth: 90, align: 'right'},
+    {prop: 'purchasePrice', label: '进货成本', minWidth: 90, align: 'right'},
+    {prop: 'stock', label: '库存', width: 80, align: 'center'},
+    {prop: 'sales', label: '销量', width: 80, align: 'center', sortable: 'custom'},
     {prop: 'opt', label: '操作', width: 120, align: 'center', fixed: 'right', isMoneyUD: true },
 ]
 const rules = {
@@ -298,11 +296,19 @@ const moneyCrud = ref(new MoneyCrud({
     defaultForm: { status: 'SALE', stock: 0, isDiscountParticipable: 1 }
 }))
 
-// ==========================================
-// 6. 🌟 终极防污染与回显核心 (V5.0 灵魂)
-// ==========================================
+// 🌟 智能管货组件的选中与清除联动
+const handleGoodsSelect = (goods) => {
+    // 选中商品后，利用条码进行精准查询
+    moneyCrud.value.query.barcode = goods.barcode;
+    moneyCrud.value.query.name = null;
+    moneyCrud.value.doQuery();
+}
+const handleGoodsClear = () => {
+    moneyCrud.value.query.barcode = null;
+    moneyCrud.value.query.name = null;
+    moneyCrud.value.doQuery();
+}
 
-// 引擎 A：死死盯住弹窗开关，只要关上，发动核爆清场！
 watch(() => moneyCrud.value.box, (isOpen) => {
     if (!isOpen) {
         dbSnapshot.brandId = null;
@@ -314,9 +320,7 @@ watch(() => moneyCrud.value.box, (isOpen) => {
     }
 });
 
-// 引擎 B：死死盯住 brandId 的每一次风吹草动！不再需要任何延迟！
 watch(() => moneyCrud.value.form.brandId, async (newBrandId) => {
-    // 1. 如果变为空，直接重置
     if (!newBrandId) {
         matrix.rawCodes = [];
         matrix.prices = {};
@@ -324,15 +328,12 @@ watch(() => moneyCrud.value.form.brandId, async (newBrandId) => {
         return;
     }
 
-    // 2. 如果当前有商品 ID，且是"开天辟地"第一次拿到 brandId，立马存入不可侵犯的快照！
     if (moneyCrud.value.form.id && dbSnapshot.brandId === null) {
         dbSnapshot.brandId = String(newBrandId);
-        // 深拷贝，防止指针联动
         dbSnapshot.prices = JSON.parse(JSON.stringify(moneyCrud.value.form.levelPrices || {}));
         dbSnapshot.coupons = JSON.parse(JSON.stringify(moneyCrud.value.form.levelCoupons || {}));
     }
 
-    // 3. 去向后端要这个品牌的图纸 (无惧异步，图纸到了 Vue 会自动画格子)
     matrix.loading = true;
     try {
         const res = await req({ url: '/gms/brand/config', method: 'GET', params: { brandId: newBrandId } }).catch(() => null);
@@ -351,20 +352,15 @@ watch(() => moneyCrud.value.form.brandId, async (newBrandId) => {
         matrix.loading = false;
     }
 
-    // 4. 图纸准备完毕，先清空工作区的价格
     matrix.prices = {};
     matrix.coupons = {};
 
-    // 5. 🌟 滴水不漏的回显：如果当前品牌 === 原始品牌快照，直接把快照里的价格注进去！
     if (String(newBrandId) === String(dbSnapshot.brandId)) {
         Object.keys(dbSnapshot.prices).forEach(k => matrix.prices[k] = dbSnapshot.prices[k]);
         Object.keys(dbSnapshot.coupons).forEach(k => matrix.coupons[k] = dbSnapshot.coupons[k]);
     }
-}, { immediate: true }); // immediate:true 保证了一进来就能捕捉到变化
+}, { immediate: true });
 
-// ==========================================
-// 7. 初始化启动
-// ==========================================
 moneyCrud.value.init(moneyCrud, async () => {
     brands.value = await brandApi.getSelect().then(res => res.data)
     brands.value.forEach(e => { brandsKv.value[e.value] = e.label })

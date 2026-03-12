@@ -137,7 +137,7 @@ import { ElMessage } from 'element-plus'
 import dayjs from 'dayjs'
 
 // 🌟 引入刚修复好的智能搜索组件
-import SmartGoodsSelector from '@/components/SmartGoodsSelector.vue'
+import SmartGoodsSelector from "@/components/common/SmartGoodsSelector.vue"
 
 const keyword = ref('')
 const dateRange = ref([

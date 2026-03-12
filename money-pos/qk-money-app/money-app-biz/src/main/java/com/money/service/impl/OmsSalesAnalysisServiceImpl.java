@@ -42,7 +42,7 @@ public class OmsSalesAnalysisServiceImpl implements OmsSalesAnalysisService {
 
         SalesDashboardVO vo = new SalesDashboardVO();
 
-        // 1. 捞取期间内所有有效订单
+        // 1. 捞取期间内所有有效订单 (包含 PAID 和 RETURN，因为部分退货的单子也需要算剩余的净收入)
         List<OmsOrder> orders = omsOrderService.list(new LambdaQueryWrapper<OmsOrder>()
                 .ge(OmsOrder::getPaymentTime, startTime).le(OmsOrder::getPaymentTime, endTime)
                 .in(OmsOrder::getStatus, "PAID", "RETURN"));
@@ -56,11 +56,19 @@ public class OmsSalesAnalysisServiceImpl implements OmsSalesAnalysisService {
         }
 
         BigDecimal totalSalesAmount = BigDecimal.ZERO;
+        int totalOrderCount = 0; // 🌟 新增：剔除掉整单退款的订单，不计入客单数
+
         for (OmsOrder o : orders) {
-            totalSalesAmount = totalSalesAmount.add(o.getPayAmount() != null ? o.getPayAmount() : BigDecimal.ZERO);
+            // 🌟 核心升级：计算大盘总营业额时，必须用 finalSalesAmount (净收入)，如果为空则回退到 payAmount
+            BigDecimal netSales = o.getFinalSalesAmount() != null ? o.getFinalSalesAmount() : (o.getPayAmount() != null ? o.getPayAmount() : BigDecimal.ZERO);
+
+            // 过滤掉整单退款的单子（净收入为 0）
+            if (netSales.compareTo(BigDecimal.ZERO) > 0) {
+                totalSalesAmount = totalSalesAmount.add(netSales);
+                totalOrderCount++;
+            }
         }
 
-        int totalOrderCount = orders.size();
         vo.setTotalSalesAmount(totalSalesAmount);
         vo.setTotalOrderCount(totalOrderCount);
         vo.setAvgOrderValue(totalOrderCount > 0 ? totalSalesAmount.divide(new BigDecimal(totalOrderCount), 2, RoundingMode.HALF_UP) : BigDecimal.ZERO);
@@ -73,11 +81,22 @@ public class OmsSalesAnalysisServiceImpl implements OmsSalesAnalysisService {
         int totalGoodsCount = 0;
         Map<String, GoodsSalesRankVO> goodsRankMap = new HashMap<>();
         Map<String, BrandSalesVO> brandSalesMap = new HashMap<>();
-        Map<Long, String> brandNameCache = new HashMap<>();
+
+        Map<Long, String> brandMap = new HashMap<>();
+        if (!details.isEmpty()) {
+            Set<Long> brandIds = details.stream()
+                    .map(OmsOrderDetail::getBrandId)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toSet());
+            if (!brandIds.isEmpty()) {
+                brandMap = gmsBrandService.listByIds(brandIds).stream()
+                        .collect(Collectors.toMap(GmsBrand::getId, GmsBrand::getName));
+            }
+        }
 
         for (OmsOrderDetail d : details) {
             int qty = d.getQuantity() != null ? d.getQuantity() : 0;
-            // 剔除已退货的数量
+            // 🌟 你的这里写得很对，计算商品销量时，已经扣除了退货数量
             int actualQty = qty - (d.getReturnQuantity() != null ? d.getReturnQuantity() : 0);
             if (actualQty <= 0) continue;
 
@@ -91,19 +110,11 @@ public class OmsSalesAnalysisServiceImpl implements OmsSalesAnalysisService {
             goodsRankMap.put(d.getGoodsName(), rankVO);
 
             // 统计品牌分布
-            String brandName = "无品牌/散件";
-            if (d.getGoodsId() != null) {
-                if (brandNameCache.containsKey(d.getGoodsId())) {
-                    brandName = brandNameCache.get(d.getGoodsId());
-                } else {
-                    GmsGoods goods = gmsGoodsService.getById(d.getGoodsId());
-                    if (goods != null && goods.getBrandId() != null) {
-                        GmsBrand brand = gmsBrandService.getById(goods.getBrandId());
-                        if (brand != null && brand.getName() != null) brandName = brand.getName();
-                    }
-                    brandNameCache.put(d.getGoodsId(), brandName);
-                }
+            String brandName = "无品牌/未知";
+            if (d.getBrandId() != null && brandMap.containsKey(d.getBrandId())) {
+                brandName = brandMap.get(d.getBrandId());
             }
+
             BrandSalesVO brandVO = brandSalesMap.getOrDefault(brandName, new BrandSalesVO(brandName, BigDecimal.ZERO));
             brandVO.setSalesAmount(brandVO.getSalesAmount().add(itemSales));
             brandSalesMap.put(brandName, brandVO);
@@ -134,8 +145,12 @@ public class OmsSalesAnalysisServiceImpl implements OmsSalesAnalysisService {
 
             for (OmsOrder o : orders) {
                 if (o.getPaymentTime().toLocalDate().equals(currentDate)) {
-                    dailySales = dailySales.add(o.getPayAmount() != null ? o.getPayAmount() : BigDecimal.ZERO);
-                    dailyOrdersCount++;
+                    // 🌟 核心升级：趋势图里的每日销售额和单量，也要按净收入来！
+                    BigDecimal netSales = o.getFinalSalesAmount() != null ? o.getFinalSalesAmount() : (o.getPayAmount() != null ? o.getPayAmount() : BigDecimal.ZERO);
+                    if (netSales.compareTo(BigDecimal.ZERO) > 0) {
+                        dailySales = dailySales.add(netSales);
+                        dailyOrdersCount++;
+                    }
                 }
             }
             trendSales.add(dailySales);
@@ -148,6 +163,7 @@ public class OmsSalesAnalysisServiceImpl implements OmsSalesAnalysisService {
 
         return vo;
     }
+
     @Override
     public List<PerformanceReportVO> getPerformanceReport(String startDate, String endDate, String dimension) {
         LocalDate start = (startDate != null && !startDate.isEmpty()) ? LocalDate.parse(startDate) : LocalDate.now().minusDays(29);
@@ -155,43 +171,40 @@ public class OmsSalesAnalysisServiceImpl implements OmsSalesAnalysisService {
         LocalDateTime startTime = LocalDateTime.of(start, LocalTime.MIN);
         LocalDateTime endTime = LocalDateTime.of(end, LocalTime.MAX);
 
-        // 1. 捞取有效订单
         List<OmsOrder> orders = omsOrderService.list(new LambdaQueryWrapper<OmsOrder>()
                 .ge(OmsOrder::getPaymentTime, startTime).le(OmsOrder::getPaymentTime, endTime)
                 .in(OmsOrder::getStatus, "PAID", "RETURN"));
 
         if (orders.isEmpty()) return new ArrayList<>();
 
-        // 2. 捞取明细，用于计算真实的商品出库件数
         List<String> orderNos = orders.stream().map(OmsOrder::getOrderNo).collect(Collectors.toList());
         List<OmsOrderDetail> details = omsOrderDetailService.list(new LambdaQueryWrapper<OmsOrderDetail>()
                 .in(OmsOrderDetail::getOrderNo, orderNos));
 
-        // 预处理：计算每个订单的实际动销件数 (购买数 - 退货数)
         Map<String, Integer> orderGoodsCountMap = details.stream().collect(Collectors.groupingBy(
                 OmsOrderDetail::getOrderNo,
                 Collectors.summingInt(d -> (d.getQuantity() != null ? d.getQuantity() : 0) - (d.getReturnQuantity() != null ? d.getReturnQuantity() : 0))
         ));
 
-        // 3. 核心降维逻辑：按指定的维度 (日/周/月) 进行聚合分组
-        // 使用 TreeMap 并倒序排列，保证前端展示时最新的日期在最上面
         Map<String, PerformanceReportVO> reportMap = new TreeMap<>(Collections.reverseOrder());
         DateTimeFormatter dailyFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
         DateTimeFormatter monthlyFormatter = DateTimeFormatter.ofPattern("yyyy-MM");
 
         for (OmsOrder order : orders) {
+            // 🌟 核心升级：财报同样只统计有净收入的单子
+            BigDecimal netSales = order.getFinalSalesAmount() != null ? order.getFinalSalesAmount() : (order.getPayAmount() != null ? order.getPayAmount() : BigDecimal.ZERO);
+            if (netSales.compareTo(BigDecimal.ZERO) <= 0) continue;
+
             LocalDateTime time = order.getPaymentTime();
             String periodKey = "";
 
             if ("MONTHLY".equalsIgnoreCase(dimension)) {
                 periodKey = time.format(monthlyFormatter);
             } else if ("WEEKLY".equalsIgnoreCase(dimension)) {
-                // 按标准的 ISO 周进行聚合 (如 2024-W21)
                 int week = time.get(IsoFields.WEEK_OF_WEEK_BASED_YEAR);
                 int year = time.get(IsoFields.WEEK_BASED_YEAR);
                 periodKey = year + "-W" + String.format("%02d", week);
             } else {
-                // 默认按 DAILY
                 periodKey = time.format(dailyFormatter);
             }
 
@@ -199,12 +212,11 @@ public class OmsSalesAnalysisServiceImpl implements OmsSalesAnalysisService {
 
             vo.setOrderCount(vo.getOrderCount() + 1);
             vo.setGoodsCount(vo.getGoodsCount() + orderGoodsCountMap.getOrDefault(order.getOrderNo(), 0));
-            vo.setSalesAmount(vo.getSalesAmount().add(order.getPayAmount() != null ? order.getPayAmount() : BigDecimal.ZERO));
+            vo.setSalesAmount(vo.getSalesAmount().add(netSales)); // 🌟 换成净收入累加
 
             reportMap.put(periodKey, vo);
         }
 
-        // 4. 计算各周期的平均客单价
         List<PerformanceReportVO> result = new ArrayList<>(reportMap.values());
         for (PerformanceReportVO vo : result) {
             if (vo.getOrderCount() > 0) {
@@ -214,12 +226,13 @@ public class OmsSalesAnalysisServiceImpl implements OmsSalesAnalysisService {
 
         return result;
     }
+
     @Override
     public List<MarketingRoiVO> getMarketingRoiAnalysis(String startDate, String endDate) {
         LocalDate start = (startDate != null && !startDate.isEmpty()) ? LocalDate.parse(startDate) : LocalDate.now().minusDays(29);
         LocalDate end = (endDate != null && !endDate.isEmpty()) ? LocalDate.parse(endDate) : LocalDate.now();
 
-        // 1. 捞取所有核销过优惠的订单 (包括满减券和会员券)
+        // 营销 ROI 分析这里，我们要排除掉变成 RETURN (整单退款) 的单子，因为营销并没有带来最终的净收益
         List<OmsOrder> orders = omsOrderService.list(new LambdaQueryWrapper<OmsOrder>()
                 .ge(OmsOrder::getPaymentTime, LocalDateTime.of(start, LocalTime.MIN))
                 .le(OmsOrder::getPaymentTime, LocalDateTime.of(end, LocalTime.MAX))
@@ -228,24 +241,22 @@ public class OmsSalesAnalysisServiceImpl implements OmsSalesAnalysisService {
 
         if (orders.isEmpty()) return new ArrayList<>();
 
-        // 2. 内存聚合分析
         Map<String, MarketingRoiVO> reportMap = new HashMap<>();
 
         for (OmsOrder o : orders) {
-            // A. 处理满减券 (Voucher)
+            // 🌟 ROI 计算也必须用净收入！
+            BigDecimal netSales = o.getFinalSalesAmount() != null ? o.getFinalSalesAmount() : (o.getPayAmount() != null ? o.getPayAmount() : BigDecimal.ZERO);
+
             if (o.getUseVoucherAmount() != null && o.getUseVoucherAmount().compareTo(BigDecimal.ZERO) > 0) {
-                // 假设备注里存了券名称，或者关联了 ruleId，这里简化为汇总
                 String name = (o.getRemark() != null && o.getRemark().contains("券")) ? o.getRemark() : "通用满减活动";
-                updateRoiMap(reportMap, name, "满减券", o.getUseVoucherAmount(), o.getPayAmount());
+                updateRoiMap(reportMap, name, "满减券", o.getUseVoucherAmount(), netSales);
             }
 
-            // B. 处理会员券核销 (Member Coupon)
             if (o.getCouponAmount() != null && o.getCouponAmount().compareTo(BigDecimal.ZERO) > 0) {
-                updateRoiMap(reportMap, "会员专属券核销", "会员资产", o.getCouponAmount(), o.getPayAmount());
+                updateRoiMap(reportMap, "会员专属券核销", "会员资产", o.getCouponAmount(), netSales);
             }
         }
 
-        // 3. 计算最终倍数
         List<MarketingRoiVO> results = new ArrayList<>(reportMap.values());
         for (MarketingRoiVO vo : results) {
             if (vo.getTotalDiscountGived().compareTo(BigDecimal.ZERO) > 0) {
@@ -256,7 +267,6 @@ public class OmsSalesAnalysisServiceImpl implements OmsSalesAnalysisService {
             }
         }
 
-        // 按 ROI 倍数降序排列
         results.sort((a, b) -> b.getRoiMultiplier().compareTo(a.getRoiMultiplier()));
         return results;
     }

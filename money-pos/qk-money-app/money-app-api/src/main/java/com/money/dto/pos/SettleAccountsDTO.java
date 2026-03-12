@@ -38,5 +38,7 @@ public class SettleAccountsDTO {
         private String payMethodCode;
         private String payMethodName;
         private BigDecimal payAmount;
+        // 🌟 新增：接收前端传来的支付子标签（如 WECHAT）
+        private String payTag;
     }
 }

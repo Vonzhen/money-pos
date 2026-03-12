@@ -36,7 +36,6 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
     private final OmsOrderDetailService omsOrderDetailService;
     private final PosCouponRuleMapper posCouponRuleMapper;
     private final PosMemberCouponMapper posMemberCouponMapper;
-    private final GmsGoodsService gmsGoodsService;
     private final GmsBrandService gmsBrandService;
 
     @Override
@@ -48,6 +47,7 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
 
         FinanceDashboardVO vo = new FinanceDashboardVO();
 
+        // 1. 获取当天的订单数据
         List<OmsOrder> dailyOrders = omsOrderService.list(new LambdaQueryWrapper<OmsOrder>()
                 .ge(OmsOrder::getPaymentTime, startOfDay).le(OmsOrder::getPaymentTime, endOfDay)
                 .in(OmsOrder::getStatus, "PAID", "RETURN"));
@@ -63,9 +63,13 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
             totalDiscount = totalDiscount.add(o.getCouponAmount() != null ? o.getCouponAmount() : BigDecimal.ZERO)
                     .add(o.getUseVoucherAmount() != null ? o.getUseVoucherAmount() : BigDecimal.ZERO)
                     .add(o.getManualDiscountAmount() != null ? o.getManualDiscountAmount() : BigDecimal.ZERO);
-            payAmount = payAmount.add(o.getPayAmount() != null ? o.getPayAmount() : BigDecimal.ZERO);
+
+            BigDecimal currentPay = o.getPayAmount() != null ? o.getPayAmount() : BigDecimal.ZERO;
             BigDecimal finalSales = o.getFinalSalesAmount() != null ? o.getFinalSalesAmount() : BigDecimal.ZERO;
-            refundAmount = refundAmount.add(payAmount).subtract(finalSales);
+            BigDecimal currentRefund = currentPay.subtract(finalSales);
+
+            payAmount = payAmount.add(currentPay);
+            refundAmount = refundAmount.add(currentRefund);
             costAmount = costAmount.add(o.getCostAmount() != null ? o.getCostAmount() : BigDecimal.ZERO);
         }
 
@@ -77,39 +81,71 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
         vo.setNetIncome(netIncome);
         vo.setGrossProfit(netIncome.subtract(costAmount));
 
+        // 2. 获取当天的支付流水和会员充值记录
         List<OmsOrderPay> dailyPays = omsOrderPayMapper.selectList(new LambdaQueryWrapper<OmsOrderPay>()
                 .ge(OmsOrderPay::getCreateTime, startOfDay).le(OmsOrderPay::getCreateTime, endOfDay));
         List<UmsMemberLog> dailyRecharges = umsMemberLogMapper.selectList(new LambdaQueryWrapper<UmsMemberLog>()
                 .ge(UmsMemberLog::getCreateTime, startOfDay).le(UmsMemberLog::getCreateTime, endOfDay)
                 .eq(UmsMemberLog::getOperateType, "RECHARGE"));
 
-        BigDecimal scanIncome = BigDecimal.ZERO;
+        BigDecimal scanIncomeTotal = BigDecimal.ZERO;
         BigDecimal cashIncome = BigDecimal.ZERO;
         BigDecimal balancePay = BigDecimal.ZERO;
+
+        // 存放动态标签聚合金额的 Map
+        Map<String, BigDecimal> scanTagMap = new HashMap<>();
 
         for (OmsOrderPay pay : dailyPays) {
             String code = pay.getPayMethodCode() != null ? pay.getPayMethodCode().toUpperCase() : "";
             BigDecimal amt = pay.getPayAmount() != null ? pay.getPayAmount() : BigDecimal.ZERO;
-            if (code.contains("BALANCE")) balancePay = balancePay.add(amt);
-            else if (code.contains("CASH")) cashIncome = cashIncome.add(amt);
-            else scanIncome = scanIncome.add(amt);
+            if (code.contains("BALANCE")) {
+                balancePay = balancePay.add(amt);
+            } else if (code.contains("CASH")) {
+                cashIncome = cashIncome.add(amt);
+            } else {
+                scanIncomeTotal = scanIncomeTotal.add(amt);
+                // 不在后端翻译，直接存入带标签的原数据
+                String rawTag = pay.getPayTag() != null && !pay.getPayTag().trim().isEmpty() ? pay.getPayTag() : "UNKNOWN";
+                scanTagMap.put(rawTag, scanTagMap.getOrDefault(rawTag, BigDecimal.ZERO).add(amt));
+            }
         }
 
         BigDecimal rechargeAmount = dailyRecharges.stream().map(log -> log.getRealAmount() != null ? log.getRealAmount() : BigDecimal.ZERO).reduce(BigDecimal.ZERO, BigDecimal::add);
-        vo.setExternalIncome(scanIncome.add(cashIncome).add(rechargeAmount));
+        vo.setExternalIncome(scanIncomeTotal.add(cashIncome).add(rechargeAmount));
+
+        // 获取全体会员沉淀资金
         vo.setTotalDebt(umsMemberService.list().stream().map(UmsMember::getBalance).filter(Objects::nonNull).reduce(BigDecimal.ZERO, BigDecimal::add));
 
+        // 3. 组装饼图数据
         List<PayPieData> pieDataList = new ArrayList<>();
-        if (scanIncome.compareTo(BigDecimal.ZERO) > 0) pieDataList.add(new PayPieData("聚合扫码流水", scanIncome));
+        for (Map.Entry<String, BigDecimal> entry : scanTagMap.entrySet()) {
+            if (entry.getValue().compareTo(BigDecimal.ZERO) > 0) {
+                // 增加 TAG: 前缀，通知前端去翻译
+                pieDataList.add(new PayPieData("TAG:" + entry.getKey(), entry.getValue()));
+            }
+        }
+        if (scanTagMap.isEmpty() && scanIncomeTotal.compareTo(BigDecimal.ZERO) > 0) {
+            pieDataList.add(new PayPieData("聚合扫码流水", scanIncomeTotal));
+        }
         if (cashIncome.compareTo(BigDecimal.ZERO) > 0) pieDataList.add(new PayPieData("现金收银流水", cashIncome));
         if (balancePay.compareTo(BigDecimal.ZERO) > 0) pieDataList.add(new PayPieData("会员余额抵扣", balancePay));
         if (rechargeAmount.compareTo(BigDecimal.ZERO) > 0) pieDataList.add(new PayPieData("会员充值入账", rechargeAmount));
         vo.setPayBreakdown(pieDataList);
 
+        // 4. 获取近7天的趋势数据
         List<OmsOrderPay> last7DaysPays = omsOrderPayMapper.selectList(new LambdaQueryWrapper<OmsOrderPay>()
                 .ge(OmsOrderPay::getCreateTime, startOf7DaysAgo).le(OmsOrderPay::getCreateTime, endOfDay));
         List<UmsMemberLog> last7DaysRecharges = umsMemberLogMapper.selectList(new LambdaQueryWrapper<UmsMemberLog>()
                 .ge(UmsMemberLog::getCreateTime, startOf7DaysAgo).le(UmsMemberLog::getCreateTime, endOfDay).eq(UmsMemberLog::getOperateType, "RECHARGE"));
+
+        // 收集所有出现过的细分支付标签
+        Set<String> allTags = last7DaysPays.stream()
+                .filter(p -> p.getPayMethodCode() != null && !p.getPayMethodCode().contains("CASH") && !p.getPayMethodCode().contains("BALANCE"))
+                .map(p -> p.getPayTag() != null && !p.getPayTag().trim().isEmpty() ? p.getPayTag() : "UNKNOWN")
+                .collect(Collectors.toSet());
+
+        Map<String, List<BigDecimal>> dynamicTrendMap = new HashMap<>();
+        for (String tag : allTags) dynamicTrendMap.put(tag, new ArrayList<>());
 
         List<String> trendDates = new ArrayList<>();
         List<BigDecimal> trendScan = new ArrayList<>(), trendCash = new ArrayList<>(), trendRecharge = new ArrayList<>(), trendTotal = new ArrayList<>();
@@ -118,19 +154,57 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
         for (int i = 6; i >= 0; i--) {
             LocalDate d = targetDate.minusDays(i);
             trendDates.add(d.format(formatter));
-            BigDecimal dailyScan = last7DaysPays.stream().filter(p -> p.getCreateTime().toLocalDate().equals(d) && p.getPayMethodCode() != null && !p.getPayMethodCode().toUpperCase().contains("BALANCE") && !p.getPayMethodCode().toUpperCase().contains("CASH")).map(p -> p.getPayAmount() != null ? p.getPayAmount() : BigDecimal.ZERO).reduce(BigDecimal.ZERO, BigDecimal::add);
-            BigDecimal dailyCash = last7DaysPays.stream().filter(p -> p.getCreateTime().toLocalDate().equals(d) && p.getPayMethodCode() != null && p.getPayMethodCode().toUpperCase().contains("CASH")).map(p -> p.getPayAmount() != null ? p.getPayAmount() : BigDecimal.ZERO).reduce(BigDecimal.ZERO, BigDecimal::add);
-            BigDecimal dailyRecharge = last7DaysRecharges.stream().filter(r -> r.getCreateTime().toLocalDate().equals(d)).map(r -> r.getRealAmount() != null ? r.getRealAmount() : BigDecimal.ZERO).reduce(BigDecimal.ZERO, BigDecimal::add);
+
+            BigDecimal dailyScan = BigDecimal.ZERO;
+            BigDecimal dailyCash = BigDecimal.ZERO;
+            Map<String, BigDecimal> dailyTagAmt = new HashMap<>();
+
+            for(OmsOrderPay p : last7DaysPays){
+                if(p.getCreateTime().toLocalDate().equals(d) && p.getPayMethodCode() != null){
+                    String code = p.getPayMethodCode().toUpperCase();
+                    BigDecimal amt = p.getPayAmount() != null ? p.getPayAmount() : BigDecimal.ZERO;
+                    if(code.contains("CASH")) {
+                        dailyCash = dailyCash.add(amt);
+                    } else if (!code.contains("BALANCE")){
+                        dailyScan = dailyScan.add(amt);
+                        String tag = p.getPayTag() != null && !p.getPayTag().trim().isEmpty() ? p.getPayTag() : "UNKNOWN";
+                        dailyTagAmt.put(tag, dailyTagAmt.getOrDefault(tag, BigDecimal.ZERO).add(amt));
+                    }
+                }
+            }
+
+            // 将每天的具体标签数据推入对应的列表
+            for (String tag : allTags) {
+                dynamicTrendMap.get(tag).add(dailyTagAmt.getOrDefault(tag, BigDecimal.ZERO));
+            }
+
+            BigDecimal dailyRecharge = BigDecimal.ZERO;
+            for(UmsMemberLog r : last7DaysRecharges){
+                if(r.getCreateTime().toLocalDate().equals(d)){
+                    dailyRecharge = dailyRecharge.add(r.getRealAmount() != null ? r.getRealAmount() : BigDecimal.ZERO);
+                }
+            }
+
             trendScan.add(dailyScan); trendCash.add(dailyCash); trendRecharge.add(dailyRecharge); trendTotal.add(dailyScan.add(dailyCash).add(dailyRecharge));
         }
         vo.setTrendDates(trendDates); vo.setTrendScan(trendScan); vo.setTrendCash(trendCash); vo.setTrendRecharge(trendRecharge); vo.setTrendTotal(trendTotal);
+        vo.setDynamicTrendMap(dynamicTrendMap);
+
         return vo;
     }
 
     @Override
     public List<ProfitRankVO> getProfitRanking() {
         LocalDateTime startOf30DaysAgo = LocalDateTime.of(LocalDate.now().minusDays(30), LocalTime.MIN);
-        List<String> paidOrderNos = omsOrderService.list(new LambdaQueryWrapper<OmsOrder>().ge(OmsOrder::getPaymentTime, startOf30DaysAgo).eq(OmsOrder::getStatus, "PAID")).stream().map(OmsOrder::getOrderNo).collect(Collectors.toList());
+
+        // 使用限制 5000 条，防止内存溢出
+        List<String> paidOrderNos = omsOrderService.list(new LambdaQueryWrapper<OmsOrder>()
+                        .select(OmsOrder::getOrderNo)
+                        .ge(OmsOrder::getPaymentTime, startOf30DaysAgo)
+                        .eq(OmsOrder::getStatus, "PAID")
+                        .last("LIMIT 5000"))
+                .stream().map(OmsOrder::getOrderNo).collect(Collectors.toList());
+
         if (paidOrderNos.isEmpty()) return new ArrayList<>();
 
         List<OmsOrderDetail> details = omsOrderDetailService.list(new LambdaQueryWrapper<OmsOrderDetail>().in(OmsOrderDetail::getOrderNo, paidOrderNos));
@@ -183,20 +257,19 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
             }
             totalVoucherCount = Math.toIntExact(posMemberCouponMapper.selectCount(new LambdaQueryWrapper<PosMemberCoupon>().eq(PosMemberCoupon::getStatus, "USED").in(PosMemberCoupon::getOrderNo, orderNos)));
             List<OmsOrderDetail> details = omsOrderDetailService.list(new LambdaQueryWrapper<OmsOrderDetail>().in(OmsOrderDetail::getOrderNo, orderNos));
-            Map<Long, String> brandNameCache = new HashMap<>();
+
+            Map<Long, String> brandNameDict = new HashMap<>();
+            Set<Long> brandIds = details.stream().map(OmsOrderDetail::getBrandId).filter(Objects::nonNull).collect(Collectors.toSet());
+            if (!brandIds.isEmpty()) {
+                brandNameDict = gmsBrandService.listByIds(brandIds).stream().collect(Collectors.toMap(GmsBrand::getId, GmsBrand::getName));
+            }
+
             for (OmsOrderDetail d : details) {
                 String brandName = "未知品牌";
-                if (d.getGoodsId() != null) {
-                    if (brandNameCache.containsKey(d.getGoodsId())) brandName = brandNameCache.get(d.getGoodsId());
-                    else {
-                        GmsGoods goods = gmsGoodsService.getById(d.getGoodsId());
-                        if (goods != null && goods.getBrandId() != null) {
-                            GmsBrand brand = gmsBrandService.getById(goods.getBrandId());
-                            if (brand != null && brand.getName() != null) brandName = brand.getName();
-                        }
-                        brandNameCache.put(d.getGoodsId(), brandName);
-                    }
+                if (d.getBrandId() != null && brandNameDict.containsKey(d.getBrandId())) {
+                    brandName = brandNameDict.get(d.getBrandId());
                 }
+
                 BigDecimal qty = new BigDecimal(d.getQuantity() != null ? d.getQuantity() : 0);
                 BrandContributionVO bvo = brandMap.getOrDefault(brandName, new BrandContributionVO(brandName, BigDecimal.ZERO, BigDecimal.ZERO));
                 bvo.setRevenue(bvo.getRevenue().add(d.getGoodsPrice() != null ? d.getGoodsPrice().multiply(qty) : BigDecimal.ZERO));
@@ -245,11 +318,9 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
         LocalDateTime startTime = LocalDateTime.of(start, LocalTime.MIN);
         LocalDateTime endTime = LocalDateTime.of(end, LocalTime.MAX);
 
-        // 1. 捞取时间段内的所有支付流水 (计算 现金、扫码、余额)
         List<OmsOrderPay> pays = omsOrderPayMapper.selectList(new LambdaQueryWrapper<OmsOrderPay>()
                 .ge(OmsOrderPay::getCreateTime, startTime).le(OmsOrderPay::getCreateTime, endTime));
 
-        // 2. 捞取时间段内的所有已支付订单 (计算 券抵扣、满减抵扣)
         List<OmsOrder> orders = omsOrderService.list(new LambdaQueryWrapper<OmsOrder>()
                 .ge(OmsOrder::getPaymentTime, startTime).le(OmsOrder::getPaymentTime, endTime)
                 .in(OmsOrder::getStatus, "PAID", "RETURN"));
@@ -265,12 +336,13 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
         BigDecimal totalScan = BigDecimal.ZERO, totalCash = BigDecimal.ZERO, totalBalance = BigDecimal.ZERO;
         BigDecimal totalCoupon = BigDecimal.ZERO, totalVoucher = BigDecimal.ZERO;
 
-        // 🌟 核心：按日期逐天循环，确保 X 轴严格对齐，即使某天没营业也补 0
+        // 🌟 将高级报表也加入标签动态识别，保证与主页一致
+        Map<String, BigDecimal> scanTagMap = new HashMap<>();
+
         for (LocalDate date = start; !date.isAfter(end); date = date.plusDays(1)) {
             final LocalDate currentDate = date;
             dates.add(date.format(DateTimeFormatter.ofPattern("MM-dd")));
 
-            // 计算该日的真金流水
             BigDecimal dScan = BigDecimal.ZERO, dCash = BigDecimal.ZERO, dBalance = BigDecimal.ZERO;
             for (OmsOrderPay p : pays) {
                 if (p.getCreateTime().toLocalDate().equals(currentDate)) {
@@ -278,14 +350,17 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
                     BigDecimal amt = p.getPayAmount() != null ? p.getPayAmount() : BigDecimal.ZERO;
                     if (code.contains("BALANCE")) dBalance = dBalance.add(amt);
                     else if (code.contains("CASH")) dCash = dCash.add(amt);
-                    else dScan = dScan.add(amt);
+                    else {
+                        dScan = dScan.add(amt);
+                        String rawTag = p.getPayTag() != null && !p.getPayTag().trim().isEmpty() ? p.getPayTag() : "UNKNOWN";
+                        scanTagMap.put(rawTag, scanTagMap.getOrDefault(rawTag, BigDecimal.ZERO).add(amt));
+                    }
                 }
             }
             scanList.add(dScan); totalScan = totalScan.add(dScan);
             cashList.add(dCash); totalCash = totalCash.add(dCash);
             balanceList.add(dBalance); totalBalance = totalBalance.add(dBalance);
 
-            // 计算该日的虚拟抵扣
             BigDecimal dCoupon = BigDecimal.ZERO, dVoucher = BigDecimal.ZERO;
             for (OmsOrder o : orders) {
                 if (o.getPaymentTime().toLocalDate().equals(currentDate)) {
@@ -301,9 +376,17 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
         vo.setScanList(scanList); vo.setCashList(cashList); vo.setBalanceList(balanceList);
         vo.setCouponList(couponList); vo.setVoucherList(voucherList);
 
-        // 装配饼图
         List<PayPieData> pieDataList = new ArrayList<>();
-        if (totalScan.compareTo(BigDecimal.ZERO) > 0) pieDataList.add(new PayPieData("聚合扫码(真金)", totalScan));
+
+        for (Map.Entry<String, BigDecimal> entry : scanTagMap.entrySet()) {
+            if (entry.getValue().compareTo(BigDecimal.ZERO) > 0) {
+                pieDataList.add(new PayPieData("TAG:" + entry.getKey(), entry.getValue()));
+            }
+        }
+        if (scanTagMap.isEmpty() && totalScan.compareTo(BigDecimal.ZERO) > 0) {
+            pieDataList.add(new PayPieData("聚合扫码(真金)", totalScan));
+        }
+
         if (totalCash.compareTo(BigDecimal.ZERO) > 0) pieDataList.add(new PayPieData("现金收银(真金)", totalCash));
         if (totalBalance.compareTo(BigDecimal.ZERO) > 0) pieDataList.add(new PayPieData("余额消耗(预收)", totalBalance));
         if (totalCoupon.compareTo(BigDecimal.ZERO) > 0) pieDataList.add(new PayPieData("单品会员券(让利)", totalCoupon));
@@ -312,8 +395,6 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
 
         return vo;
     }
-
-    // ... [上方原有的其他方法保留，直接在类末尾追加以下方法] ...
 
     @Override
     public RiskControlVO getRiskControlData(String startDate, String endDate) {
@@ -347,8 +428,7 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
             boolean isAbnormal = false;
             String riskType = "";
 
-            // 1. 负毛利或0成本探针
-            if (payAmount.compareTo(BigDecimal.ZERO) > 0 && costAmount.compareTo(BigDecimal.ZERO) == 0) {
+            if (payAmount.compareTo(new BigDecimal("10")) >= 0 && costAmount.compareTo(BigDecimal.ZERO) == 0) {
                 isAbnormal = true;
                 riskType = "缺失成本预警";
                 abnormalOrderCount++;
@@ -359,17 +439,15 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
                 totalLossAmount = totalLossAmount.add(profit.abs());
             }
 
-            // 2. 手工大额放水探针
             if (manualDiscount.compareTo(BigDecimal.ZERO) > 0) {
                 totalManualDiscount = totalManualDiscount.add(manualDiscount);
                 cashierVO.setManualDiscountAmount(cashierVO.getManualDiscountAmount().add(manualDiscount));
-                if (!isAbnormal && manualDiscount.compareTo(new BigDecimal("50")) > 0) { // 改价超50元也视为异常
+                if (!isAbnormal && manualDiscount.compareTo(new BigDecimal("50")) > 0) {
                     isAbnormal = true;
                     riskType = "大额手工放水";
                 }
             }
 
-            // 3. 退款频次探针
             if ("RETURN".equals(o.getStatus()) || "REFUNDED".equals(o.getStatus())) {
                 totalRefundCount++;
                 cashierVO.setRefundCount(cashierVO.getRefundCount() + 1);
@@ -394,12 +472,10 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
         vo.setTotalManualDiscount(totalManualDiscount);
         vo.setTotalRefundCount(totalRefundCount);
 
-        // 收银员按改价金额倒序（黑榜榜首）
         List<CashierRiskVO> cashierList = new ArrayList<>(cashierMap.values());
         cashierList.sort((a, b) -> b.getManualDiscountAmount().compareTo(a.getManualDiscountAmount()));
         vo.setCashierRiskList(cashierList);
 
-        // 异常订单按亏损程度排序
         abnormalOrders.sort((a, b) -> a.getProfit().compareTo(b.getProfit()));
         vo.setRecentAbnormalOrders(abnormalOrders.size() > 50 ? abnormalOrders.subList(0, 50) : abnormalOrders);
 

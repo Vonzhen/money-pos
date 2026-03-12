@@ -44,6 +44,7 @@
 import { ref, onMounted, nextTick, onBeforeUnmount } from 'vue'
 import PageWrapper from "@/components/PageWrapper.vue"
 import { req } from "@/api/index.js"
+import dictApi from "@/api/system/dict.js" // 🌟 引入字典 API
 import { Refresh } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
@@ -54,6 +55,7 @@ const dateRange = ref([
     dayjs().format('YYYY-MM-DD')
 ])
 const loading = ref(false)
+const payTagDict = ref([]) // 🌟 存储子标签字典
 
 const shortcuts = [
     { text: '最近7天', value: () => [dayjs().subtract(6, 'day').toDate(), dayjs().toDate()] },
@@ -69,6 +71,21 @@ const stackChartRef = ref(null)
 const pieChartRef = ref(null)
 let stackChart = null
 let pieChart = null
+
+// 🌟 翻译拦截器 (与大屏保持一致)
+const getTranslatedName = (rawName) => {
+    let finalName = rawName;
+    if (rawName && rawName.startsWith('TAG:')) {
+        const code = rawName.substring(4);
+        if (code === 'UNKNOWN') {
+            finalName = '未分类扫码';
+        } else {
+            const dictItem = payTagDict.value.find(item => item.value === code);
+            finalName = dictItem ? dictItem.desc : code;
+        }
+    }
+    return finalName ? finalName.replace(/流水/g, '') : '';
+}
 
 const fetchData = async () => {
     loading.value = true
@@ -87,52 +104,60 @@ const fetchData = async () => {
     }
 }
 
-const colorPalette = {
-    'scan': '#409EFF',    // 蓝
-    'cash': '#9C27B0',    // 紫
-    'balance': '#909399', // 灰
-    'coupon': '#F56C6C',  // 红
-    'voucher': '#E6A23C'  // 橙
-}
+// 🌟 扩展调色板，以支持拆解后的多种扫码方式
+const colorPalette = [
+    '#409EFF', '#67C23A', '#E6A23C', '#F56C6C', '#9C27B0',
+    '#13CE66', '#FF9900', '#8e44ad', '#e74c3c', '#909399'
+]
 
 const initStackChart = () => {
     if (!stackChartRef.value) return
     if (!stackChart) stackChart = echarts.init(stackChartRef.value)
 
+    // 注意：由于后端 getChannelMixAnalysis 里的趋势数据（scanList）目前还是总计，
+    // 所以这里的柱状图我们暂时保持总计展示，避免前端过于复杂。饼图则已经拆细。
     stackChart.setOption({
-        // 🌟 核心修复：appendToBody 防止外框截断
         tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, appendToBody: true },
-        legend: { data: ['聚合扫码(真金)', '现金收银(真金)', '余额消耗(预收)', '单品会员券(让利)', '整单满减券(让利)'], bottom: '0' },
-        grid: { left: '3%', right: '4%', bottom: '10%', containLabel: true },
+        // 设置 bottom 预留换行空间
+        legend: { data: ['扫码总计(真金)', '现金收银(真金)', '余额消耗(预收)', '单品会员券(让利)', '整单满减券(让利)'], bottom: '0' },
+        grid: { left: '3%', right: '4%', bottom: '15%', containLabel: true },
         xAxis: { type: 'category', data: data.value.trendDates || [] },
         yAxis: { type: 'value', name: '金额成分' },
         series: [
-            { name: '聚合扫码(真金)', type: 'bar', stack: 'total', itemStyle: { color: colorPalette.scan }, data: data.value.scanList || [] },
-            { name: '现金收银(真金)', type: 'bar', stack: 'total', itemStyle: { color: colorPalette.cash }, data: data.value.cashList || [] },
-            { name: '余额消耗(预收)', type: 'bar', stack: 'total', itemStyle: { color: colorPalette.balance }, data: data.value.balanceList || [] },
-            { name: '单品会员券(让利)', type: 'bar', stack: 'total', itemStyle: { color: colorPalette.coupon }, data: data.value.couponList || [] },
-            { name: '整单满减券(让利)', type: 'bar', stack: 'total', itemStyle: { color: colorPalette.voucher, borderRadius: [4, 4, 0, 0] }, data: data.value.voucherList || [] }
+            { name: '扫码总计(真金)', type: 'bar', stack: 'total', itemStyle: { color: '#409EFF' }, data: data.value.scanList || [] },
+            { name: '现金收银(真金)', type: 'bar', stack: 'total', itemStyle: { color: '#9C27B0' }, data: data.value.cashList || [] },
+            { name: '余额消耗(预收)', type: 'bar', stack: 'total', itemStyle: { color: '#909399' }, data: data.value.balanceList || [] },
+            { name: '单品会员券(让利)', type: 'bar', stack: 'total', itemStyle: { color: '#F56C6C' }, data: data.value.couponList || [] },
+            { name: '整单满减券(让利)', type: 'bar', stack: 'total', itemStyle: { color: '#E6A23C', borderRadius: [4, 4, 0, 0] }, data: data.value.voucherList || [] }
         ]
-    })
+    }, true)
 }
 
 const initPieChart = () => {
     if (!pieChartRef.value) return
     if (!pieChart) pieChart = echarts.init(pieChartRef.value)
 
+    // 🌟 翻译后端传来的饼图数据，让它显示成优美的中文
+    const translatedPieData = (data.value.pieData || []).map(item => ({
+        name: getTranslatedName(item.name),
+        value: item.value
+    }))
+
     pieChart.setOption({
-        // 🌟 核心修复：appendToBody 防止外框截断
         tooltip: { trigger: 'item', formatter: '{b}: ¥ {c} ({d}%)', appendToBody: true },
-        legend: { orient: 'horizontal', bottom: 'bottom' },
-        color: [colorPalette.scan, colorPalette.cash, colorPalette.balance, colorPalette.coupon, colorPalette.voucher],
+        // 允许标签自然换行，避免被隐藏
+        legend: { orient: 'horizontal', bottom: '0' },
+        color: colorPalette,
         series: [{
-            name: '营业成分切片', type: 'pie', radius: ['35%', '65%'],
+            name: '营业成分切片', type: 'pie',
+            // 🌟 饼图稍微上移一点，给下方的双排文字留出空间
+            radius: ['35%', '65%'], center: ['50%', '42%'],
             avoidLabelOverlap: true,
             itemStyle: { borderRadius: 5, borderColor: '#fff', borderWidth: 2 },
             label: { show: true, formatter: '{b}\n{d}%' },
-            data: data.value.pieData || []
+            data: translatedPieData
         }]
-    })
+    }, true)
 }
 
 const handleResize = () => {
@@ -140,7 +165,13 @@ const handleResize = () => {
     if (pieChart) pieChart.resize()
 }
 
-onMounted(() => {
+onMounted(async () => {
+    // 🌟 先拉取字典，再拉取业务数据
+    try {
+        const dict = await dictApi.loadDict(["paySubTag"])
+        if (dict.paySubTag) payTagDict.value = dict.paySubTag
+    } catch (e) {}
+
     window.addEventListener('resize', handleResize)
     fetchData()
 })

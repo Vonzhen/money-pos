@@ -15,6 +15,8 @@ public class OmsOrderPay {
     private String orderNo;
     // 支付方式名称
     private String payMethodName;
+    // 🌟 新增：支付子标签(如: WECHAT, ALIPAY)
+    private String payTag;
     // 支付方式代码
     private String payMethodCode;
     // 支付金额

@@ -29,4 +29,14 @@ public class UmsMemberLog {
     // 🌟 核心新增：充值时实际收到的现金（用于核算发券成本）
     // ==========================================
     private BigDecimal realAmount;
+
+    /**
+     * 会员姓名(历史快照)
+     */
+    private String memberName;
+
+    /**
+     * 会员手机号(历史快照)
+     */
+    private String memberPhone;
 }

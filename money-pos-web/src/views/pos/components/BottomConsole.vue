@@ -8,7 +8,7 @@
                         <span class="text-white font-bold text-base truncate">{{ currentMember.name }}</span>
                         <span class="text-gray-400 text-xs">{{ currentMember.phone }}</span>
                     </div>
-                    <el-button size="small" type="danger" link @click="currentMember = {}">退出</el-button>
+                    <el-button size="small" type="danger" link @click="handleClearMember">退出</el-button>
                 </div>
 
                 <div class="flex justify-between items-start mt-1">
@@ -53,7 +53,6 @@
         </div>
 
         <div class="flex-1 bg-gray-800 rounded-lg border border-gray-700 p-4 flex shadow-md relative">
-
             <div class="flex-1 flex flex-col pr-6 border-r border-gray-700">
                 <div class="text-gray-300 text-sm font-medium space-y-2.5 mt-1">
                     <div class="flex items-center gap-2"><el-icon class="text-gray-400"><Tickets /></el-icon>流水号: {{ currentOrderNo }}</div>
@@ -112,9 +111,11 @@
                 </div>
                 <el-icon class="text-2xl mb-1"><Tickets /></el-icon><span class="text-base font-bold">挂单</span>
             </button>
-            <button class="pos-btn bg-purple-600 hover:bg-purple-500 text-white" @click="$emit('bind-member')">
+
+            <button class="pos-btn bg-purple-600 hover:bg-purple-500 text-white" @click="openMemberDialog">
                 <el-icon class="text-2xl mb-1"><User /></el-icon><span class="text-base font-bold">会员</span>
             </button>
+
             <button class="pos-btn bg-red-600 hover:bg-red-500 text-white row-span-2 shadow-[0_0_15px_rgba(239,68,68,0.3)] border border-red-500/50" @click="$emit('open-checkout')">
                 <span class="text-3xl font-black tracking-widest">收款</span>
                 <span class="text-xs font-bold opacity-90 mt-1 bg-red-800/50 px-2 py-1 rounded-full">[Enter]</span>
@@ -126,32 +127,96 @@
                 <el-icon class="text-2xl mb-1"><Delete /></el-icon><span class="text-base font-bold">清空</span>
             </button>
         </div>
+
+        <el-dialog
+            v-model="memberDialogVisible"
+            title="👤 绑定收银会员"
+            width="550px"
+            append-to-body
+            destroy-on-close
+            @opened="focusMemberSearch"
+            @closed="handleMemberDialogClosed"
+        >
+            <div class="py-4">
+                <MemberSmartSearch
+                    ref="memberSearchComp"
+                    v-model="bindMemberId"
+                    class="w-full"
+                    placeholder="请使用扫码枪或直接输入手机号"
+                    @select="handleMemberBind"
+                />
+            </div>
+            <template #footer>
+                <div class="text-xs text-gray-400 text-left">💡 弹窗打开后已自动聚焦，可直接扫描或输入。</div>
+            </template>
+        </el-dialog>
+
     </div>
 </template>
 
 <script setup>
-import { ref, computed, nextTick } from 'vue'
+import { ref, computed, nextTick, onMounted } from 'vue'
 import { Search, Delete, User, Unlock, Tickets, Timer, Monitor } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { req } from '@/api/index.js'
 import { usePosStore } from '../hooks/usePosStore'
 
+import MemberSmartSearch from '@/components/common/MemberSmartSearch.vue'
+
 const props = defineProps(['lastOrder', 'currentOrderNo', 'currentTime', 'memberTypesDict', 'suspendCount'])
-const emit = defineEmits(['open-checkout', 'bind-member', 'open-drawer', 'clear-cart', 'suspend'])
+// 🚨 彻底删除了 'bind-member'，绝不触发旧弹窗
+const emit = defineEmits(['open-checkout', 'open-drawer', 'clear-cart', 'suspend'])
 
 const { cartList, currentMember } = usePosStore()
 const scanKeyword = ref('')
 const scannerInput = ref(null)
 
-// 🌟 新增：核武器开关，用于强制销毁并重建 el-autocomplete 组件
-const autocompleteKey = ref(0)
+const memberDialogVisible = ref(false)
+const bindMemberId = ref(null)
+const memberSearchComp = ref(null)
 
-// 🌟 物理重置法：只要调用这个方法，旧的搜索框直接灰飞烟灭，换个全新的上来
+onMounted(() => {
+    nextTick(() => {
+        setTimeout(() => {
+            focusInput()
+        }, 300)
+    })
+})
+
+const openMemberDialog = () => {
+    bindMemberId.value = null;
+    memberDialogVisible.value = true;
+}
+
+const focusMemberSearch = () => {
+    memberSearchComp.value?.focus()
+}
+
+const handleMemberDialogClosed = () => {
+    bindMemberId.value = null;
+    focusInput();
+}
+
+const handleMemberBind = (member) => {
+    currentMember.value = member
+    memberDialogVisible.value = false
+    ElMessage.success(`已绑定会员：${member.name}`)
+    // 🚨 不再调用 emit('bind-member')，父组件的旧弹窗将彻底安息
+    nextTick(() => focusInput())
+}
+
+const handleClearMember = () => {
+    currentMember.value = {}
+    ElMessage.info('已清除当前会员绑定')
+    nextTick(() => focusInput())
+}
+
+const autocompleteKey = ref(0)
 const resetScanner = async () => {
     scanKeyword.value = '';
-    autocompleteKey.value++; // Vue 检测到 Key 变化，立即执行组件销毁与重建
-    await nextTick();        // 等待新的组件渲染完毕
-    scannerInput.value?.focus(); // 给全新的组件赋予焦点
+    autocompleteKey.value++;
+    await nextTick();
+    scannerInput.value?.focus();
 }
 
 const focusInput = () => {
@@ -223,7 +288,6 @@ const handleSelect = (item) => {
     } else {
         cartList.value.push({ ...item, qty: 1 });
     }
-    // 选中商品后，直接用核武器重建输入框
     resetScanner();
 }
 
@@ -241,7 +305,6 @@ const handleScan = async () => {
             scannerInput.value?.focus();
         } else {
             ElMessage.error('未找到该商品条码');
-            // 没找到商品，也要重建输入框
             resetScanner();
         }
     } catch (e) {

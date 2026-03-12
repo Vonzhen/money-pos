@@ -7,6 +7,7 @@ import com.money.dto.UmsMember.UmsMemberQueryDTO;
 import com.money.dto.UmsMember.UmsMemberVO;
 import com.money.service.UmsMemberService;
 import com.money.service.PosService;
+import com.money.service.impl.UmsMemberServiceImpl.MemberGoodsRankVO; // 🌟 引入强类型VO
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -20,7 +21,6 @@ import java.io.IOException;
 import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import com.alibaba.excel.EasyExcel;
 import com.money.dto.UmsMember.UmsMemberImportExcelDTO;
@@ -41,11 +41,11 @@ public class UmsMemberController {
         return umsMemberService.list(queryDTO);
     }
 
-    // 🌟 核心新增：开放给 360° 抽屉的 Top 10 商品接口
+    // 🌟 修复点：返回类型改为 List<MemberGoodsRankVO>
     @Operation(summary = "获取会员最爱购买的Top10商品")
     @GetMapping("/top10Goods")
     @PreAuthorize("@rbac.hasPermission('umsMember:list')")
-    public List<Map<String, Object>> top10Goods(@RequestParam Long memberId) {
+    public List<MemberGoodsRankVO> top10Goods(@RequestParam Long memberId) {
         return umsMemberService.getTop10Goods(memberId);
     }
 

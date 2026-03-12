@@ -6,6 +6,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.experimental.Accessors;
+import com.baomidou.mybatisplus.annotation.TableField; // 确保引入了这个包
 
 /**
  * <p>
@@ -25,6 +26,7 @@ public class SysDictDetail extends BaseEntity {
     private String dict;
 
     @Schema(description = "字典值")
+    @TableField("`value`")
     private String value;
 
     @Schema(description = "中文描述")

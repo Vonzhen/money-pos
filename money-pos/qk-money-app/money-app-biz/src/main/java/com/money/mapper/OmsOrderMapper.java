@@ -15,8 +15,8 @@ import org.apache.ibatis.annotations.Select;
 public interface OmsOrderMapper extends BaseMapper<OmsOrder> {
 
     /**
-     * 🌟 6.6 真实损益毛利审计 底层聚合查询
-     * 架构约束：所有计算下推至数据库执行，并严格遵守 XML 字符转义规范(&lt; &gt;)
+     * 🌟 真实损益毛利审计 底层聚合查询
+     * 结合了快照成本(purchase_price)进行强力回溯，支持分母为 0 的防御
      */
     @Select("<script>" +
             "SELECT " +

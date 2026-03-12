@@ -30,6 +30,7 @@ import com.money.service.UmsMemberService;
 import com.money.util.PageUtil;
 import com.alibaba.excel.EasyExcel;
 import com.money.dto.UmsMember.UmsMemberImportExcelDTO;
+import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.SneakyThrows;
 import org.springframework.stereotype.Service;
@@ -52,6 +53,16 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
     private final OmsOrderDetailMapper omsOrderDetailMapper;
     private final UmsMemberBrandLevelMapper umsMemberBrandLevelMapper;
     private final GmsBrandMapper gmsBrandMapper;
+
+    @Data
+    public static class MemberGoodsRankVO {
+        private String goodsName;
+        private Integer buyCount;
+        public MemberGoodsRankVO(String goodsName, Integer buyCount) {
+            this.goodsName = goodsName;
+            this.buyCount = buyCount;
+        }
+    }
 
     @Override
     public PageVO<UmsMemberVO> list(UmsMemberQueryDTO queryDTO) {
@@ -135,7 +146,7 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
     }
 
     @Override
-    public List<Map<String, Object>> getTop10Goods(Long memberId) {
+    public List<MemberGoodsRankVO> getTop10Goods(Long memberId) {
         List<OmsOrder> orders = omsOrderMapper.selectList(new LambdaQueryWrapper<OmsOrder>().eq(OmsOrder::getMemberId, memberId).eq(OmsOrder::getStatus, "PAID"));
         if (orders.isEmpty()) return new ArrayList<>();
         List<String> orderNos = orders.stream().map(OmsOrder::getOrderNo).collect(Collectors.toList());
@@ -145,8 +156,12 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
             int validQty = detail.getQuantity() - (detail.getReturnQuantity() != null ? detail.getReturnQuantity() : 0);
             if (validQty > 0) goodsCountMap.put(detail.getGoodsName(), goodsCountMap.getOrDefault(detail.getGoodsName(), 0) + validQty);
         }
-        return goodsCountMap.entrySet().stream().sorted((e1, e2) -> e2.getValue().compareTo(e1.getValue())).limit(10)
-                .map(e -> { Map<String, Object> map = new HashMap<>(); map.put("goodsName", e.getKey()); map.put("buyCount", e.getValue()); return map; }).collect(Collectors.toList());
+
+        return goodsCountMap.entrySet().stream()
+                .sorted((e1, e2) -> e2.getValue().compareTo(e1.getValue()))
+                .limit(20) // 🌟 已确认修改为 20
+                .map(e -> new MemberGoodsRankVO(e.getKey(), e.getValue()))
+                .collect(Collectors.toList());
     }
 
     @Override
@@ -161,18 +176,49 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
     public void batchIssueVoucher(List<Long> memberIds, Long ruleId, Integer quantity) {
         if (memberIds == null || memberIds.isEmpty() || ruleId == null || quantity == null || quantity <= 0) throw new BaseException("发券参数错误");
         LocalDateTime now = LocalDateTime.now();
-        List<PosMemberCoupon> coupons = new ArrayList<>();
+
+        List<PosMemberCoupon> coupons = new ArrayList<>(memberIds.size() * quantity);
         for (Long memberId : memberIds) {
             for (int i = 0; i < quantity; i++) {
-                PosMemberCoupon pc = new PosMemberCoupon(); pc.setMemberId(memberId); pc.setRuleId(ruleId);
-                pc.setStatus("UNUSED"); pc.setGetTime(now); coupons.add(pc);
+                PosMemberCoupon pc = new PosMemberCoupon();
+                pc.setMemberId(memberId);
+                pc.setRuleId(ruleId);
+                pc.setStatus("UNUSED");
+                pc.setGetTime(now);
+                coupons.add(pc);
             }
         }
         for (PosMemberCoupon coupon : coupons) posMemberCouponMapper.insert(coupon);
+
+        List<PosMemberCoupon> allUnused = posMemberCouponMapper.selectList(
+                new LambdaQueryWrapper<PosMemberCoupon>()
+                        .in(PosMemberCoupon::getMemberId, memberIds)
+                        .eq(PosMemberCoupon::getStatus, "UNUSED")
+                        .select(PosMemberCoupon::getMemberId)
+        );
+        Map<Long, Long> memberVoucherCountMap = allUnused.stream()
+                .collect(Collectors.groupingBy(PosMemberCoupon::getMemberId, Collectors.counting()));
+
+        // 批量查询会员信息，用于快照
+        Map<Long, UmsMember> memberMap = this.listByIds(memberIds).stream().collect(Collectors.toMap(UmsMember::getId, m -> m));
+
         for (Long memberId : memberIds) {
-            long totalVouchers = posMemberCouponMapper.selectCount(new LambdaQueryWrapper<PosMemberCoupon>().eq(PosMemberCoupon::getMemberId, memberId).eq(PosMemberCoupon::getStatus, "UNUSED"));
-            UmsMemberLog log = new UmsMemberLog(); log.setMemberId(memberId); log.setType("VOUCHER"); log.setOperateType("ISSUE");
-            log.setAmount(BigDecimal.valueOf(quantity)); log.setAfterAmount(BigDecimal.valueOf(totalVouchers)); log.setRemark("沉睡唤醒：系统批量派发专属满减券"); log.setCreateTime(now); umsMemberLogMapper.insert(log);
+            long totalVouchers = memberVoucherCountMap.getOrDefault(memberId, 0L);
+            UmsMember member = memberMap.get(memberId);
+
+            UmsMemberLog log = new UmsMemberLog();
+            log.setMemberId(memberId);
+            if (member != null) {
+                log.setMemberName(member.getName());
+                log.setMemberPhone(member.getPhone());
+            }
+            log.setType("VOUCHER");
+            log.setOperateType("ISSUE");
+            log.setAmount(BigDecimal.valueOf(quantity));
+            log.setAfterAmount(BigDecimal.valueOf(totalVouchers));
+            log.setRemark("沉睡唤醒：系统批量派发专属满减券");
+            log.setCreateTime(now);
+            umsMemberLogMapper.insert(log);
         }
     }
 
@@ -192,7 +238,7 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
     }
 
     @Override
-    public void rebate(Long id, BigDecimal amount, BigDecimal coupon, boolean increaseCancelTimes, String orderNo) {
+    public void processReturn(Long id, BigDecimal amount, BigDecimal coupon, boolean increaseCancelTimes, String orderNo) {
         UmsMember member = this.getById(id);
         if (member == null) return;
 
@@ -203,12 +249,13 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
             BigDecimal afterCoupon = currentCoupon.add(coupon);
             UmsMemberLog couponLog = new UmsMemberLog();
             couponLog.setMemberId(id);
+            couponLog.setMemberName(member.getName());
+            couponLog.setMemberPhone(member.getPhone());
             couponLog.setType("COUPON");
             couponLog.setOperateType("REFUND");
             couponLog.setAmount(coupon);
             couponLog.setAfterAmount(afterCoupon);
             couponLog.setRemark("售后退货：原路返还关联品牌会员券");
-            // 🌟 核心修复：将会员券退回流水与订单号强绑定！
             couponLog.setOrderNo(orderNo);
             couponLog.setCreateTime(now);
             umsMemberLogMapper.insert(couponLog);
@@ -237,10 +284,11 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
             member.setBalance(member.getBalance().add(dto.getAmount()));
             UmsMemberLog log = new UmsMemberLog();
             log.setMemberId(member.getId());
+            log.setMemberName(member.getName());
+            log.setMemberPhone(member.getPhone());
             log.setType("BALANCE");
             log.setOperateType("RECHARGE");
             log.setAmount(dto.getAmount());
-            // 记录余额充值时的实收金额（通常实收等于充值面额，但也可能因为折扣不同）
             log.setRealAmount(dto.getRealAmount() != null ? dto.getRealAmount() : dto.getAmount());
             log.setAfterAmount(member.getBalance());
             log.setRemark(StrUtil.isNotBlank(dto.getRemark()) ? dto.getRemark() : "前台办理充值会员余额");
@@ -251,10 +299,12 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
                 member.setCoupon(member.getCoupon().add(dto.getGiftCoupon()));
                 UmsMemberLog giftLog = new UmsMemberLog();
                 giftLog.setMemberId(member.getId());
+                giftLog.setMemberName(member.getName());
+                giftLog.setMemberPhone(member.getPhone());
                 giftLog.setType("COUPON");
                 giftLog.setOperateType("GIFT");
                 giftLog.setAmount(dto.getGiftCoupon());
-                giftLog.setRealAmount(BigDecimal.ZERO); // 赠送的券没有实收现金
+                giftLog.setRealAmount(BigDecimal.ZERO);
                 giftLog.setAfterAmount(member.getCoupon());
                 giftLog.setRemark("充值附送会员券");
                 giftLog.setCreateTime(now);
@@ -264,19 +314,18 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
 
         } else if ("COUPON".equals(dto.getType())) {
             member.setCoupon(member.getCoupon().add(dto.getAmount()));
-
-            // 🌟 核心：改造了充值会员券逻辑，注入了 realAmount
             UmsMemberLog log = new UmsMemberLog();
             log.setMemberId(member.getId());
+            log.setMemberName(member.getName());
+            log.setMemberPhone(member.getPhone());
             log.setType("COUPON");
             log.setOperateType("RECHARGE");
-            log.setAmount(dto.getAmount()); // 充入的券数值 (如1000)
-            log.setRealAmount(dto.getRealAmount()); // 🌟 实际收到的真金白银 (如100)
+            log.setAmount(dto.getAmount());
+            log.setRealAmount(dto.getRealAmount());
             log.setAfterAmount(member.getCoupon());
             log.setRemark(StrUtil.isNotBlank(dto.getRemark()) ? dto.getRemark() : "前台直充会员券");
             log.setCreateTime(now);
             umsMemberLogMapper.insert(log);
-
             this.updateById(member);
 
         } else if ("VOUCHER".equals(dto.getType())) {
@@ -287,8 +336,18 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
             }
             for (PosMemberCoupon coupon : coupons) posMemberCouponMapper.insert(coupon);
             long totalVouchers = posMemberCouponMapper.selectCount(new LambdaQueryWrapper<PosMemberCoupon>().eq(PosMemberCoupon::getMemberId, member.getId()).eq(PosMemberCoupon::getStatus, "UNUSED"));
-            UmsMemberLog log = new UmsMemberLog(); log.setMemberId(member.getId()); log.setType("VOUCHER"); log.setOperateType("ISSUE");
-            log.setAmount(BigDecimal.valueOf(dto.getQuantity())); log.setAfterAmount(BigDecimal.valueOf(totalVouchers)); log.setRemark(StrUtil.isNotBlank(dto.getRemark()) ? dto.getRemark() : "前台发放满减券"); log.setCreateTime(now); umsMemberLogMapper.insert(log);
+
+            UmsMemberLog log = new UmsMemberLog();
+            log.setMemberId(member.getId());
+            log.setMemberName(member.getName());
+            log.setMemberPhone(member.getPhone());
+            log.setType("VOUCHER");
+            log.setOperateType("ISSUE");
+            log.setAmount(BigDecimal.valueOf(dto.getQuantity()));
+            log.setAfterAmount(BigDecimal.valueOf(totalVouchers));
+            log.setRemark(StrUtil.isNotBlank(dto.getRemark()) ? dto.getRemark() : "前台发放满减券");
+            log.setCreateTime(now);
+            umsMemberLogMapper.insert(log);
         }
     }
 
@@ -296,14 +355,23 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
     @SneakyThrows
     public void importMembers(MultipartFile file) {
         List<UmsMemberImportExcelDTO> list = EasyExcel.read(file.getInputStream()).head(UmsMemberImportExcelDTO.class).sheet().doReadSync();
+        if (list.isEmpty()) return;
         LocalDateTime now = LocalDateTime.now();
 
         List<GmsBrand> brandList = gmsBrandMapper.selectList(new LambdaQueryWrapper<>());
         Map<String, String> brandNameToIdMap = brandList.stream().collect(Collectors.toMap(GmsBrand::getName, b -> String.valueOf(b.getId())));
 
+        List<String> phones = list.stream().map(UmsMemberImportExcelDTO::getPhone).filter(StrUtil::isNotBlank).collect(Collectors.toList());
+        Map<String, UmsMember> existingMemberMap = new HashMap<>();
+        if (!phones.isEmpty()) {
+            List<UmsMember> existingMembers = this.lambdaQuery().in(UmsMember::getPhone, phones).list();
+            existingMemberMap = existingMembers.stream().collect(Collectors.toMap(UmsMember::getPhone, m -> m));
+        }
+
         for (UmsMemberImportExcelDTO dto : list) {
             if (StrUtil.isBlank(dto.getPhone())) continue;
-            UmsMember member = this.lambdaQuery().eq(UmsMember::getPhone, dto.getPhone()).one();
+
+            UmsMember member = existingMemberMap.get(dto.getPhone());
 
             if (member != null) {
                 if (member.getDeleted()) {
@@ -316,10 +384,30 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
                     this.updateById(member);
 
                     if (member.getBalance().compareTo(BigDecimal.ZERO) > 0) {
-                        UmsMemberLog log = new UmsMemberLog(); log.setMemberId(member.getId()); log.setType("BALANCE"); log.setOperateType("IMPORT"); log.setAmount(member.getBalance()); log.setAfterAmount(member.getBalance()); log.setRemark("老会员恢复及重新导入会员余额"); log.setCreateTime(now); umsMemberLogMapper.insert(log);
+                        UmsMemberLog log = new UmsMemberLog();
+                        log.setMemberId(member.getId());
+                        log.setMemberName(member.getName());
+                        log.setMemberPhone(member.getPhone());
+                        log.setType("BALANCE");
+                        log.setOperateType("IMPORT");
+                        log.setAmount(member.getBalance());
+                        log.setAfterAmount(member.getBalance());
+                        log.setRemark("老会员恢复及重新导入会员余额");
+                        log.setCreateTime(now);
+                        umsMemberLogMapper.insert(log);
                     }
                     if (member.getCoupon().compareTo(BigDecimal.ZERO) > 0) {
-                        UmsMemberLog couponLog = new UmsMemberLog(); couponLog.setMemberId(member.getId()); couponLog.setType("COUPON"); couponLog.setOperateType("IMPORT"); couponLog.setAmount(member.getCoupon()); couponLog.setAfterAmount(member.getCoupon()); couponLog.setRemark("老会员恢复及重新导入会员券"); couponLog.setCreateTime(now); umsMemberLogMapper.insert(couponLog);
+                        UmsMemberLog couponLog = new UmsMemberLog();
+                        couponLog.setMemberId(member.getId());
+                        couponLog.setMemberName(member.getName());
+                        couponLog.setMemberPhone(member.getPhone());
+                        couponLog.setType("COUPON");
+                        couponLog.setOperateType("IMPORT");
+                        couponLog.setAmount(member.getCoupon());
+                        couponLog.setAfterAmount(member.getCoupon());
+                        couponLog.setRemark("老会员恢复及重新导入会员券");
+                        couponLog.setCreateTime(now);
+                        umsMemberLogMapper.insert(couponLog);
                     }
                 }
             } else {
@@ -331,13 +419,33 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
                 member.setCoupon(dto.getCoupon() != null ? dto.getCoupon() : BigDecimal.ZERO);
                 member.setCode(RandomUtil.randomNumbers(8));
                 member.setRemark(dto.getRemark());
-                this.save(member);
+                this.save(member); // 保存后即刻获取自增 ID
 
                 if (member.getBalance().compareTo(BigDecimal.ZERO) > 0) {
-                    UmsMemberLog log = new UmsMemberLog(); log.setMemberId(member.getId()); log.setType("BALANCE"); log.setOperateType("IMPORT"); log.setAmount(member.getBalance()); log.setAfterAmount(member.getBalance()); log.setRemark("老会员初始会员余额导入"); log.setCreateTime(now); umsMemberLogMapper.insert(log);
+                    UmsMemberLog log = new UmsMemberLog();
+                    log.setMemberId(member.getId());
+                    log.setMemberName(member.getName());
+                    log.setMemberPhone(member.getPhone());
+                    log.setType("BALANCE");
+                    log.setOperateType("IMPORT");
+                    log.setAmount(member.getBalance());
+                    log.setAfterAmount(member.getBalance());
+                    log.setRemark("老会员初始会员余额导入");
+                    log.setCreateTime(now);
+                    umsMemberLogMapper.insert(log);
                 }
                 if (member.getCoupon().compareTo(BigDecimal.ZERO) > 0) {
-                    UmsMemberLog couponLog = new UmsMemberLog(); couponLog.setMemberId(member.getId()); couponLog.setType("COUPON"); couponLog.setOperateType("IMPORT"); couponLog.setAmount(member.getCoupon()); couponLog.setAfterAmount(member.getCoupon()); couponLog.setRemark("老会员初始会员券导入"); couponLog.setCreateTime(now); umsMemberLogMapper.insert(couponLog);
+                    UmsMemberLog couponLog = new UmsMemberLog();
+                    couponLog.setMemberId(member.getId());
+                    couponLog.setMemberName(member.getName());
+                    couponLog.setMemberPhone(member.getPhone());
+                    couponLog.setType("COUPON");
+                    couponLog.setOperateType("IMPORT");
+                    couponLog.setAmount(member.getCoupon());
+                    couponLog.setAfterAmount(member.getCoupon());
+                    couponLog.setRemark("老会员初始会员券导入");
+                    couponLog.setCreateTime(now);
+                    umsMemberLogMapper.insert(couponLog);
                 }
             }
 

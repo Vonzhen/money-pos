@@ -41,21 +41,51 @@
                     </div>
 
                     <el-descriptions :column="2" border>
-                        <el-descriptions-item label="订单总额" label-align="center" align="center" label-class-name="whitespace-nowrap w-32"><span class="font-mono text-gray-500 line-through">￥{{ Number(currentOrderDetail.totalAmount || 0).toFixed(2) }}</span></el-descriptions-item>
-                        <el-descriptions-item label="实付总计" label-align="center" align="center" label-class-name="whitespace-nowrap w-32"><span class="font-mono font-bold text-green-600 text-lg">￥{{ Number(currentOrderDetail.payAmount || 0).toFixed(2) }}</span></el-descriptions-item>
+                        <el-descriptions-item label="订单总额" label-align="center" align="center" label-class-name="whitespace-nowrap w-32">
+                            <MoneyDisplay :value="currentOrderDetail.totalAmount" custom-class="text-gray-500 line-through" />
+                        </el-descriptions-item>
+                        <el-descriptions-item label="实付总计" label-align="center" align="center" label-class-name="whitespace-nowrap w-32">
+                            <MoneyDisplay :value="currentOrderDetail.payAmount" size="lg" color="text-green-600" />
+                        </el-descriptions-item>
 
-                        <el-descriptions-item label="实收 (会员余额)" label-align="center" align="center" label-class-name="whitespace-nowrap w-32"><span class="font-mono text-gray-800 font-bold">￥{{ Number(currentOrderDetail.balanceAmount || 0).toFixed(2) }}</span></el-descriptions-item>
-                        <el-descriptions-item label="实收 (聚合扫码)" label-align="center" align="center" label-class-name="whitespace-nowrap w-32"><span class="font-mono text-gray-800 font-bold">￥{{ Number(currentOrderDetail.scanAmount || 0).toFixed(2) }}</span></el-descriptions-item>
-                        <el-descriptions-item label="实收 (现金)" label-align="center" align="center" label-class-name="whitespace-nowrap w-32"><span class="font-mono text-gray-800 font-bold">￥{{ Number(currentOrderDetail.cashAmount || 0).toFixed(2) }}</span></el-descriptions-item>
+                        <el-descriptions-item label="实收 (会员余额)" label-align="center" align="center" label-class-name="whitespace-nowrap w-32">
+                            <MoneyDisplay :value="currentOrderDetail.balanceAmount" color="text-gray-800" />
+                        </el-descriptions-item>
 
-                        <el-descriptions-item label="整单总成本" label-align="center" align="center" label-class-name="whitespace-nowrap w-32"><span class="font-mono text-blue-600">￥{{ Number(currentOrderDetail.costAmount || 0).toFixed(2) }}</span></el-descriptions-item>
+                        <el-descriptions-item label="实收 (聚合扫码)" label-align="center" align="center" label-class-name="whitespace-nowrap w-32">
+                            <MoneyDisplay :value="currentOrderDetail.scanAmount" color="text-gray-800" />
+                            <el-tag
+                                v-for="(pay, index) in (currentOrderDetail.payList || []).filter(p => p.payMethodCode === 'AGGREGATE' && p.payAmount > 0)"
+                                :key="index"
+                                size="small"
+                                type="primary"
+                                effect="plain"
+                                class="ml-2 font-bold"
+                            >
+                                {{ getPayTagName(pay.payTag) }}
+                            </el-tag>
+                        </el-descriptions-item>
 
-                        <el-descriptions-item label="会员券抵扣" label-align="center" align="center" label-class-name="whitespace-nowrap w-32"><span class="font-mono text-red-500">- ￥{{ Number(currentOrderDetail.couponAmount || 0).toFixed(2) }}</span></el-descriptions-item>
-                        <el-descriptions-item label="满减券抵扣" label-align="center" align="center" label-class-name="whitespace-nowrap w-32"><span class="font-mono text-red-500">- ￥{{ Number(currentOrderDetail.useVoucherAmount || 0).toFixed(2) }}</span></el-descriptions-item>
+                        <el-descriptions-item label="实收 (现金)" label-align="center" align="center" label-class-name="whitespace-nowrap w-32">
+                            <MoneyDisplay :value="currentOrderDetail.cashAmount" color="text-gray-800" />
+                        </el-descriptions-item>
 
-                        <el-descriptions-item label="整单优惠" label-align="center" align="center" label-class-name="whitespace-nowrap w-32"><span class="font-mono text-red-500">- ￥{{ Number(currentOrderDetail.manualDiscountAmount || 0).toFixed(2) }}</span></el-descriptions-item>
+                        <el-descriptions-item label="整单总成本" label-align="center" align="center" label-class-name="whitespace-nowrap w-32">
+                            <MoneyDisplay :value="currentOrderDetail.costAmount" color="text-blue-600" />
+                        </el-descriptions-item>
+
+                        <el-descriptions-item label="会员券抵扣" label-align="center" align="center" label-class-name="whitespace-nowrap w-32">
+                            <span class="text-red-500 font-bold mr-1">-</span><MoneyDisplay :value="currentOrderDetail.couponAmount" color="text-red-500" />
+                        </el-descriptions-item>
+                        <el-descriptions-item label="满减券抵扣" label-align="center" align="center" label-class-name="whitespace-nowrap w-32">
+                            <span class="text-red-500 font-bold mr-1">-</span><MoneyDisplay :value="currentOrderDetail.useVoucherAmount" color="text-red-500" />
+                        </el-descriptions-item>
+
+                        <el-descriptions-item label="整单优惠" label-align="center" align="center" label-class-name="whitespace-nowrap w-32">
+                            <span class="text-red-500 font-bold mr-1">-</span><MoneyDisplay :value="currentOrderDetail.manualDiscountAmount" color="text-red-500" />
+                        </el-descriptions-item>
                         <el-descriptions-item label="售后退款" label-align="center" align="center" label-class-name="whitespace-nowrap w-32">
-                            <span class="font-mono text-gray-500">￥{{ Number(returnPrice || 0).toFixed(2) }}</span>
+                            <MoneyDisplay :value="returnPrice" color="text-gray-500" />
                         </el-descriptions-item>
                     </el-descriptions>
                 </div>
@@ -64,17 +94,25 @@
                     <div class="font-bold text-gray-800 text-base mb-2">商品物理快照</div>
                     <el-table :data="currentOrderDetail.details || []" stripe border size="small" class="w-full font-mono">
                         <el-table-column prop="goodsName" label="商品名称" min-width="150" show-overflow-tooltip />
-                        <el-table-column prop="salePrice" label="吊牌单价" width="80" align="right" />
-                        <el-table-column prop="goodsPrice" label="实际单价" width="80" align="right">
-                            <template #default="{row}"><span class="text-green-600 font-bold">{{ Number(row.goodsPrice || 0).toFixed(2) }}</span></template>
+
+                        <el-table-column prop="salePrice" label="吊牌单价" width="100" align="right">
+                            <template #default="{row}"><MoneyDisplay :value="row.salePrice" /></template>
                         </el-table-column>
+
+                        <el-table-column prop="goodsPrice" label="实际单价" width="100" align="right">
+                            <template #default="{row}"><MoneyDisplay :value="row.goodsPrice" color="text-green-600" /></template>
+                        </el-table-column>
+
                         <el-table-column prop="quantity" label="购买" width="60" align="center" />
                         <el-table-column prop="returnQuantity" label="退回" width="60" align="center">
                             <template #default="{row}">
                                 <span :class="row.returnQuantity > 0 ? 'text-red-500 font-bold' : 'text-gray-400'">{{ row.returnQuantity || 0 }}</span>
                             </template>
                         </el-table-column>
-                        <el-table-column prop="purchasePrice" label="锁定成本" width="80" align="right" />
+
+                        <el-table-column prop="purchasePrice" label="锁定成本" width="100" align="right">
+                            <template #default="{row}"><MoneyDisplay :value="row.purchasePrice" /></template>
+                        </el-table-column>
                     </el-table>
                 </div>
 
@@ -115,13 +153,12 @@ const detailLoading = ref(false)
 const dict = ref({})
 const brandList = ref([])
 
-// 🌟 核心修复：抽离出独立的字典请求函数
 const fetchBaseData = async () => {
     try {
-        const dictRes = await dictApi.loadDict(["memberType"])
+        const dictRes = await dictApi.loadDict(["memberType", "paySubTag"])
         dict.value = dictRes || {}
     } catch (e) {
-        console.error("会员字典加载失败", e)
+        console.error("字典加载失败", e)
     }
     try {
         const brandRes = await (brandApi.list ? brandApi.list({ size: 1000 }) : brandApi.getSelect())
@@ -147,9 +184,17 @@ const getLevelName = (levelCode) => {
     const types = dict.value.memberType
     if (!Array.isArray(types) || types.length === 0) return levelCode
 
-    // 🌟 核心修复：兼容标准的 value/desc 和 若依的 dictValue/dictLabel，双重保险
     const match = types.find(m => m && (m.value === levelCode || m.dictValue === levelCode))
     return match ? (match.desc || match.dictLabel || levelCode) : levelCode
+}
+
+const getPayTagName = (tagCode) => {
+    if (!tagCode) return '其他扫码'
+    const tags = dict.value.paySubTag
+    if (!Array.isArray(tags) || tags.length === 0) return tagCode
+
+    const match = tags.find(t => t && (t.value === tagCode || t.dictValue === tagCode))
+    return match ? (match.desc || match.dictLabel || tagCode) : tagCode
 }
 
 const returnPrice = computed(() => {
@@ -162,10 +207,8 @@ const cashierName = computed(() => {
     return logs.length > 0 ? logs[logs.length - 1].createBy : 'System';
 })
 
-// 🌟 核心修复：监听单号，如果弹窗打开时发现字典丢了，强行原地拉取一次！
 watch(visible, async (newVal) => {
     if (newVal && props.orderNo) {
-        // 强制防呆重试机制
         if (!dict.value.memberType || dict.value.memberType.length === 0) {
             await fetchBaseData()
         }
@@ -182,7 +225,8 @@ watch(visible, async (newVal) => {
                 cashAmount: data.cashAmount,
                 details: data.orderDetail || [],
                 member: data.member || {},
-                log: data.orderLog || []
+                log: data.orderLog || [],
+                payList: data.payments || data.pays || data.payList || []
             }
         } catch (e) {
             ElMessage.error('获取底层快照失败')

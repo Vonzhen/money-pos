@@ -1,22 +1,25 @@
 <template>
     <PageWrapper>
-        <!-- 搜索栏 -->
         <MoneyRR :money-crud="moneyCrud">
             <el-date-picker v-model="datePicker" type="datetimerange" class="!w-full md:!w-auto"
                             :shortcuts="shortcuts" :default-time="defaultTime" :clearable="false"
                             value-format="YYYY-MM-DD HH:mm:ss"
                             range-separator="至" start-placeholder="开始日期" end-placeholder="结束日期"
                             @change="handleDatePick" />
-            <el-input v-model="moneyCrud.query.orderNo" placeholder="订单号" class="md:!w-48"
-                      @keyup.enter.native="moneyCrud.doQuery" />
-            <el-input v-model="moneyCrud.query.member" placeholder="会员" class="md:!w-48"
-                      @keyup.enter.native="moneyCrud.doQuery" />
+
+            <OrderSmartSearch
+                class="w-full md:!w-[350px]"
+                size="default"
+                @select="handleOrderSelect"
+                @clear="handleOrderClear"
+            />
+
             <el-select v-model="moneyCrud.query.status" clearable placeholder="状态" class="md:!w-48"
                        @change="moneyCrud.doQuery">
                 <el-option v-for="item in dict.orderStatus" :key="item.value" :label="item.desc" :value="item.value" />
             </el-select>
         </MoneyRR>
-        <!-- 操作行 -->
+
         <MoneyCUD :money-crud="moneyCrud" class="!justify-center md:!justify-between flex-wrap items-end">
             <div class="flex gap-5 mb-2 md:gap-10">
                 <el-statistic title="销售额" :precision="2" :value="orderCount.saleCount" />
@@ -24,7 +27,7 @@
                 <el-statistic title="利润" :precision="2" :value="orderCount.profit" />
             </div>
         </MoneyCUD>
-        <!-- 数据表格 -->
+
         <MoneyCrudTable :money-crud="moneyCrud">
             <template #address="{scope}">
                 {{ scope.row.province + scope.row.city + scope.row.district + scope.row.address }}
@@ -38,9 +41,8 @@
                 </el-tag>
             </template>
             <template #opt="{scope}">
-                <router-link :to="'/oms/order/detail/'+ scope.row.id" class="mr-2">
-                    <el-button plain size="small">详情</el-button>
-                </router-link>
+                <el-button plain size="small" @click="showOrderDetail(scope.row.orderNo)" class="mr-2">详情</el-button>
+
                 <el-popconfirm title="确定要退单吗？" @confirm="returnOrder(scope.row)"
                                v-if="scope.row.status !== 'RETURN'">
                     <template #reference>
@@ -49,13 +51,15 @@
                 </el-popconfirm>
             </template>
         </MoneyCrudTable>
-        <!-- 表单 -->
+
         <MoneyForm :money-crud="moneyCrud">
-            <!-- 补充表单项 -->
             <el-form-item label="表单项" prop="nickname">
                 <el-input v-model="moneyCrud.form.name" />
             </el-form-item>
         </MoneyForm>
+
+        <OrderDetailModal v-model="detailVisible" :order-no="currentSearchOrderNo" />
+
     </PageWrapper>
 </template>
 
@@ -66,6 +70,10 @@ import MoneyCrudTable from "@/components/crud/MoneyCrudTable.vue";
 import MoneyRR from "@/components/crud/MoneyRR.vue";
 import MoneyCUD from "@/components/crud/MoneyCUD.vue";
 import MoneyForm from "@/components/crud/MoneyForm.vue";
+
+import OrderSmartSearch from "@/components/common/OrderSmartSearch.vue";
+// 🌟 引入弹窗组件
+import OrderDetailModal from "@/components/OrderDetailModal.vue";
 
 import {ref} from "vue";
 import {useUserStore} from "@/store/index.js";
@@ -103,6 +111,27 @@ const moneyCrud = ref(new MoneyCrud({
     crudMethod: orderApi,
     optShow: {checkbox: false, add: false, edit: false, del: false},
 }))
+
+const handleOrderSelect = (order) => {
+    moneyCrud.value.query.orderNo = order.orderNo;
+    moneyCrud.value.query.member = null;
+    moneyCrud.value.doQuery();
+}
+
+const handleOrderClear = () => {
+    moneyCrud.value.query.orderNo = null;
+    moneyCrud.value.query.member = null;
+    moneyCrud.value.doQuery();
+}
+
+// 🌟 弹窗控制逻辑
+const detailVisible = ref(false)
+const currentSearchOrderNo = ref('')
+
+const showOrderDetail = (orderNo) => {
+    currentSearchOrderNo.value = orderNo;
+    detailVisible.value = true;
+}
 
 const dict = ref({})
 const statusColor = {

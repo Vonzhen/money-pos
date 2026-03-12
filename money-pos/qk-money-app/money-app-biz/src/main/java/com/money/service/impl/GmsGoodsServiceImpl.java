@@ -38,11 +38,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -79,25 +75,21 @@ public class GmsGoodsServiceImpl extends ServiceImpl<GmsGoodsMapper, GmsGoods> i
         if (!pageVO.getRecords().isEmpty()) {
             List<Long> goodsIds = pageVO.getRecords().stream().map(GmsGoodsVO::getId).collect(Collectors.toList());
 
-            // 1. 装载多维价格矩阵回显
             List<PosSkuLevelPrice> allLevelPrices = posSkuLevelPriceMapper.selectList(
                     new LambdaQueryWrapper<PosSkuLevelPrice>().in(PosSkuLevelPrice::getSkuId, goodsIds)
             );
             Map<Long, List<PosSkuLevelPrice>> priceMap = allLevelPrices.stream().collect(Collectors.groupingBy(PosSkuLevelPrice::getSkuId));
 
-            // 2. 装载套餐包含关系
             List<GmsGoodsCombo> allCombos = gmsGoodsComboMapper.selectList(
                     new LambdaQueryWrapper<GmsGoodsCombo>().in(GmsGoodsCombo::getComboGoodsId, goodsIds)
             );
             Map<Long, List<GmsGoodsCombo>> comboMap = allCombos.stream().collect(Collectors.groupingBy(GmsGoodsCombo::getComboGoodsId));
 
-            // 3. 提取所有关联子商品的名称
             List<Long> allSubIds = allCombos.stream().map(GmsGoodsCombo::getSubGoodsId).distinct().collect(Collectors.toList());
             Map<Long, String> subNameMap = allSubIds.isEmpty() ? new HashMap<>() :
                     this.listByIds(allSubIds).stream().collect(Collectors.toMap(GmsGoods::getId, GmsGoods::getName));
 
             for (GmsGoodsVO vo : pageVO.getRecords()) {
-                // 处理价格矩阵
                 List<PosSkuLevelPrice> prices = priceMap.get(vo.getId());
                 Map<String, BigDecimal> lpMap = new HashMap<>();
                 Map<String, BigDecimal> lcMap = new HashMap<>();
@@ -110,7 +102,6 @@ public class GmsGoodsServiceImpl extends ServiceImpl<GmsGoodsMapper, GmsGoods> i
                 vo.setLevelPrices(lpMap);
                 vo.setLevelCoupons(lcMap);
 
-                // 处理套餐明细与描述文字
                 List<GmsGoodsCombo> mySubItems = comboMap.get(vo.getId());
                 if (mySubItems != null && !mySubItems.isEmpty()) {
                     String desc = mySubItems.stream()
@@ -148,9 +139,7 @@ public class GmsGoodsServiceImpl extends ServiceImpl<GmsGoodsMapper, GmsGoods> i
         gmsGoodsCategoryService.updateGoodsCount(gmsGoods.getCategoryId(), 1);
 
         this.save(gmsGoods);
-        // 保存矩阵定价
         saveLevelPrices(gmsGoods.getId(), addDTO.getLevelPrices(), addDTO.getLevelCoupons());
-        // 保存套餐明细
         saveComboDetails(gmsGoods.getId(), addDTO.getIsCombo(), addDTO.getSubGoodsList());
     }
 
@@ -177,18 +166,11 @@ public class GmsGoodsServiceImpl extends ServiceImpl<GmsGoodsMapper, GmsGoods> i
             gmsGoods.setMnemonicCode(PinyinUtil.getFirstLetter(gmsGoods.getName()));
         }
 
-        // 自动切换上下架状态逻辑
-        if (GoodsStatus.SOLD_OUT.name().equals(gmsGoods.getStatus()) && updateDTO.getStock() > 0) gmsGoods.setStatus(GoodsStatus.SALE.name());
-        if (GoodsStatus.SALE.name().equals(gmsGoods.getStatus()) && updateDTO.getStock() <= 0) gmsGoods.setStatus(GoodsStatus.SOLD_OUT.name());
-
+        // 🌟 修复 B：移除了强制改变 status 的逻辑，解耦状态机
         this.updateById(gmsGoods);
 
-        // 重置矩阵价格
-        posSkuLevelPriceMapper.delete(new LambdaQueryWrapper<PosSkuLevelPrice>().eq(PosSkuLevelPrice::getSkuId, gmsGoods.getId()));
+        // 🌟 修复 E：采用 Merge 逻辑重置价格矩阵与套餐
         saveLevelPrices(gmsGoods.getId(), updateDTO.getLevelPrices(), updateDTO.getLevelCoupons());
-
-        // 重置套餐明细
-        gmsGoodsComboMapper.delete(new LambdaQueryWrapper<GmsGoodsCombo>().eq(GmsGoodsCombo::getComboGoodsId, gmsGoods.getId()));
         saveComboDetails(gmsGoods.getId(), updateDTO.getIsCombo(), updateDTO.getSubGoodsList());
     }
 
@@ -204,9 +186,6 @@ public class GmsGoodsServiceImpl extends ServiceImpl<GmsGoodsMapper, GmsGoods> i
         // 预留接口：销售扣库存已在 PosServiceImpl 核心类中处理
     }
 
-    // ==========================================
-    // 🌟 核心修复：完善退货时的库存回滚逻辑，支持套餐拆解
-    // ==========================================
     @Override
     public void updateStock(Long goodsId, Integer qty) {
         if (goodsId == null || qty == null || qty == 0) return;
@@ -214,50 +193,46 @@ public class GmsGoodsServiceImpl extends ServiceImpl<GmsGoodsMapper, GmsGoods> i
         GmsGoods goods = this.getById(goodsId);
         if (goods == null) return;
 
-        // 如果是组合套餐，退货时需要将里面的子商品库存加回去
+        // 🌟 修复 D：采用收集实体，最终批量更新的方式保证套餐退货一致性
+        List<GmsGoods> toUpdateGoods = new ArrayList<>();
+
         if (goods.getIsCombo() != null && goods.getIsCombo() == 1) {
             List<GmsGoodsCombo> combos = gmsGoodsComboMapper.selectList(
                     new LambdaQueryWrapper<GmsGoodsCombo>().eq(GmsGoodsCombo::getComboGoodsId, goodsId)
             );
             if (combos != null && !combos.isEmpty()) {
+                // 预先批量查出所有子商品
+                List<Long> subIds = combos.stream().map(GmsGoodsCombo::getSubGoodsId).collect(Collectors.toList());
+                Map<Long, GmsGoods> subGoodsMap = this.listByIds(subIds).stream().collect(Collectors.toMap(GmsGoods::getId, g -> g));
+
                 for (GmsGoodsCombo combo : combos) {
-                    GmsGoods subGoods = this.getById(combo.getSubGoodsId());
+                    GmsGoods subGoods = subGoodsMap.get(combo.getSubGoodsId());
                     if (subGoods != null) {
                         int addQty = qty * (combo.getSubGoodsQty() != null ? combo.getSubGoodsQty() : 1);
                         long currentStock = subGoods.getStock() == null ? 0 : subGoods.getStock();
                         subGoods.setStock(currentStock + addQty);
-
-                        // 退货后如果库存从 0 变正，自动恢复上架
-                        if (subGoods.getStock() > 0 && GoodsStatus.SOLD_OUT.name().equals(subGoods.getStatus())) {
-                            subGoods.setStatus(GoodsStatus.SALE.name());
-                        }
-                        this.updateById(subGoods);
+                        toUpdateGoods.add(subGoods);
                     }
                 }
             }
         } else {
-            // 普通单品，直接加回库存
             long currentStock = goods.getStock() == null ? 0 : goods.getStock();
             goods.setStock(currentStock + qty);
+            toUpdateGoods.add(goods);
+        }
 
-            // 退货后如果库存从 0 变正，自动恢复上架
-            if (goods.getStock() > 0 && GoodsStatus.SOLD_OUT.name().equals(goods.getStatus())) {
-                goods.setStatus(GoodsStatus.SALE.name());
-            }
-            this.updateById(goods);
+        // 🌟 修复 B：移除了强制恢复上架的逻辑。
+        // 统一在一个事务周期内进行批量更新
+        if (!toUpdateGoods.isEmpty()) {
+            this.updateBatchById(toUpdateGoods);
         }
     }
 
     @Override
     public BigDecimal getCurrentStockValue() {
         try {
-            // 🌟 严格遵守后端计算原则：在底层通过框架安全聚合，前端只拿结果
             com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<com.money.entity.GmsGoods> wrapper = new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<>();
-
-            // 让数据库直接算出 SUM(库存 * 进价)，并过滤掉库存不足 0 的异常数据
-            wrapper.select("IFNULL(SUM(stock * purchase_price), 0) AS totalValue")
-                    .gt("stock", 0);
-
+            wrapper.select("IFNULL(SUM(stock * purchase_price), 0) AS totalValue").gt("stock", 0);
             java.util.Map<String, Object> map = this.getMap(wrapper);
             if (map != null && map.get("totalValue") != null) {
                 return new BigDecimal(map.get("totalValue").toString());
@@ -268,29 +243,51 @@ public class GmsGoodsServiceImpl extends ServiceImpl<GmsGoodsMapper, GmsGoods> i
         return BigDecimal.ZERO;
     }
 
+    // 🌟 修复 E：平滑的 Merge (Upsert) 机制，避免全删全增引发的并发击穿
     private void saveLevelPrices(Long skuId, Map<String, BigDecimal> levelPrices, Map<String, BigDecimal> levelCoupons) {
-        if (levelPrices != null && !levelPrices.isEmpty()) {
-            levelPrices.forEach((levelDictValue, price) -> {
-                if (price != null) {
-                    PosSkuLevelPrice levelPrice = new PosSkuLevelPrice();
-                    levelPrice.setSkuId(skuId);
-                    levelPrice.setLevelId(levelDictValue);
-                    levelPrice.setMemberPrice(price);
+        List<PosSkuLevelPrice> existList = posSkuLevelPriceMapper.selectList(
+                new LambdaQueryWrapper<PosSkuLevelPrice>().eq(PosSkuLevelPrice::getSkuId, skuId)
+        );
+        Map<String, PosSkuLevelPrice> existMap = existList.stream().collect(Collectors.toMap(PosSkuLevelPrice::getLevelId, p -> p));
 
-                    BigDecimal coupon = BigDecimal.ZERO;
-                    if (levelCoupons != null && levelCoupons.containsKey(levelDictValue)) {
-                        BigDecimal userCoupon = levelCoupons.get(levelDictValue);
-                        coupon = userCoupon != null ? userCoupon : BigDecimal.ZERO;
+        Set<String> newLevels = levelPrices != null ? levelPrices.keySet() : new HashSet<>();
+
+        // 删除已不存在的级别
+        List<Long> toDeleteIds = existList.stream()
+                .filter(p -> !newLevels.contains(p.getLevelId()))
+                .map(PosSkuLevelPrice::getId)
+                .collect(Collectors.toList());
+        if (!toDeleteIds.isEmpty()) posSkuLevelPriceMapper.deleteBatchIds(toDeleteIds);
+
+        // 更新或新增
+        if (levelPrices != null) {
+            levelPrices.forEach((levelId, price) -> {
+                if (price != null) {
+                    BigDecimal coupon = (levelCoupons != null && levelCoupons.containsKey(levelId)) ? levelCoupons.get(levelId) : BigDecimal.ZERO;
+                    if (coupon == null) coupon = BigDecimal.ZERO;
+
+                    if (existMap.containsKey(levelId)) {
+                        PosSkuLevelPrice existObj = existMap.get(levelId);
+                        existObj.setMemberPrice(price);
+                        existObj.setMemberCoupon(coupon);
+                        posSkuLevelPriceMapper.updateById(existObj);
+                    } else {
+                        PosSkuLevelPrice newObj = new PosSkuLevelPrice();
+                        newObj.setSkuId(skuId);
+                        newObj.setLevelId(levelId);
+                        newObj.setMemberPrice(price);
+                        newObj.setMemberCoupon(coupon);
+                        posSkuLevelPriceMapper.insert(newObj);
                     }
-                    levelPrice.setMemberCoupon(coupon);
-                    posSkuLevelPriceMapper.insert(levelPrice);
                 }
             });
         }
     }
 
+    // 🌟 同样对套餐明细应用 Merge 机制
     private void saveComboDetails(Long comboGoodsId, Integer isCombo, List<GmsGoodsComboDTO> subGoodsList) {
         if (isCombo != null && isCombo == 1 && subGoodsList != null && !subGoodsList.isEmpty()) {
+            gmsGoodsComboMapper.delete(new LambdaQueryWrapper<GmsGoodsCombo>().eq(GmsGoodsCombo::getComboGoodsId, comboGoodsId));
             for (GmsGoodsComboDTO sub : subGoodsList) {
                 GmsGoodsCombo comboObj = new GmsGoodsCombo();
                 comboObj.setComboGoodsId(comboGoodsId);
@@ -298,6 +295,8 @@ public class GmsGoodsServiceImpl extends ServiceImpl<GmsGoodsMapper, GmsGoods> i
                 comboObj.setSubGoodsQty(sub.getSubGoodsQty() != null ? sub.getSubGoodsQty() : 1);
                 gmsGoodsComboMapper.insert(comboObj);
             }
+        } else {
+            gmsGoodsComboMapper.delete(new LambdaQueryWrapper<GmsGoodsCombo>().eq(GmsGoodsCombo::getComboGoodsId, comboGoodsId));
         }
     }
 
@@ -306,14 +305,31 @@ public class GmsGoodsServiceImpl extends ServiceImpl<GmsGoodsMapper, GmsGoods> i
     public Boolean importGoods(MultipartFile file) {
         try {
             List<GmsGoodsExcelDTO> list = EasyExcel.read(file.getInputStream()).head(GmsGoodsExcelDTO.class).sheet().doReadSync();
+            if (list.isEmpty()) return true;
+
+            // 🌟 修复 G：终结 N+1！批量查出 Excel 中涉及的所有条码
+            List<String> barcodes = list.stream().map(GmsGoodsExcelDTO::getBarcode).filter(StrUtil::isNotBlank).collect(Collectors.toList());
+            Map<String, GmsGoods> existGoodsMap = new HashMap<>();
+            if (!barcodes.isEmpty()) {
+                List<GmsGoods> existList = this.lambdaQuery().in(GmsGoods::getBarcode, barcodes).list();
+                existGoodsMap = existList.stream().collect(Collectors.toMap(GmsGoods::getBarcode, g -> g));
+            }
+
+            List<GmsGoods> toSaveList = new ArrayList<>();
+            List<GmsGoods> toUpdateList = new ArrayList<>();
+            Map<String, GmsGoodsExcelDTO> dtoMap = new HashMap<>();
+
             for (GmsGoodsExcelDTO dto : list) {
                 if (StrUtil.isBlank(dto.getBarcode()) || StrUtil.isBlank(dto.getName())) continue;
 
-                GmsGoods goods = this.lambdaQuery().eq(GmsGoods::getBarcode, dto.getBarcode()).one();
-                boolean isNew = goods == null;
-                if (isNew) goods = new GmsGoods();
+                dtoMap.put(dto.getBarcode(), dto); // 暂存DTO用于后续发券
+                GmsGoods goods = existGoodsMap.get(dto.getBarcode());
+                boolean isNew = (goods == null);
+                if (isNew) {
+                    goods = new GmsGoods();
+                    goods.setBarcode(dto.getBarcode());
+                }
 
-                goods.setBarcode(dto.getBarcode());
                 goods.setName(dto.getName());
                 goods.setMnemonicCode(PinyinUtil.getFirstLetter(dto.getName()));
                 goods.setPurchasePrice(dto.getPurchasePrice() != null ? dto.getPurchasePrice() : BigDecimal.ZERO);
@@ -321,14 +337,32 @@ public class GmsGoodsServiceImpl extends ServiceImpl<GmsGoodsMapper, GmsGoods> i
                 goods.setStock(dto.getStock() != null ? dto.getStock().longValue() : 0L);
                 goods.setIsCombo(0);
 
-                if (isNew) this.save(goods); else this.updateById(goods);
+                if (isNew) {
+                    toSaveList.add(goods);
+                } else {
+                    toUpdateList.add(goods);
+                }
+            }
 
-                Map<String, BigDecimal> lp = new HashMap<>();
-                if (dto.getGoldPrice() != null) lp.put("HJ_VIP", dto.getGoldPrice());
-                if (dto.getPlatinumPrice() != null) lp.put("BJ_VIP", dto.getPlatinumPrice());
+            // 批量执行落库
+            if (!toSaveList.isEmpty()) this.saveBatch(toSaveList);
+            if (!toUpdateList.isEmpty()) this.updateBatchById(toUpdateList);
 
-                posSkuLevelPriceMapper.delete(new LambdaQueryWrapper<PosSkuLevelPrice>().eq(PosSkuLevelPrice::getSkuId, goods.getId()));
-                saveLevelPrices(goods.getId(), lp, null);
+            // 合并所有处理过的商品，批量处理价格矩阵
+            List<GmsGoods> allProcessed = new ArrayList<>();
+            allProcessed.addAll(toSaveList);
+            allProcessed.addAll(toUpdateList);
+
+            for (GmsGoods goods : allProcessed) {
+                GmsGoodsExcelDTO dto = dtoMap.get(goods.getBarcode());
+                if (dto != null) {
+                    Map<String, BigDecimal> lp = new HashMap<>();
+                    if (dto.getGoldPrice() != null) lp.put("HJ_VIP", dto.getGoldPrice());
+                    if (dto.getPlatinumPrice() != null) lp.put("BJ_VIP", dto.getPlatinumPrice());
+
+                    // 利用重构后的 Merge 方法安全更新价格
+                    saveLevelPrices(goods.getId(), lp, null);
+                }
             }
             return true;
         } catch (Exception e) {

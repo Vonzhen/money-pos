@@ -7,11 +7,21 @@ import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 import { createSvgIconsPlugin } from 'vite-plugin-svg-icons'
 
 export default defineConfig(async ({mode}) => ({
+  // 前端页面的基础访问路径
   base: mode  === 'demo' ? '/money-pos-demo' : '/money-pos',
   envPrefix: ["VITE_"],
   server: {
     port: 1520,
     strictPort: true,
+    // 🌟 架构规范：使用 /api 作为 API 专属网关前缀，彻底避开前端文件路由
+    proxy: {
+      '/api': {
+        target: 'http://localhost:9101',
+        changeOrigin: true,
+        // 将前端发出的 /api/xxx 请求，在底层静默重写为后端的真实路径 /money-pos/xxx
+        rewrite: (path) => path.replace(/^\/api/, '/money-pos')
+      }
+    }
   },
 
   plugins: [
@@ -35,10 +45,9 @@ export default defineConfig(async ({mode}) => ({
   },
 
   build: {
-    outDir: 'dist', // 输出目录
-    assetsDir: 'assets', // 静态资源目录
-    sourcemap: process.env.NODE_ENV === 'development', // 开发环境生成 sourcemap
-    minify: 'esbuild', // 使用 esbuild 压缩代码
+    outDir: 'dist',
+    assetsDir: 'assets',
+    sourcemap: process.env.NODE_ENV === 'development',
+    minify: 'esbuild',
   },
-
 }))

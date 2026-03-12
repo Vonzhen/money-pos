@@ -1,16 +1,21 @@
 <template>
-    <el-dialog v-model="visible" title="会员业务 - 前台办理" width="550px" @open="initData" @closed="$emit('closed')" destroy-on-close>
+    <el-dialog
+        v-model="visible"
+        title="会员业务 - 前台办理"
+        width="550px"
+        @open="initData"
+        @opened="handleOpened"
+        @closed="$emit('closed')"
+        destroy-on-close
+    >
 
         <div class="mb-4">
-            <el-select v-model="form.memberId" filterable remote reserve-keyword placeholder="🔍 输入手机号 / 姓名拼音搜索并选择会员" :remote-method="querySearch" :loading="loading" class="w-full" size="large" @change="handleSelect">
-                <template #prefix><el-icon class="text-gray-400 text-lg"><Search /></el-icon></template>
-                <el-option v-for="item in options" :key="item.id" :label="`${item.name} (${item.phone})`" :value="item.id">
-                    <div class="flex justify-between items-center w-full">
-                        <span class="font-bold text-gray-800">{{ item.name }}</span>
-                        <span class="text-gray-400 text-sm">{{ item.phone }}</span>
-                    </div>
-                </el-option>
-            </el-select>
+            <MemberSmartSearch
+                ref="memberSearchComp"
+                v-model="form.memberId"
+                placeholder="请直接用扫码枪扫码，或输入手机号"
+                @select="handleMemberSelect"
+            />
         </div>
 
         <div v-if="form.memberId" class="mb-5">
@@ -75,23 +80,27 @@
 
 <script setup>
 import { ref, computed } from 'vue'
-import { Search } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import memberApi from "@/api/ums/member.js"
 import { usePosStore } from '../../hooks/usePosStore'
+
+import MemberSmartSearch from '@/components/common/MemberSmartSearch.vue'
 
 const props = defineProps(['modelValue'])
 const emit = defineEmits(['update:modelValue', 'closed'])
 const visible = computed({ get: () => props.modelValue, set: (val) => emit('update:modelValue', val) })
 
 const { currentMember } = usePosStore()
-const options = ref([]); const loading = ref(false); const submitLoading = ref(false)
+const submitLoading = ref(false)
 const allCouponRulesList = ref([])
+
+// 🌟 获取子组件的引用
+const memberSearchComp = ref(null)
 
 const form = ref({
     memberId: null, memberName: '', memberPhone: '',
     currentBalance: 0, currentCoupon: 0, currentVoucherCount: 0,
-    type: 'BALANCE', amount: undefined, giftCoupon: undefined, realAmount: undefined, // 🌟 增加 realAmount
+    type: 'BALANCE', amount: undefined, giftCoupon: undefined, realAmount: undefined,
     ruleId: null, quantity: 1, remark: ''
 })
 
@@ -102,39 +111,26 @@ const initData = async () => {
         type: 'BALANCE', amount: undefined, giftCoupon: undefined, realAmount: undefined,
         ruleId: null, quantity: 1, remark: ''
     }
-    options.value = []
     try {
         const res = await memberApi.getCouponRules();
         allCouponRulesList.value = res.data || res || []
     } catch (e) { }
 }
 
-const querySearch = async (query) => {
-    if (!query) { options.value = []; return }
-    loading.value = true
-    try {
-        const res = await memberApi.posSearch(query);
-        options.value = res.data || []
-    } catch (e) {
-        options.value = []
-    } finally {
-        loading.value = false
+// 🌟 弹窗打开动画结束，强制要求搜索框获取焦点
+const handleOpened = () => {
+    if (memberSearchComp.value && memberSearchComp.value.focus) {
+        memberSearchComp.value.focus()
     }
 }
 
-const handleSelect = (val) => {
-    if (!val) return
-    const item = options.value.find(i => i.id === val)
-    if (!item) return
-
+const handleMemberSelect = (item) => {
     form.value.memberId = item.id;
     form.value.memberName = item.name;
     form.value.memberPhone = item.phone;
     form.value.currentBalance = item.balance || 0;
     form.value.currentCoupon = item.coupon || 0;
     form.value.currentVoucherCount = item.voucherCount || item.couponCount || 0;
-
-    options.value = [item]
 }
 
 const submit = async () => {
@@ -144,7 +140,7 @@ const submit = async () => {
             memberId: form.value.memberId,
             type: form.value.type,
             amount: form.value.amount || 0,
-            realAmount: form.value.type === 'COUPON' ? (form.value.realAmount || 0) : undefined, // 🌟 传入实收金额
+            realAmount: form.value.type === 'COUPON' ? (form.value.realAmount || 0) : undefined,
             giftCoupon: form.value.giftCoupon || 0,
             ruleId: form.value.ruleId,
             quantity: form.value.quantity || 0,
@@ -152,6 +148,7 @@ const submit = async () => {
         })
         ElMessage.success(`操作成功！`)
 
+        // 如果办理的是当前正在结账的会员，顺便刷新一下左侧信息
         if (currentMember.value.id === form.value.memberId) {
             if (form.value.type === 'BALANCE') {
                 currentMember.value.balance += form.value.amount;

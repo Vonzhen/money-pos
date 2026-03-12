@@ -6,6 +6,7 @@
         top="5vh"
         destroy-on-close
         @open="initModal"
+        @opened="handleOpened"
         @closed="$emit('closed')"
     >
         <div class="flex flex-col gap-4 min-h-[500px]" v-loading="loading">
@@ -161,6 +162,11 @@ const initModal = () => {
     resetScanner()
 }
 
+// 🌟 弹窗打开动画结束后，强制光标进入扫码框
+const handleOpened = () => {
+    scannerInput.value?.focus();
+}
+
 const resetScanner = async () => {
     scanKeyword.value = '';
     autocompleteKey.value++;
@@ -185,7 +191,6 @@ const handleSelect = (item) => {
     if (existing) {
         existing.qty = (Number(existing.qty) || 0) + 1;
     } else {
-        // 🌟 改为 push：实现按输入顺序从上往下排列
         inboundList.value.push({
             id: item.id,
             name: item.name,

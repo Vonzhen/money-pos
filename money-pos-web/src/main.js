@@ -7,6 +7,7 @@ import './style/main.css';
 import './style/tailwind.css';
 
 import plugins from './plugins'
+import MoneyDisplay from '@/components/common/MoneyDisplay.vue'
 
 createApp(App)
     .use(router)

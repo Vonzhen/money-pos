@@ -88,10 +88,24 @@
                             </div>
 
                             <div class="mt-2 bg-blue-50/50 border border-blue-100 rounded-lg py-1.5 px-3 flex items-center justify-between text-[11px] shadow-sm">
-                                <span class="text-blue-700 font-bold">实付资金组成：</span>
-                                <div class="flex gap-4">
+                                <span class="text-blue-700 font-bold shrink-0">实付资金组成：</span>
+                                <div class="flex gap-4 items-center flex-1 ml-2">
                                     <span>会员余额: <span class="font-bold text-gray-800">￥{{ Number(currentOrderDetail.balanceAmount || 0).toFixed(2) }}</span></span>
-                                    <span>聚合扫码: <span class="font-bold text-gray-800">￥{{ Number(currentOrderDetail.scanAmount || 0).toFixed(2) }}</span></span>
+
+                                    <span class="flex items-center">
+                                        聚合扫码: <span class="font-bold text-gray-800 ml-1">￥{{ Number(currentOrderDetail.scanAmount || 0).toFixed(2) }}</span>
+                                        <el-tag
+                                            v-for="(pay, index) in (currentOrderDetail.payList || []).filter(p => p.payMethodCode === 'AGGREGATE' && p.payAmount > 0)"
+                                            :key="index"
+                                            size="small"
+                                            type="primary"
+                                            effect="plain"
+                                            class="ml-1 font-bold !h-[18px] !leading-[16px] !px-1.5 !text-[10px]"
+                                        >
+                                            {{ getPayTagName(pay.payTag) }}
+                                        </el-tag>
+                                    </span>
+
                                     <span>现金收银: <span class="font-bold text-gray-800">￥{{ Number(currentOrderDetail.cashAmount || 0).toFixed(2) }}</span></span>
                                 </div>
                             </div>
@@ -139,11 +153,12 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue' // 🌟 引入 onMounted
 import { Search, Document, Loading, Printer, RefreshLeft, User } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 import { req } from "@/api/index.js"
 import { ElMessage, ElMessageBox } from 'element-plus'
+import dictApi from "@/api/system/dict.js" // 🌟 引入字典 API
 import NP from "number-precision"
 
 const props = defineProps(['modelValue'])
@@ -154,6 +169,29 @@ const timeRange = ref('today')
 const searchKeyword = ref('')
 const orderList = ref([]); const loading = ref(false); const currentPage = ref(1); const pageSize = ref(15); const totalRecords = ref(0)
 const currentOrderDetail = ref(null); const detailLoading = ref(false)
+
+const payTagDict = ref([]) // 🌟 存储字典
+
+// 🌟 组件挂载时拉取字典
+onMounted(async () => {
+    try {
+        const dictRes = await dictApi.loadDict(["paySubTag"])
+        if (dictRes && dictRes.paySubTag) {
+            payTagDict.value = dictRes.paySubTag
+        }
+    } catch (e) {
+        console.error("字典加载失败", e)
+    }
+})
+
+// 🌟 翻译标签方法
+const getPayTagName = (tagCode) => {
+    if (!tagCode) return '其他扫码'
+    const tags = payTagDict.value
+    if (!Array.isArray(tags) || tags.length === 0) return tagCode
+    const match = tags.find(t => t && (t.value === tagCode || t.dictValue === tagCode))
+    return match ? (match.desc || match.dictLabel || tagCode) : tagCode
+}
 
 const formatTime = (timeStr) => timeStr ? dayjs(timeStr).format('HH:mm') : ''
 const formatDate = (timeStr) => timeStr ? dayjs(timeStr).format('MM-DD') : ''
@@ -206,13 +244,14 @@ const handleSelectOrder = async (row) => {
         currentOrderDetail.value = {
             ...row,
             ...orderInfo,
-            // 🌟 直接继承由后端算好的 Java 拆分资金
             balanceAmount: data.balanceAmount,
             scanAmount: data.scanAmount,
             cashAmount: data.cashAmount,
             details: data.orderDetail || [],
             member: data.member || {},
-            log: data.orderLog || []
+            log: data.orderLog || [],
+            // 🌟 接收后端的支付流水数据，用于渲染标签
+            payList: data.payments || []
         }
     } catch (e) { ElMessage.error('获取明细失败') } finally { detailLoading.value = false }
 }

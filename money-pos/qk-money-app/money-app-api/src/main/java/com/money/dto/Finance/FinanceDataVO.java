@@ -4,6 +4,7 @@ import lombok.Data;
 import java.math.BigDecimal;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 public class FinanceDataVO {
@@ -25,6 +26,9 @@ public class FinanceDataVO {
         private List<BigDecimal> trendCash;
         private List<BigDecimal> trendRecharge;
         private List<BigDecimal> trendTotal;
+
+        // 🌟 修复：把这个字段挪到了 FinanceDashboardVO 内部！
+        private Map<String, List<BigDecimal>> dynamicTrendMap;
     }
 
     @Data

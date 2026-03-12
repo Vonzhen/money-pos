@@ -6,6 +6,7 @@ import com.money.web.vo.PageVO;
 import com.money.dto.UmsMember.UmsMemberDTO;
 import com.money.dto.UmsMember.UmsMemberQueryDTO;
 import com.money.dto.UmsMember.UmsMemberVO;
+import com.money.service.impl.UmsMemberServiceImpl; // 🌟 引入刚定义的强类型 VO
 
 import java.math.BigDecimal;
 import java.util.Set;
@@ -38,14 +39,15 @@ public interface UmsMemberService extends IService<UmsMember> {
     void consume(Long id, BigDecimal amount, BigDecimal coupon);
 
     /**
-     * 退款
+     * 🌟 售后退回 (原 rebate 方法)
      *
      * @param id                  id
      * @param amount              消费金额
      * @param coupon              优惠券
      * @param increaseCancelTimes 增加退单次数
+     * @param orderNo             关联订单号
      */
-    void rebate(Long id, BigDecimal amount, BigDecimal coupon, boolean increaseCancelTimes, String orderNo);
+    void processReturn(Long id, BigDecimal amount, BigDecimal coupon, boolean increaseCancelTimes, String orderNo);
 
     void recharge(com.money.dto.Ums.RechargeDTO dto);
 
@@ -55,12 +57,13 @@ public interface UmsMemberService extends IService<UmsMember> {
     void importMembers(org.springframework.web.multipart.MultipartFile file);
 
     // ==========================================
-    // 🌟 核心新增：获取画像所需的 Top 10 商品接口
+    // 🌟 核心重构：获取画像所需的 Top 20 商品接口
     // ==========================================
     /**
-     * 获取会员最爱购买的 Top 10 商品
+     * 获取会员最爱购买的 Top 20 商品 (强类型返回，告别 Map)
+     * (注：为兼容老版本 Controller 调用，方法名暂保留 getTop10Goods，实际返回 20 条)
      */
-    java.util.List<java.util.Map<String, Object>> getTop10Goods(Long memberId);
+    java.util.List<UmsMemberServiceImpl.MemberGoodsRankVO> getTop10Goods(Long memberId);
 
     /**
      * 沉睡雷达：按天数筛选流失会员（按消费总额降序，优先挽回大客户）

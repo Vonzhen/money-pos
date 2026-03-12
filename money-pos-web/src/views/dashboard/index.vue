@@ -7,9 +7,11 @@
                         <template #header>
                             <span class="font-bold text-gray-600">{{ hc.label + item.title }}</span>
                         </template>
-                        <div class="flex justify-between items-center">
+                        <div class="flex justify-between items-center mt-1">
                             <svg-icon :name="item.icon" class="w-10 h-10 text-blue-500 opacity-80" />
-                            <el-statistic :precision="item.precision" :value="item.count" value-style="font-weight: 900; font-size: 24px; color: #1e293b;" />
+
+                            <MoneyDisplay v-if="item.isMoney" :value="item.count" size="2xl" split custom-class="text-[#1e293b]" />
+                            <span v-else class="font-black text-2xl text-[#1e293b]">{{ item.count }}</span>
                         </div>
                     </el-card>
 
@@ -17,9 +19,9 @@
                         <template #header>
                             <span class="font-bold text-gray-600">当前库存总货值</span>
                         </template>
-                        <div class="flex justify-between items-center">
+                        <div class="flex justify-between items-center mt-1">
                             <svg-icon name="home-inventoryValue" class="w-10 h-10 text-blue-500 opacity-80" />
-                            <el-statistic :precision="2" :value="inventoryValue" value-style="font-weight: 900; font-size: 24px; color: #1e293b;" />
+                            <MoneyDisplay :value="inventoryValue" size="2xl" split custom-class="text-[#1e293b]" />
                         </div>
                     </el-card>
                 </div>
@@ -84,16 +86,18 @@ const initDashboardData = async () => {
         const data = dataRes.data || dataRes
         inventoryValue.value = data.inventoryValue || 0
 
+        // 🌟 增加了 isMoney 标记，让模板知道谁该用 MoneyDisplay 渲染
         const flatGet = (d) => {
             if (!d) return []
             const aov = d.orderCount > 0 ? (d.saleCount / d.orderCount) : 0;
             return [
-                { title: '订单数', icon: 'home-order', count: d.orderCount || 0, precision: 0 },
-                { title: '销售额', icon: 'home-sale', count: d.saleCount || 0, precision: 2 },
-                { title: '净利润', icon: 'home-profit', count: d.profit || 0, precision: 2 },
-                { title: '客单价', icon: 'home-sale', count: aov, precision: 2 }
+                { title: '订单数', icon: 'home-order', count: d.orderCount || 0, isMoney: false },
+                { title: '销售额', icon: 'home-sale', count: d.saleCount || 0, isMoney: true },
+                { title: '净利润', icon: 'home-profit', count: d.profit || 0, isMoney: true },
+                { title: '客单价', icon: 'home-sale', count: aov, isMoney: true }
             ]
         }
+
         homeCount.value = [
             {label: '今日', name: 'today', data: flatGet(data.today)},
             {label: '本月', name: 'month', data: flatGet(data.month)},
@@ -155,8 +159,6 @@ const drawAllCharts = () => {
     // 2. 饼图
     if (brandPieChartRef.value) {
         let pie = chartsData.value.pieData || []
-
-        // 🌟 核心拦截升级：把 "无品牌/未知" 一并斩草除根
         pie = pie.filter(item => item.name && item.name !== '1' && item.name !== '无品牌/未知' && !item.name.includes('套餐'))
 
         const pieChart = echarts.init(brandPieChartRef.value)
@@ -178,7 +180,6 @@ const drawAllCharts = () => {
     // 3. 柱状图
     if (memberBarChartRef.value) {
         let barData = chartsData.value.barData || []
-
         barData = barData.filter(item => item.brandName && item.brandName !== '1' && item.brandName !== '无品牌/未知' && !item.brandName.includes('套餐'))
 
         const brandNames = [...new Set(barData.map(item => item.brandName))]
@@ -205,7 +206,6 @@ const drawAllCharts = () => {
                 barWidth: '40%',
                 label: {
                     show: true,
-                    // 🌟 核心修复：用 formatter 拦截，数字大于0才显示，等于0直接返回空字符串隐身！
                     formatter: function(params) {
                         return params.value > 0 ? params.value : '';
                     }

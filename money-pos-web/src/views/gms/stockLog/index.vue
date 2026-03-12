@@ -80,7 +80,7 @@ import { ref } from "vue";
 import { Document } from "@element-plus/icons-vue";
 
 import OrderDetailModal from "@/components/OrderDetailModal.vue";
-import SmartGoodsSelector from '@/components/SmartGoodsSelector.vue'; // 🌟 引入智能搜索组件
+import SmartGoodsSelector from "@/components/common/SmartGoodsSelector.vue" // 🌟 引入智能搜索组件
 
 const columns = [
     {prop: 'createTime', label: '发生时间', width: 170},

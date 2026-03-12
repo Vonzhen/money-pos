@@ -13,13 +13,12 @@ public interface FinanceReportMapper {
 
     /**
      * 核心聚合 SQL：
-     * 整单优惠 = 应收 - 实付 - 会员券 - 满减券
-     * 退款金额 = 实付 - 最终销售额(final_sales_amount)
-     * 净收金额 = 最终销售额
+     * 🌟 架构优化：保留严格的 create_time 边界过滤，确保 MySQL 走 B+ 树索引，
+     * 过滤出极小的数据集后，再执行聚合操作，防止全表扫描。
      */
     @Select("<script>" +
             "SELECT " +
-            "  DATE_FORMAT(create_time, '%Y-%m-%d') AS date, " +
+            "  DATE(create_time) AS date, " +
             "  SUM(IFNULL(total_amount, 0)) AS totalAmount, " +
             "  SUM(IFNULL(coupon_amount, 0)) AS couponAmount, " +
             "  SUM(IFNULL(use_voucher_amount, 0)) AS voucherAmount, " +
@@ -31,7 +30,7 @@ public interface FinanceReportMapper {
             "WHERE status IN ('PAID', 'RETURN', 'REFUNDED') " +
             "<if test='startTime != null'> AND create_time &gt;= #{startTime} </if>" +
             "<if test='endTime != null'> AND create_time &lt;= #{endTime} </if>" +
-            "GROUP BY DATE_FORMAT(create_time, '%Y-%m-%d') " +
+            "GROUP BY DATE(create_time) " +
             "ORDER BY date DESC " +
             "</script>")
     List<FinanceWaterfallVO> getDailyWaterfallReport(@Param("startTime") LocalDateTime startTime, @Param("endTime") LocalDateTime endTime);
