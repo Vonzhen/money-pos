@@ -88,18 +88,25 @@
                 </div>
             </div>
 
-            <div class="min-w-[180px] flex flex-col items-end justify-between pl-4 pb-1 shrink-0">
+            <div class="min-w-[180px] flex flex-col items-end justify-between pl-4 pb-1 shrink-0 h-full">
                 <div class="text-gray-400 font-bold text-base w-full text-right mt-1">
-                    共 <span class="text-white text-2xl mx-1 font-black">{{ computedTotalCount }}</span> 件
+                    共 <span class="text-white text-2xl mx-1 font-black">{{ totalCount }}</span> 件
                 </div>
-                <div class="flex w-full justify-end items-end overflow-hidden">
+
+                <div class="flex-1 w-full flex justify-end items-center overflow-hidden">
                     <div class="text-red-500 font-black leading-none tracking-tight whitespace-nowrap text-right"
-                         :style="{ fontSize: getResponsiveFontSize(computedTotalAmount) + 'px' }">
-                        ￥{{ formatMoney(computedTotalAmount) }}
+                         :style="{ fontSize: getResponsiveFontSize(totalAmount) + 'px' }">
+                        ￥{{ formatMoney(totalAmount) }}
                     </div>
                 </div>
-                <div class="text-gray-400 text-sm font-bold w-full text-right">
-                    已省/券扣: ￥{{ formatMoney(computedCouponUsed) }}
+
+                <div class="w-full flex flex-col items-end gap-1.5 mt-auto">
+                    <div v-if="currentMember.id && participatingAmount > 0" class="text-gray-400 text-sm font-bold w-full text-right transition-all">
+                        满减总额: <span class="text-blue-400">￥{{ formatMoney(participatingAmount) }}</span>
+                    </div>
+                    <div class="text-gray-400 text-sm font-bold w-full text-right">
+                        已省/券扣: <span class="text-teal-400">￥{{ formatMoney(actualCouponUsed) }}</span>
+                    </div>
                 </div>
             </div>
         </div>
@@ -123,28 +130,14 @@
             <button class="pos-btn bg-emerald-600 hover:bg-emerald-500 text-white" @click="$emit('open-drawer')">
                 <el-icon class="text-2xl mb-1"><Unlock /></el-icon><span class="text-base font-bold">钱箱</span>
             </button>
-            <button class="pos-btn bg-slate-600 hover:bg-slate-500 text-white" @click="$emit('clear-cart')">
+            <button class="pos-btn bg-slate-600 hover:bg-slate-500 text-white" @click="clearAllWithFocus">
                 <el-icon class="text-2xl mb-1"><Delete /></el-icon><span class="text-base font-bold">清空</span>
             </button>
         </div>
 
-        <el-dialog
-            v-model="memberDialogVisible"
-            title="👤 绑定收银会员"
-            width="550px"
-            append-to-body
-            destroy-on-close
-            @opened="focusMemberSearch"
-            @closed="handleMemberDialogClosed"
-        >
+        <el-dialog v-model="memberDialogVisible" title="👤 绑定收银会员" width="550px" append-to-body destroy-on-close @opened="focusMemberSearch" @closed="handleMemberDialogClosed">
             <div class="py-4">
-                <MemberSmartSearch
-                    ref="memberSearchComp"
-                    v-model="bindMemberId"
-                    class="w-full"
-                    placeholder="请使用扫码枪或直接输入手机号"
-                    @select="handleMemberBind"
-                />
+                <MemberSmartSearch ref="memberSearchComp" v-model="bindMemberId" class="w-full" placeholder="请使用扫码枪或直接输入手机号" @select="handleMemberBind" />
             </div>
             <template #footer>
                 <div class="text-xs text-gray-400 text-left">💡 弹窗打开后已自动聚焦，可直接扫描或输入。</div>
@@ -155,53 +148,46 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick, onMounted } from 'vue'
+import { ref, nextTick, onMounted } from 'vue'
 import { Search, Delete, User, Unlock, Tickets, Timer, Monitor } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { req } from '@/api/index.js'
 import { usePosStore } from '../hooks/usePosStore'
-
 import MemberSmartSearch from '@/components/common/MemberSmartSearch.vue'
 
 const props = defineProps(['lastOrder', 'currentOrderNo', 'currentTime', 'memberTypesDict', 'suspendCount'])
-// 🚨 彻底删除了 'bind-member'，绝不触发旧弹窗
 const emit = defineEmits(['open-checkout', 'open-drawer', 'clear-cart', 'suspend'])
 
-const { cartList, currentMember } = usePosStore()
+// 🌟 核心：直接从最强引擎 Store 中抽调计算好的成品变量！
+const {
+    currentMember,
+    totalCount,
+    totalAmount,
+    participatingAmount,
+    actualCouponUsed,
+    addToCart,
+    clearAll
+} = usePosStore()
+
 const scanKeyword = ref('')
 const scannerInput = ref(null)
-
 const memberDialogVisible = ref(false)
 const bindMemberId = ref(null)
 const memberSearchComp = ref(null)
+const autocompleteKey = ref(0)
 
 onMounted(() => {
-    nextTick(() => {
-        setTimeout(() => {
-            focusInput()
-        }, 300)
-    })
+    nextTick(() => { setTimeout(() => { focusInput() }, 300) })
 })
 
-const openMemberDialog = () => {
-    bindMemberId.value = null;
-    memberDialogVisible.value = true;
-}
-
-const focusMemberSearch = () => {
-    memberSearchComp.value?.focus()
-}
-
-const handleMemberDialogClosed = () => {
-    bindMemberId.value = null;
-    focusInput();
-}
+const openMemberDialog = () => { bindMemberId.value = null; memberDialogVisible.value = true; }
+const focusMemberSearch = () => { memberSearchComp.value?.focus() }
+const handleMemberDialogClosed = () => { bindMemberId.value = null; focusInput(); }
 
 const handleMemberBind = (member) => {
     currentMember.value = member
     memberDialogVisible.value = false
     ElMessage.success(`已绑定会员：${member.name}`)
-    // 🚨 不再调用 emit('bind-member')，父组件的旧弹窗将彻底安息
     nextTick(() => focusInput())
 }
 
@@ -211,7 +197,6 @@ const handleClearMember = () => {
     nextTick(() => focusInput())
 }
 
-const autocompleteKey = ref(0)
 const resetScanner = async () => {
     scanKeyword.value = '';
     autocompleteKey.value++;
@@ -219,8 +204,12 @@ const resetScanner = async () => {
     scannerInput.value?.focus();
 }
 
-const focusInput = () => {
-    scannerInput.value?.focus();
+const focusInput = () => { scannerInput.value?.focus(); }
+
+const clearAllWithFocus = () => {
+    clearAll(); // 调用 Store 的全局清空指令
+    emit('clear-cart');
+    focusInput();
 }
 
 const getLevelName = (code) => {
@@ -241,93 +230,35 @@ const getResponsiveFontSize = (val) => {
     return 38;
 }
 
-const getLevelCode = (brandId) => {
-    if (!currentMember.value?.id || !brandId) return null;
-    return currentMember.value.brandLevels?.[String(brandId)] || null;
-}
-
-const computedTotalCount = computed(() => {
-    return cartList.value.reduce((sum, item) => sum + (Number(item.qty) || 1), 0);
-});
-
-const computedTotalAmount = computed(() => {
-    return cartList.value.reduce((sum, item) => {
-        let price = Number(item.salePrice) || 0;
-        const code = getLevelCode(item.brandId);
-        if (code && item.levelPrices && item.levelPrices[code] != null) price = Number(item.levelPrices[code]);
-        return sum + (price * (Number(item.qty) || 1));
-    }, 0);
-});
-
-const computedCouponUsed = computed(() => {
-    return cartList.value.reduce((sum, item) => {
-        let coupon = 0;
-        const code = getLevelCode(item.brandId);
-        if (code && item.levelCoupons && item.levelCoupons[code] != null) coupon = Number(item.levelCoupons[code]);
-        return sum + (coupon * (Number(item.qty) || 1));
-    }, 0);
-});
-
 const querySearchAsync = async (queryString, cb) => {
-    if (!queryString || queryString.trim() === '') {
-        cb([]);
-        return;
-    }
+    if (!queryString || queryString.trim() === '') { cb([]); return; }
     try {
         const res = await req({ url: '/pos/goods', method: 'GET', params: { barcode: queryString } });
         cb(res.data || []);
-    } catch (e) {
-        cb([]);
-    }
+    } catch (e) { cb([]); }
 }
 
 const handleSelect = (item) => {
-    const existing = cartList.value.find(i => i.id === item.id);
-    if (existing) {
-        existing.qty = (existing.qty || 1) + 1;
-    } else {
-        cartList.value.push({ ...item, qty: 1 });
-    }
+    addToCart(item); // 🌟 统一收口到 Store 的 addToCart 动作
     resetScanner();
 }
 
 const handleScan = async () => {
     if (!scanKeyword.value) return;
-
     try {
         const res = await req({ url: '/pos/goods', method: 'GET', params: { barcode: scanKeyword.value } });
         const items = res.data || [];
-
-        if (items.length === 1) {
-            handleSelect(items[0]);
-        } else if (items.length > 1) {
-            ElMessage.warning('匹配到多个商品，请在列表中手动选择');
-            scannerInput.value?.focus();
-        } else {
-            ElMessage.error('未找到该商品条码');
-            resetScanner();
-        }
-    } catch (e) {
-        resetScanner();
-    }
+        if (items.length === 1) { handleSelect(items[0]); }
+        else if (items.length > 1) { ElMessage.warning('匹配到多个商品，请在列表中手动选择'); scannerInput.value?.focus(); }
+        else { ElMessage.error('未找到该商品条码'); resetScanner(); }
+    } catch (e) { resetScanner(); }
 }
 
 defineExpose({ focusInput })
 </script>
 
 <style scoped>
-.pos-btn {
-    @apply rounded-xl shadow-sm transition-all duration-150 active:scale-95 flex flex-col items-center justify-center tracking-wider;
-}
-:deep(.scanner-input .el-input__wrapper) {
-    box-shadow: 0 0 0 2px #3b82f6 inset !important;
-    background-color: #ffffff;
-    height: 64px;
-    border-radius: 8px;
-    font-size: 20px;
-    font-weight: 900;
-}
-:deep(.scanner-input .el-input__inner) {
-    color: #1f2937;
-}
+.pos-btn { @apply rounded-xl shadow-sm transition-all duration-150 active:scale-95 flex flex-col items-center justify-center tracking-wider; }
+:deep(.scanner-input .el-input__wrapper) { box-shadow: 0 0 0 2px #3b82f6 inset !important; background-color: #ffffff; height: 64px; border-radius: 8px; font-size: 20px; font-weight: 900; }
+:deep(.scanner-input .el-input__inner) { color: #1f2937; }
 </style>

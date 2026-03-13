@@ -2,126 +2,98 @@ import { watch, onUnmounted } from 'vue'
 import { usePosStore } from './usePosStore'
 
 /**
- * 🌟 架构规范：客显实时同步通讯引擎 (Hook)
+ * 🌟 架构规范：客显实时同步通讯引擎 (Hook) - 极致瘦身版 (纯搬运工)
  */
 export function useDisplaySync(checkoutVisible) {
-    // 🌟 核心升级：增加提取 paymentList(支付列表) 和 finalPayAmount(最终应付)
-    const { cartList, currentMember, totalAmount, paymentList, finalPayAmount } = usePosStore();
+    // 🌟 直接从中央引擎拿取成品数据！
+    const { cartList, currentMember, participatingAmount, paymentStats, getCartItemPrices } = usePosStore();
     let displayWs = null;
 
-    const getLevelCode = (brandId, member) => {
-        if (!member?.id || !brandId) return null;
-        return member.brandLevels?.[String(brandId)] || null;
-    }
-
-    const getMemberPrice = (row, member) => {
-        const code = getLevelCode(row.brandId, member);
-        if (code && row.levelPrices && row.levelPrices[code] != null) return row.levelPrices[code];
-        return null;
-    }
-
-    const formatCartForDisplay = (cart, member) => {
-        return cart.map(item => {
-            const memberPrice = getMemberPrice(item, member);
-            const activePrice = memberPrice !== null ? memberPrice : (item.salePrice || 0);
+    // 1. 组装商品快照
+    const formatCartForDisplay = () => {
+        return cartList.value.map(item => {
+            const { unitPrice } = getCartItemPrices(item, currentMember.value);
+            const qty = Number(item.qty) || 1;
             return {
                 name: item.name,
-                qty: Number(item.qty) || 1,
+                qty: qty,
                 originalPrice: item.salePrice || 0,
-                price: activePrice,
+                price: unitPrice,
+                subtotal: Number((unitPrice * qty).toFixed(2))
             };
         });
     }
 
-    const getParticipatingAmount = (cart, member) => {
-        return cart.reduce((sum, item) => {
-            if (item.isDiscountParticipable === 1) {
-                const memberPrice = getMemberPrice(item, member);
-                const activePrice = memberPrice !== null ? memberPrice : (item.salePrice || 0);
-                return sum + (activePrice * (Number(item.qty) || 1));
-            }
-            return sum;
-        }, 0);
+    // 2. 组装支付状态快照 (自带防状态遗留闸门)
+    const getPaymentState = () => {
+        const isCheckout = checkoutVisible.value;
+        const stats = paymentStats.value; // 直接读取 Store 算好的四大金刚
+
+        if (!isCheckout) {
+            // 🌟 终极闸门：不在结算界面时，清空一切已收和扫码金额，只传目标应收
+            return { targetPay: stats.targetPay, tendered: 0, aggregate: 0, change: 0 };
+        }
+
+        return {
+            targetPay: stats.targetPay,
+            tendered: stats.tendered,
+            aggregate: stats.aggregate,
+            change: stats.change
+        };
     }
 
+    // 3. 初始化基站
     const initDisplaySync = () => {
         const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const hostname = window.location.hostname;
+        const hostname = window.location.hostname || 'localhost';
         const wsUrl = `${wsProtocol}//${hostname}:9101/money-pos/ws/pos-sync`;
 
         displayWs = new WebSocket(wsUrl);
-        displayWs.onopen = () => console.log('🟢 [收银台-通讯连] 已成功穿透并连接客显同步基站！');
+        displayWs.onopen = () => console.log('🟢 [收银台-通讯连] 镜像投屏基站已就绪！');
         displayWs.onerror = () => console.error('❌ [收银台-通讯连] 无法连接基站。');
         displayWs.onclose = () => { setTimeout(initDisplaySync, 5000); };
     }
 
-    const broadcastToDisplay = (state, payload = {}) => {
+    // 4. 发射器
+    const broadcastToDisplay = (state) => {
         if (displayWs && displayWs.readyState === WebSocket.OPEN) {
-            displayWs.send(JSON.stringify({ state, ...payload }));
+            if (state === 'IDLE' || state === 'PAY_SUCCESS') {
+                displayWs.send(JSON.stringify({ state }));
+                return;
+            }
+            // 发射标准化 Payload
+            displayWs.send(JSON.stringify({
+                state,
+                cart: formatCartForDisplay(),
+                pAmount: participatingAmount.value, // 直接用
+                member: currentMember.value,
+                payment: getPaymentState()          // 直接用
+            }));
         }
     }
 
-    // 🌟 核心升级：把 paymentList 和 finalPayAmount 加入雷达监控范围！
+    // 5. 联合雷达阵列
     watch([
         () => cartList.value,
         () => currentMember.value,
-        () => totalAmount.value,
-        () => paymentList?.value, // 监听支付金额输入变化
-        () => finalPayAmount?.value
-    ], ([newCart, newMember, newTotal, newPayments, newFinalPay]) => {
-        if (newCart.length === 0 && !checkoutVisible.value) {
-            broadcastToDisplay('IDLE');
-        } else {
-            broadcastToDisplay('CASHIER_UPDATE', {
-                cart: formatCartForDisplay(newCart, newMember),
-                total: newTotal,
-                pAmount: getParticipatingAmount(newCart, newMember),
-                member: newMember,
-                payments: newPayments,     // 发送支付方式列表
-                finalPay: newFinalPay || newTotal // 发送最终应付(扣除优惠券后)
-            });
-        }
+        () => paymentStats.value // 🌟 监听 Store 里聚合出的支付状态变更
+    ], ([newCart]) => {
+        if (newCart.length === 0 && !checkoutVisible.value) broadcastToDisplay('IDLE');
+        else broadcastToDisplay('CASHIER_UPDATE');
     }, { deep: true });
 
     watch(checkoutVisible, (isVisible) => {
-        if (isVisible) {
-            broadcastToDisplay('CHECKOUT_OPEN', {
-                cart: formatCartForDisplay(cartList.value, currentMember.value),
-                total: totalAmount.value,
-                pAmount: getParticipatingAmount(cartList.value, currentMember.value),
-                member: currentMember.value,
-                payments: paymentList?.value,
-                finalPay: finalPayAmount?.value || totalAmount.value
-            });
-        } else if (cartList.value.length === 0) {
-            broadcastToDisplay('IDLE');
-        } else {
-            broadcastToDisplay('CASHIER_UPDATE', {
-                cart: formatCartForDisplay(cartList.value, currentMember.value),
-                total: totalAmount.value,
-                pAmount: getParticipatingAmount(cartList.value, currentMember.value),
-                member: currentMember.value,
-                payments: paymentList?.value,
-                finalPay: finalPayAmount?.value || totalAmount.value
-            });
-        }
+        if (isVisible) broadcastToDisplay('CHECKOUT_OPEN');
+        else if (cartList.value.length === 0) broadcastToDisplay('IDLE');
+        else broadcastToDisplay('CASHIER_UPDATE');
     });
 
     initDisplaySync();
     onUnmounted(() => { if (displayWs) displayWs.close(); });
 
     return {
-        notifyPaySuccess: (amount) => broadcastToDisplay('PAY_SUCCESS', { amount }),
+        notifyPaySuccess: () => broadcastToDisplay('PAY_SUCCESS'),
         notifyIdle: () => broadcastToDisplay('IDLE'),
-        notifyMemberBind: (member) => {
-            broadcastToDisplay('CASHIER_UPDATE', {
-                cart: formatCartForDisplay(cartList.value, member),
-                total: totalAmount.value,
-                pAmount: getParticipatingAmount(cartList.value, member),
-                member,
-                payments: paymentList?.value,
-                finalPay: finalPayAmount?.value || totalAmount.value
-            });
-        }
+        notifyMemberBind: () => broadcastToDisplay('CASHIER_UPDATE')
     }
 }

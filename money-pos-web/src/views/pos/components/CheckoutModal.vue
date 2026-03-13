@@ -54,7 +54,7 @@
                     <div class="flex flex-col mt-2">
                         <div class="flex justify-between items-center text-blue-600 border-t border-gray-200 pt-3">
                             <span class="font-bold whitespace-nowrap">🏷️ 整单优惠:</span>
-                            <el-input-number v-model="manualDiscount" :min="0" :max="totalAmount" :step="1" class="!w-[130px]" placeholder="直减金额" @change="recalculatePayments" />
+                            <el-input-number v-model="manualDiscount" :min="0" :max="totalAmount" :precision="2" :step="1" class="!w-[130px]" placeholder="直减金额" @change="recalculatePayments" />
                         </div>
 
                         <div class="flex flex-col border-t border-dashed border-gray-300 pt-3 mt-3 min-h-[45px]" v-show="currentMember.id && theoreticalCouponUsed > 0">
@@ -100,7 +100,7 @@
                              class="flex flex-col bg-gray-50 p-2 rounded border focus-within:border-blue-400 focus-within:bg-blue-50 transition-colors">
                             <div class="flex items-center gap-3">
                                 <div class="w-20 font-bold text-gray-700 text-sm tracking-wider truncate" :title="pay.name">{{ pay.name }}</div>
-                                <el-input-number :model-value="pay.amount" :min="0" :step="10" class="flex-1 !h-[45px] !text-2xl font-bold" :controls="false" placeholder="0" @update:model-value="(val) => handlePaymentChange(index, val)" />
+                                <el-input-number :model-value="pay.amount" :min="0" :precision="2" :step="10" class="flex-1 !h-[45px] !text-2xl font-bold" :controls="false" placeholder="0" @update:model-value="(val) => handlePaymentChange(index, val)" />
                             </div>
 
                             <div v-if="pay.code === 'AGGREGATE' && payTagDict && payTagDict.length > 0" class="flex flex-wrap gap-2 mt-2 ml-[5.5rem]">
@@ -142,7 +142,6 @@ import { UserFilled, Ticket, PriceTag, Money } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { usePosStore } from '../hooks/usePosStore'
 
-// 🌟 接收外部传入的标签字典，默认提供微信支付宝作为容错
 const props = defineProps({
     modelValue: Boolean,
     payMethodDict: { type: Array, default: () => [] },
@@ -211,12 +210,10 @@ watch(visible, (newVal) => {
         usedCouponCount.value = maxUsableCoupons.value;
         const sourceDict = props.payMethodDict.length > 0 ? props.payMethodDict : [{value: 'AGGREGATE', desc: '聚合扫码'}, {value: 'CASH', desc: '现金支付'}]
 
-        // 🌟 初始化 PaymentList，并为其挂载默认的 activeTag
         paymentList.value = sourceDict.map(dict => ({
             code: dict.value,
             name: dict.desc,
             amount: 0,
-            // 如果是聚合扫码，默认选中字典里的第一个标签
             activeTag: (dict.value === 'AGGREGATE' && props.payTagDict.length > 0) ? props.payTagDict[0].value : null
         }))
         recalculatePayments();
@@ -230,34 +227,38 @@ const recalculatePayments = () => {
     const aggIndex = paymentList.value.findIndex(p => p.code.includes('AGGREGATE'));
     const targetIndex = aggIndex >= 0 ? aggIndex : 0;
     paymentList.value.forEach((p, i) => { if (i !== targetIndex) p.amount = 0; });
-    paymentList.value[targetIndex].amount = finalPayAmount.value;
+    // 🌟 在主计算逻辑里强制加上 .toFixed(2) 清洗
+    paymentList.value[targetIndex].amount = Number((finalPayAmount.value).toFixed(2));
 }
 
 const handlePaymentChange = (index, val) => {
-    let newVal = val || 0;
+    // 🌟 处理输入数值，强转并保留两位小数防崩塌
+    let newVal = Number((val || 0).toFixed(2));
+
     if (paymentList.value[index].code.includes('BALANCE')) {
         const maxBal = currentMember.value.balance || 0;
         if (newVal > maxBal) { newVal = maxBal; ElMessage.warning('已限制为最大可用会员余额！'); }
     }
+
     paymentList.value[index].amount = newVal;
     const aggIndex = paymentList.value.findIndex(p => p.code.includes('AGGREGATE'));
     if (aggIndex !== -1 && aggIndex !== index) {
         let otherSum = paymentList.value.reduce((sum, p, i) => i !== aggIndex ? sum + p.amount : sum, 0);
-        paymentList.value[aggIndex].amount = parseFloat(Math.max(0, finalPayAmount.value - otherSum).toFixed(2));
+        // 🌟 核心防泄漏：算出余额后强制 Number().toFixed(2) 脱水
+        paymentList.value[aggIndex].amount = Number(Math.max(0, finalPayAmount.value - otherSum).toFixed(2));
     }
 }
 
 const submitOrderAction = async () => {
     if (unpaidAmount.value > 0) return ElMessage.error(`实付不足 ￥${unpaidAmount.value.toFixed(2)}`);
 
-    // 🌟 提交时：组装支付数据并注入 payTag 标记
     const validPayments = paymentList.value
         .filter(p => p.amount > 0)
         .map(p => ({
             payMethodCode: p.code,
             payMethodName: p.name,
             payAmount: p.amount,
-            payTag: p.activeTag || null  // 将激活的子标签传递给后端
+            payTag: p.activeTag || null
         }));
 
     const orderDetails = cartList.value.map(item => {

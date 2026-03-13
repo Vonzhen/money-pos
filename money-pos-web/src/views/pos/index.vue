@@ -13,41 +13,33 @@
             :currentTime="currentTime"
             :memberTypesDict="memberTypesDict"
             :suspendCount="suspendedOrderList.length"
-            @open-checkout="openCheckout"
-            @bind-member="memberBindVisible = true"
+            @open-checkout="dialogs.checkout = true"
             @open-drawer="openDrawer"
-            @clear-cart="handleClear"
+            @clear-cart="handleClearConfirm"
             @suspend="handleSuspendRetrieve"
         />
 
-        <CheckoutModal
-            v-model="checkoutVisible"
-            :pay-method-dict="payMethodDict"
-            :pay-tag-dict="payTagDict"
-            @checkout-success="handleCheckoutSuccess"
-            @closed="keepFocus"
-        />
-        <RestockModal v-model="restockVisible" @closed="keepFocus" />
-        <MemberBindModal v-model="memberBindVisible" @select="handleMemberSelect" @closed="keepFocus" />
-        <RechargeModal v-model="rechargeVisible" @closed="keepFocus" />
-        <MemberAddModal v-model="memberAddVisible" :memberTypesDict="memberTypesDict" @closed="keepFocus" />
-        <SuspendModal v-model="suspendListVisible" :suspendedList="suspendedOrderList" @retrieve="retrieveOrder" @closed="keepFocus" />
-        <SalesOrderModal v-model="salesVisible" @closed="keepFocus" />
-        <ShiftModal v-model="shiftVisible" :cashier-name="cashierName" @closed="keepFocus" />
+        <CheckoutModal v-model="dialogs.checkout" :pay-method-dict="payMethodDict" :pay-tag-dict="payTagDict" @checkout-success="handleCheckoutSuccess" @closed="keepFocus" />
+        <RestockModal v-model="dialogs.restock" @closed="keepFocus" />
+        <MemberBindModal v-model="dialogs.memberBind" @select="handleMemberSelect" @closed="keepFocus" />
+        <RechargeModal v-model="dialogs.recharge" @closed="keepFocus" />
+        <MemberAddModal v-model="dialogs.memberAdd" :memberTypesDict="memberTypesDict" @closed="keepFocus" />
+        <SuspendModal v-model="dialogs.suspendList" :suspendedList="suspendedOrderList" @retrieve="retrieveOrder" @closed="keepFocus" />
+        <SalesOrderModal v-model="dialogs.sales" @closed="keepFocus" />
+        <ShiftModal v-model="dialogs.shift" :cashier-name="cashierName" @closed="keepFocus" />
     </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch, toRaw } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
 import { useUserStore } from "@/store/index.js"
 import dictApi from "@/api/system/dict.js"
 
 import { usePosStore } from './hooks/usePosStore'
 import { useScanner } from './hooks/useScanner'
-// 🌟 核心引入：通讯特种部队
 import { useDisplaySync } from './hooks/useDisplaySync'
 
 import HeaderBar from './components/HeaderBar.vue'
@@ -70,28 +62,51 @@ const { cartList, currentMember, totalAmount, clearAll, restoreOrder } = usePosS
 const bottomConsoleRef = ref(null)
 const keepFocus = () => bottomConsoleRef.value?.focusInput()
 
-const checkoutVisible = ref(false);
-const restockVisible = ref(false);
-const memberBindVisible = ref(false);
-const rechargeVisible = ref(false);
-const memberAddVisible = ref(false);
-const suspendListVisible = ref(false);
-const salesVisible = ref(false);
-const shiftVisible = ref(false);
+// 🌟 架构升级：DialogManager 集中式状态管理，拒绝变量爆炸
+const dialogs = reactive({
+    checkout: false,
+    restock: false,
+    memberBind: false,
+    recharge: false,
+    memberAdd: false,
+    suspendList: false,
+    sales: false,
+    shift: false
+});
 
-// 🌟 核心部署：启动通讯基站监听器，并获取广播命令函数
-const { notifyPaySuccess, notifyIdle, notifyMemberBind } = useDisplaySync(checkoutVisible);
+// 检查是否任何弹窗开启
+const isAnyDialogOpen = computed(() => Object.values(dialogs).some(isOpen => isOpen === true));
+
+const { notifyPaySuccess, notifyIdle, notifyMemberBind } = useDisplaySync(computed(() => dialogs.checkout));
 
 useScanner({
     onEnter: () => {
-        if (!checkoutVisible.value && !memberBindVisible.value && !restockVisible.value && !memberAddVisible.value && !rechargeVisible.value && !salesVisible.value && !shiftVisible.value && !suspendListVisible.value && cartList.value.length > 0) {
-            openCheckout()
+        // 如果没有弹窗干扰，且购物车有货，触发结账
+        if (!isAnyDialogOpen.value && cartList.value.length > 0) {
+            dialogs.checkout = true;
         }
     },
-    onEscape: () => { checkoutVisible.value ? checkoutVisible.value = false : handleClear() }
+    onEscape: () => {
+        // 1. 如果在结账界面，ESC 仅关闭结账界面
+        if (dialogs.checkout) {
+            dialogs.checkout = false;
+            return;
+        }
+        // 2. 🌟 安全红线：高危清空操作拦截
+        if (cartList.value.length > 0) {
+            handleClearConfirm();
+        }
+    }
 })
 
-const currentOrderNo = ref('POS' + dayjs().format('YYYYMMDDHHmmss'))
+// 🌟 安全红线：订单号并发碰撞防御机制
+const generateOrderNo = () => {
+    const timePart = dayjs().format('YYYYMMDDHHmmss');
+    const randomPart = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+    return `POS${timePart}${randomPart}`;
+}
+
+const currentOrderNo = ref(generateOrderNo())
 const currentTime = ref(dayjs().format('YYYY-MM-DD HH:mm:ss'))
 const lastOrder = ref({ total: 0, paid: 0, couponUsed: 0 })
 const suspendedOrderList = ref([])
@@ -99,8 +114,9 @@ const suspendedOrderList = ref([])
 const payMethodDict = ref([])
 const payTagDict = ref([])
 const memberTypesDict = ref([])
-
 const cashierName = computed(() => userStore.name || '未知收银员')
+
+let clockTimer = null; // 🌟 声明时钟句柄，防止内存泄露
 
 onMounted(async () => {
     try {
@@ -109,59 +125,90 @@ onMounted(async () => {
         if (dict.pos_payment_method) payMethodDict.value = dict.pos_payment_method
         if (dict.paySubTag) payTagDict.value = dict.paySubTag
     } catch (e) { }
-    keepFocus(); setInterval(() => currentTime.value = dayjs().format('YYYY-MM-DD HH:mm:ss'), 1000)
+
+    // 🌟 安全红线：挂单防丢恢复机制 (从磁盘读取)
+    try {
+        const localSuspend = localStorage.getItem('pos_suspended_orders');
+        if (localSuspend) suspendedOrderList.value = JSON.parse(localSuspend);
+    } catch (e) {}
+
+    keepFocus();
+    clockTimer = setInterval(() => currentTime.value = dayjs().format('YYYY-MM-DD HH:mm:ss'), 1000)
 })
 
+onUnmounted(() => {
+    // 🌟 核心清理：组件销毁时杀掉幽灵定时器
+    if (clockTimer) clearInterval(clockTimer);
+})
+
+// 🌟 安全红线：挂单持久化监听器 (有变动立刻落盘)
+watch(suspendedOrderList, (newVal) => {
+    localStorage.setItem('pos_suspended_orders', JSON.stringify(newVal));
+}, { deep: true });
+
 const handleNavAction = (action) => {
-    if (action === 'shift') shiftVisible.value = true
-    else if (action === 'sales') salesVisible.value = true
+    if (action === 'shift') dialogs.shift = true
+    else if (action === 'sales') dialogs.sales = true
     else if (action === 'admin') window.open(router.resolve({ path: '/' }).href, '_blank')
-    else if (action === 'restock') restockVisible.value = true
-    else if (action === 'recharge') rechargeVisible.value = true
-    else if (action === 'addMember') memberAddVisible.value = true
+    else if (action === 'restock') dialogs.restock = true
+    else if (action === 'recharge') dialogs.recharge = true
+    else if (action === 'addMember') dialogs.memberAdd = true
+}
+
+const handleClearConfirm = () => {
+    if(cartList.value.length === 0) return;
+    ElMessageBox.confirm('⚠️ 购物车非空，确定要彻底清空当前所有商品吗？', '高危操作警告', {
+        confirmButtonText: '确定清空',
+        cancelButtonText: '点错了',
+        type: 'error',
+    }).then(() => {
+        handleClear();
+        ElMessage.success('已清空订单');
+    }).catch(() => {
+        keepFocus();
+    });
 }
 
 const handleClear = () => {
     clearAll();
-    currentOrderNo.value = 'POS' + dayjs().format('YYYYMMDDHHmmss');
+    currentOrderNo.value = generateOrderNo();
     keepFocus();
-    notifyIdle(); // 🌟 发射信号：清空购物车，客显切回待机广告
+    notifyIdle();
 }
 
 const openDrawer = () => ElMessage.success('指令：弹开钱箱')
-const openCheckout = () => { cartList.value.length ? checkoutVisible.value = true : ElMessage.warning('空单'); }
 
 const handleCheckoutSuccess = (orderSummary) => {
     lastOrder.value = orderSummary;
     openDrawer();
     handleClear();
-    notifyPaySuccess(orderSummary.total); // 🌟 发射信号：支付成功，触发客显打勾动画
+    notifyPaySuccess(orderSummary.total);
 }
 
 const handleMemberSelect = (member) => {
     currentMember.value = member;
-    notifyMemberBind(member); // 🌟 发射信号：绑定会员，触发客显满减诱导
+    notifyMemberBind(member);
 }
 
 const handleSuspendRetrieve = () => {
     if (cartList.value.length > 0) {
-        const snapshotCart = JSON.parse(JSON.stringify(cartList.value));
-        const snapshotMember = JSON.parse(JSON.stringify(currentMember.value));
-        const snapshotTotal = totalAmount.value;
+        // 🌟 架构升级：废除 JSON 脆弱拷贝，使用防弹级 structuredClone + toRaw 解析 Vue 代理
+        const snapshotCart = cartList.value.map(item => structuredClone(toRaw(item)));
+        const snapshotMember = structuredClone(toRaw(currentMember.value));
 
         suspendedOrderList.value.push({
             id: Date.now(),
             time: dayjs().format('HH:mm:ss'),
             cart: snapshotCart,
             member: snapshotMember,
-            total: snapshotTotal
+            total: totalAmount.value
         });
 
         handleClear();
-        ElMessage.success('订单已挂起！');
+        ElMessage.success('🛡️ 订单已挂起并安全落盘！');
     }
     else if (suspendedOrderList.value.length > 0) {
-        suspendListVisible.value = true;
+        dialogs.suspendList = true;
     }
     else {
         ElMessage.warning('当前没有挂单记录');
@@ -173,6 +220,6 @@ const retrieveOrder = (index) => {
     restoreOrder(order.cart, order.member);
     suspendedOrderList.value.splice(index, 1);
     ElMessage.success('订单已取回');
-    notifyMemberBind(order.member); // 🌟 发射信号：取回订单后立刻刷新客显明细
+    notifyMemberBind(order.member);
 }
 </script>
