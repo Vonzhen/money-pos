@@ -6,11 +6,10 @@ import com.money.dto.OmsOrder.*;
 import com.money.entity.OmsOrder;
 
 import java.time.LocalDateTime;
-import java.util.Set;
 
 /**
  * <p>
- * 订单表 服务类 (2.0 重构版)
+ * 订单表 服务类 (2.0 大一统重构版)
  * </p>
  */
 public interface OmsOrderService extends IService<OmsOrder> {
@@ -26,13 +25,18 @@ public interface OmsOrderService extends IService<OmsOrder> {
     OrderCountVO countOrderAndSales(LocalDateTime startTime, LocalDateTime endTime);
 
     /**
-     * 获取订单详情
+     * 获取订单详情 (按 ID)
      */
     OrderDetailVO getOrderDetail(Long id);
 
     /**
+     * 🌟 新增大一统契约：获取订单详情 (按 订单号)
+     * 解决前台详情页 404 的核心方法
+     */
+    OrderDetailVO getOrderDetailByNo(String orderNo);
+
+    /**
      * 🌟 契约重塑：整单退款 (按单号执行，支持幂等)
-     * 注意：原 Set<Long> ids 已被弃用，改为 String orderNo
      */
     void returnOrder(String orderNo);
 

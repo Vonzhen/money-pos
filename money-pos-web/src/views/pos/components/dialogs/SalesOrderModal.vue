@@ -26,13 +26,16 @@
                     </el-table-column>
                     <el-table-column label="订单号" min-width="100" show-overflow-tooltip>
                         <template #default="{row}">
-                            <span :class="['font-mono', row.status === 'REFUNDED' || row.status === 'RETURN' ? 'line-through text-gray-400' : '']">{{ row.orderNo }}</span>
+                            <span :class="['font-mono', (row.status === 'REFUNDED' || row.status === 'RETURN') ? 'line-through text-gray-400' : '']">
+                                {{ row.orderNo }}
+                            </span>
                         </template>
                     </el-table-column>
                     <el-table-column label="实收" width="125" align="right">
                         <template #default="{row}">
                             <div class="whitespace-nowrap">
                                 <span v-if="row.status === 'REFUNDED' || row.status === 'RETURN'" class="text-gray-400 font-bold">已退单</span>
+                                <span v-else-if="row.status === 'PARTIAL'" class="font-bold text-orange-500 tracking-tight">￥{{ Number(row.payAmount || 0).toFixed(2) }}</span>
                                 <span v-else class="font-bold text-red-500 tracking-tight">￥{{ Number(row.payAmount || 0).toFixed(2) }}</span>
                             </div>
                         </template>
@@ -56,8 +59,8 @@
                             <div class="font-bold text-gray-800 text-lg">单号: <span class="font-mono">{{ currentOrderDetail.orderNo }}</span></div>
                             <div class="text-xs text-gray-500 mt-1">创建时间: {{ currentOrderDetail.createTime }} | 收银员: {{ cashierName }}</div>
                         </div>
-                        <el-tag effect="dark" :type="currentOrderDetail.status === 'PAID' ? 'success' : 'info'" class="tracking-widest font-bold">
-                            {{ currentOrderDetail.status === 'PAID' ? '已支付' : '已退单' }}
+                        <el-tag effect="dark" :type="statusColor[currentOrderDetail.status] || 'info'" class="tracking-widest font-bold">
+                            {{ dict?.orderStatusKv?.[currentOrderDetail.status] || currentOrderDetail.status }}
                         </el-tag>
                     </div>
 
@@ -74,11 +77,11 @@
                             <div class="border border-gray-200 rounded-lg p-2.5 bg-gray-50 flex items-center justify-between shadow-inner overflow-x-auto">
                                 <div class="flex flex-col items-center flex-1 px-0.5"><div class="text-[10px] text-gray-500 font-bold mb-0.5 whitespace-nowrap">应收</div><div class="text-sm font-black text-gray-800 whitespace-nowrap tracking-tight">￥{{ Number(currentOrderDetail.totalAmount || 0).toFixed(2) }}</div></div>
                                 <div class="text-gray-300 font-black shrink-0 mx-1">-</div>
-                                <div class="flex flex-col items-center flex-1 px-0.5"><div class="text-[10px] text-orange-500 font-bold mb-0.5 whitespace-nowrap">会员券</div><div class="text-sm font-black text-orange-500 whitespace-nowrap tracking-tight">￥{{ Number(currentOrderDetail.couponAmount || 0).toFixed(2) }}</div></div>
+                                <div class="flex flex-col items-center flex-1 px-0.5"><div class="text-[10px] text-orange-500 font-bold mb-0.5 whitespace-nowrap">会员券</div><div class="text-sm font-black text-orange-500 whitespace-nowrap tracking-tight">￥{{ Number(currentOrderDetail.couponAmount || currentOrderDetail.memberCouponDeduct || 0).toFixed(2) }}</div></div>
                                 <div class="text-gray-300 font-black shrink-0 mx-1">-</div>
-                                <div class="flex flex-col items-center flex-1 px-0.5"><div class="text-[10px] text-red-400 font-bold mb-0.5 whitespace-nowrap">满减券</div><div class="text-sm font-black text-red-500 whitespace-nowrap tracking-tight">￥{{ Number(currentOrderDetail.useVoucherAmount || 0).toFixed(2) }}</div></div>
+                                <div class="flex flex-col items-center flex-1 px-0.5"><div class="text-[10px] text-red-400 font-bold mb-0.5 whitespace-nowrap">满减券</div><div class="text-sm font-black text-red-500 whitespace-nowrap tracking-tight">￥{{ Number(currentOrderDetail.useVoucherAmount || currentOrderDetail.voucherDeduct || 0).toFixed(2) }}</div></div>
                                 <div class="text-gray-300 font-black shrink-0 mx-1">-</div>
-                                <div class="flex flex-col items-center flex-1 px-0.5"><div class="text-[10px] text-red-400 font-bold mb-0.5 whitespace-nowrap">整单优惠</div><div class="text-sm font-black text-red-500 whitespace-nowrap tracking-tight">￥{{ Number(currentOrderDetail.manualDiscountAmount || 0).toFixed(2) }}</div></div>
+                                <div class="flex flex-col items-center flex-1 px-0.5"><div class="text-[10px] text-red-400 font-bold mb-0.5 whitespace-nowrap">整单优惠</div><div class="text-sm font-black text-red-500 whitespace-nowrap tracking-tight">￥{{ Number(currentOrderDetail.manualDiscountAmount || currentOrderDetail.manualDeduct || 0).toFixed(2) }}</div></div>
                                 <div class="text-gray-300 font-black shrink-0 mx-1">=</div>
                                 <div class="flex flex-col items-center flex-1 px-0.5"><div class="text-[10px] text-blue-600 font-bold mb-0.5 whitespace-nowrap">实付</div><div class="text-sm font-black text-blue-600 whitespace-nowrap tracking-tight">￥{{ Number(currentOrderDetail.payAmount || 0).toFixed(2) }}</div></div>
                                 <div class="text-gray-300 font-black shrink-0 mx-1">-</div>
@@ -91,7 +94,6 @@
                                 <span class="text-blue-700 font-bold shrink-0">实付资金组成：</span>
                                 <div class="flex gap-4 items-center flex-1 ml-2">
                                     <span>会员余额: <span class="font-bold text-gray-800">￥{{ Number(currentOrderDetail.balanceAmount || 0).toFixed(2) }}</span></span>
-
                                     <span class="flex items-center">
                                         聚合扫码: <span class="font-bold text-gray-800 ml-1">￥{{ Number(currentOrderDetail.scanAmount || 0).toFixed(2) }}</span>
                                         <el-tag
@@ -105,7 +107,6 @@
                                             {{ getPayTagName(pay.payTag) }}
                                         </el-tag>
                                     </span>
-
                                     <span>现金收银: <span class="font-bold text-gray-800">￥{{ Number(currentOrderDetail.cashAmount || 0).toFixed(2) }}</span></span>
                                 </div>
                             </div>
@@ -153,12 +154,12 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue' // 🌟 引入 onMounted
+import { ref, computed, watch, onMounted } from 'vue'
 import { Search, Document, Loading, Printer, RefreshLeft, User } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 import { req } from "@/api/index.js"
 import { ElMessage, ElMessageBox } from 'element-plus'
-import dictApi from "@/api/system/dict.js" // 🌟 引入字典 API
+import dictApi from "@/api/system/dict.js"
 import NP from "number-precision"
 
 const props = defineProps(['modelValue'])
@@ -170,26 +171,34 @@ const searchKeyword = ref('')
 const orderList = ref([]); const loading = ref(false); const currentPage = ref(1); const pageSize = ref(15); const totalRecords = ref(0)
 const currentOrderDetail = ref(null); const detailLoading = ref(false)
 
-const payTagDict = ref([]) // 🌟 存储字典
+const payTagDict = ref([])
+const dict = ref({ orderStatusKv: {} })
 
-// 🌟 组件挂载时拉取字典
+// 🌟 对齐着色映射
+const statusColor = {
+    'RETURN': 'info',
+    'REFUNDED': 'info',
+    'PAID': 'success',
+    'DONE': 'success',
+    'PARTIAL': 'warning'
+}
+
 onMounted(async () => {
     try {
-        const dictRes = await dictApi.loadDict(["paySubTag"])
-        if (dictRes && dictRes.paySubTag) {
-            payTagDict.value = dictRes.paySubTag
+        // 🌟 同时加载支付标签和订单状态字典
+        const dictRes = await dictApi.loadDict(["paySubTag", "orderStatus"])
+        if (dictRes) {
+            if (dictRes.paySubTag) payTagDict.value = dictRes.paySubTag
+            dict.value = dictRes
         }
     } catch (e) {
         console.error("字典加载失败", e)
     }
 })
 
-// 🌟 翻译标签方法
 const getPayTagName = (tagCode) => {
     if (!tagCode) return '其他扫码'
-    const tags = payTagDict.value
-    if (!Array.isArray(tags) || tags.length === 0) return tagCode
-    const match = tags.find(t => t && (t.value === tagCode || t.dictValue === tagCode))
+    const match = payTagDict.value.find(t => t && (t.value === tagCode || t.dictValue === tagCode))
     return match ? (match.desc || match.dictLabel || tagCode) : tagCode
 }
 
@@ -200,7 +209,12 @@ const returnPrice = computed(() => {
     if (!currentOrderDetail.value || !currentOrderDetail.value.details) return 0;
     return currentOrderDetail.value.details.reduce((sum, item) => NP.plus(sum, NP.times(item.returnQuantity || 0, item.goodsPrice || 0)), 0);
 })
-const netIncome = computed(() => NP.minus(currentOrderDetail.value?.payAmount || 0, returnPrice.value))
+
+const netIncome = computed(() => {
+    if (currentOrderDetail.value?.status === 'REFUNDED' || currentOrderDetail.value?.status === 'RETURN') return 0;
+    return NP.minus(currentOrderDetail.value?.payAmount || 0, returnPrice.value)
+})
+
 const cashierName = computed(() => {
     const logs = currentOrderDetail.value?.log || [];
     return logs.length > 0 ? logs[logs.length - 1].createBy : 'System';
@@ -212,9 +226,8 @@ watch(visible, (newVal) => {
 
 const getTimeRangeParams = () => {
     const end = dayjs().endOf('day').format('YYYY-MM-DD HH:mm:ss')
-    let start = ''
-    if (timeRange.value === 'today') start = dayjs().startOf('day').format('YYYY-MM-DD HH:mm:ss')
-    else if (timeRange.value === '3days') start = dayjs().subtract(2, 'day').startOf('day').format('YYYY-MM-DD HH:mm:ss')
+    let start = dayjs().startOf('day').format('YYYY-MM-DD HH:mm:ss')
+    if (timeRange.value === '3days') start = dayjs().subtract(2, 'day').startOf('day').format('YYYY-MM-DD HH:mm:ss')
     else if (timeRange.value === '7days') start = dayjs().subtract(6, 'day').startOf('day').format('YYYY-MM-DD HH:mm:ss')
     else if (timeRange.value === '1month') start = dayjs().subtract(1, 'month').startOf('day').format('YYYY-MM-DD HH:mm:ss')
     return { startTime: start, endTime: end }
@@ -225,7 +238,7 @@ const fetchOrders = async () => {
     try {
         const { startTime, endTime } = getTimeRangeParams()
         const params = { current: currentPage.value, size: pageSize.value, startTime, endTime, orderNo: searchKeyword.value || undefined }
-        const res = await req({ url: '/oms/order', method: 'GET', params })
+        const res = await req({ url: '/oms-order/page', method: 'GET', params })
         if (res.data && res.data.records) { orderList.value = res.data.records; totalRecords.value = res.data.total }
         else if (res.records) { orderList.value = res.records; totalRecords.value = res.total }
         else { orderList.value = res || []; totalRecords.value = (res || []).length }
@@ -236,21 +249,15 @@ const handleSelectOrder = async (row) => {
     if (!row || !row.id) return
     detailLoading.value = true
     currentOrderDetail.value = { ...row, details: [], log: [] }
-
     try {
-        const res = await req({ url: '/oms/order/detail', method: 'GET', params: { id: row.id } })
+        const res = await req({ url: '/oms-order/detail', method: 'GET', params: { orderNo: row.orderNo } })
         const data = res.data || res || {}
-        const orderInfo = data.order || {};
         currentOrderDetail.value = {
             ...row,
-            ...orderInfo,
-            balanceAmount: data.balanceAmount,
-            scanAmount: data.scanAmount,
-            cashAmount: data.cashAmount,
-            details: data.orderDetail || [],
-            member: data.member || {},
+            ...data,
+            details: data.orderDetails || [],
+            member: data.memberInfo || data.member || {},
             log: data.orderLog || [],
-            // 🌟 接收后端的支付流水数据，用于渲染标签
             payList: data.payments || []
         }
     } catch (e) { ElMessage.error('获取明细失败') } finally { detailLoading.value = false }
@@ -262,29 +269,26 @@ const handleFullReturn = async () => {
     try {
         await ElMessageBox.confirm('确定要将此订单【全额退款】吗？', '整单退款确认', { confirmButtonText: '确定退款', cancelButtonText: '取消', type: 'warning' })
         detailLoading.value = true
-        await req({ url: '/oms/order/returnOrder', method: 'DELETE', data: [currentOrderDetail.value.id] })
+        await req({ url: '/oms-order/return', method: 'POST', data: { orderNo: currentOrderDetail.value.orderNo, reqId: 'RET' + Date.now() } })
         ElMessage.success('退单成功！')
         fetchOrders()
-        currentOrderDetail.value.status = 'RETURN'
-    } catch (e) {} finally { detailLoading.value = false }
+        currentOrderDetail.value.status = 'REFUNDED'
+    } catch (e) { ElMessage.error(e.msg || '退款失败') } finally { detailLoading.value = false }
 }
 
 const handlePartialReturn = async (row) => {
     try {
         const maxQty = row.quantity - (row.returnQuantity || 0)
         if (maxQty <= 0) return ElMessage.warning('该商品已全部退货')
-
         const { value } = await ElMessageBox.prompt(`请输入【${row.goodsName}】的退货数量 (最多可退 ${maxQty} 个)`, '商品退货', {
-            confirmButtonText: '确定退货', cancelButtonText: '取消',
-            inputPattern: /^[1-9]\d*$/, inputErrorMessage: '请输入正整数', inputValue: 1
+            confirmButtonText: '确定退货', cancelButtonText: '取消', inputPattern: /^[1-9]\d*$/, inputErrorMessage: '请输入正整数', inputValue: 1
         })
         const returnQty = parseInt(value)
         if (returnQty > maxQty) return ElMessage.error('不能超过可退数量！')
-
         detailLoading.value = true
-        await req({ url: '/oms/order/returnGoods', method: 'DELETE', data: { id: row.id, quantity: returnQty } })
+        await req({ url: '/oms-order/returnGoods', method: 'POST', data: { orderNo: currentOrderDetail.value.orderNo, detailId: row.id, returnQty: returnQty } })
         ElMessage.success('退货成功！')
         handleSelectOrder(currentOrderDetail.value)
-    } catch (e) {} finally { detailLoading.value = false }
+    } catch (e) { if(e !== 'cancel') ElMessage.error(e.msg || '退货失败') } finally { detailLoading.value = false }
 }
 </script>

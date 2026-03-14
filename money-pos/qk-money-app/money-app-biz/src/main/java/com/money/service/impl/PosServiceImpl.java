@@ -1,24 +1,20 @@
 package com.money.service.impl;
 
-import cn.hutool.core.collection.ListUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
-import com.money.web.exception.BaseException;
-import com.money.web.util.BeanMapUtil;
+import com.money.constant.CouponStatusEnum;
 import com.money.constant.OrderStatusEnum;
-import com.money.dto.OmsOrder.OmsOrderVO;
-import com.money.dto.Pos.PosGoodsVO;
-import com.money.dto.Pos.PosMemberVO;
-import com.money.dto.pos.SettleAccountsDTO;
-import com.money.dto.pos.SettleTrialReqDTO;
-import com.money.dto.pos.SettleTrialResVO;
+import com.money.constant.PayMethodEnum;
+import com.money.dto.pos.*;
 import com.money.entity.*;
 import com.money.mapper.*;
 import com.money.service.*;
+import com.money.web.exception.BaseException;
+import com.money.web.util.BeanMapUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -33,36 +29,24 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class PosServiceImpl implements PosService {
 
-    private static final String LOG_TYPE_VOUCHER = "VOUCHER";
-    private static final String LOG_TYPE_BALANCE = "BALANCE";
-    private static final String OPERATE_CONSUME = "CONSUME";
-    private static final String COUPON_UNUSED = "UNUSED";
-    private static final String COUPON_USED = "USED";
-    private static final String STOCK_TYPE_SALE = "SALE";
-
     private final UmsMemberService umsMemberService;
     private final GmsGoodsService gmsGoodsService;
     private final OmsOrderService omsOrderService;
     private final OmsOrderDetailService omsOrderDetailService;
     private final OmsOrderLogService omsOrderLogService;
-
-    // 🌟 注入我们刚切分出去的“计价大脑”
     private final PosCalculationEngine posCalculationEngine;
+    private final OmsOrderPayMapper omsOrderPayMapper;
 
-    // 基础查询依然需要这些 Mapper
-    private final GmsGoodsMapper gmsGoodsMapper;
     private final PosSkuLevelPriceMapper posSkuLevelPriceMapper;
     private final PosCouponRuleMapper posCouponRuleMapper;
     private final PosMemberCouponMapper posMemberCouponMapper;
-    private final OmsOrderPayMapper omsOrderPayMapper;
-    private final UmsMemberLogMapper umsMemberLogMapper;
-    private final com.money.mapper.GmsStockLogMapper gmsStockLogMapper;
-    private final SysBrandConfigMapper sysBrandConfigMapper;
     private final UmsMemberBrandLevelMapper umsMemberBrandLevelMapper;
-    private final GmsGoodsComboMapper gmsGoodsComboMapper;
+
+    private final PosInventoryActionService inventoryActionService;
+    private final PosAssetActionService assetActionService;
 
     // ==========================================
-    // 基础查询模块 (保持原样)
+    // 基础查询模块
     // ==========================================
     @Override
     public List<PosGoodsVO> listGoods(String barcode) {
@@ -100,19 +84,18 @@ public class PosServiceImpl implements PosService {
     @Override
     public List<PosMemberVO> listMember(String member) {
         List<UmsMember> memberList = umsMemberService.lambdaQuery().eq(UmsMember::getDeleted, false)
-                .like(StrUtil.isNotBlank(member), UmsMember::getName, member).or().like(StrUtil.isNotBlank(member), UmsMember::getPhone, member).list();
+                .and(StrUtil.isNotBlank(member), w -> w.like(UmsMember::getName, member).or().like(UmsMember::getPhone, member)).list();
         List<PosMemberVO> posMemberVOS = BeanMapUtil.to(memberList, PosMemberVO::new);
 
         if (!posMemberVOS.isEmpty()) {
             List<Long> memberIds = posMemberVOS.stream().map(PosMemberVO::getId).collect(Collectors.toList());
-
             List<UmsMemberBrandLevel> allBrandLevels = umsMemberBrandLevelMapper.selectList(
                     new LambdaQueryWrapper<UmsMemberBrandLevel>().in(UmsMemberBrandLevel::getMemberId, memberIds)
             );
             Map<Long, List<UmsMemberBrandLevel>> blMap = allBrandLevels.stream().collect(Collectors.groupingBy(UmsMemberBrandLevel::getMemberId));
 
             List<PosMemberCoupon> allUnusedCoupons = posMemberCouponMapper.selectList(
-                    new LambdaQueryWrapper<PosMemberCoupon>().in(PosMemberCoupon::getMemberId, memberIds).eq(PosMemberCoupon::getStatus, COUPON_UNUSED)
+                    new LambdaQueryWrapper<PosMemberCoupon>().in(PosMemberCoupon::getMemberId, memberIds).eq(PosMemberCoupon::getStatus, CouponStatusEnum.UNUSED.name())
             );
 
             final Map<Long, PosCouponRule> ruleMap = new HashMap<>();
@@ -159,61 +142,211 @@ public class PosServiceImpl implements PosService {
     }
 
     // ==========================================
-    // 核心重构：事务大管家 (完全信任计价大脑)
+    // 🌟 终极交响乐指挥：settleAccounts
     // ==========================================
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public OmsOrderVO settleAccounts(SettleAccountsDTO dto) {
-        log.info("【POS发起结算】请求单号: {}, 入参明细: {}", dto.getReqId(), JSONUtil.toJsonStr(dto));
+    public SettleResultVO settleAccounts(SettleAccountsDTO dto) {
+        if (dto == null) throw new BaseException("结算请求主体不能为空");
 
-        // 1. 幂等拦截
-        if (StrUtil.isBlank(dto.getReqId())) {
-            throw new BaseException("【请求异常】缺少交易唯一单号，请刷新收银台后重试。");
-        }
-        if (omsOrderService.lambdaQuery().eq(OmsOrder::getOrderNo, dto.getReqId()).count() > 0) {
-            log.warn("【POS重复提单拦截】单号: {}", dto.getReqId());
-            throw new BaseException("【订单已处理】该订单已成功落库，请勿重复点击提交！");
+        // 1. 🌟 任务 18：一次查询，全链路复用！安检部直接返回核实过的会员对象
+        UmsMember verifiedMember = validateSettleRequest(dto);
+
+        // 2. 试算裁决
+        SettleTrialResVO trialRes = executeTrial(dto);
+        BigDecimal finalPayAmount = trialRes.getFinalPayAmount().setScale(2, RoundingMode.HALF_UP);
+
+        // 3. 财务脱水清洗
+        NormalizedPaymentResult payResult = normalizePayments(dto.getPayments(), finalPayAmount);
+
+        // 4. 物资核实
+        List<Long> goodsIds = trialRes.getItems().stream().map(SettleTrialResVO.ItemRes::getGoodsId).collect(Collectors.toList());
+        Map<Long, GmsGoods> goodsMap = gmsGoodsService.listByIds(goodsIds).stream().collect(Collectors.toMap(GmsGoods::getId, g -> g));
+        for (Long gid : goodsIds) {
+            if (!goodsMap.containsKey(gid)) throw new BaseException("【异常】商品不存在或已被删除: " + gid);
         }
 
-        // 🌟 2. 复用计价引擎，获取绝对真理 (前后端共用大脑)
+        // 5. 组装并强防重落库 (直接使用已核实的会员)
+        OmsOrder order = assembleOrder(dto, trialRes, verifiedMember);
+        try {
+            omsOrderService.save(order);
+        } catch (DuplicateKeyException e) {
+            throw new BaseException("【订单已处理】请勿重复点击提交！");
+        }
+
+        // 6. 明细与流水落库
+        List<OmsOrderDetail> orderDetails = saveOrderDetails(trialRes, goodsMap, order.getOrderNo());
+        saveNormalizedPayments(payResult, order.getOrderNo());
+
+        // 7. 委托仓储部：处理物理库存
+        inventoryActionService.deduct(orderDetails, goodsMap, order.getOrderNo());
+
+        // 8. 委托资产部：处理虚拟资产
+        if (order.getVip() && verifiedMember != null) {
+            assetActionService.consume(verifiedMember.getId(), dto, trialRes, payResult, order.getOrderNo());
+        }
+
+        // 9. 🌟 任务 14 & 15：结构化高可用审计日志
+        int totalItemCount = orderDetails.stream().mapToInt(OmsOrderDetail::getQuantity).sum();
+        String distinctPayMethods = payResult.getValidItems().stream()
+                .map(p -> StrUtil.isNotBlank(p.getPayTag()) ? p.getMethodCode() + ":" + p.getPayTag() : p.getMethodCode())
+                .distinct()
+                .collect(Collectors.joining(","));
+
+        OmsOrderLog orderLog = new OmsOrderLog();
+        orderLog.setOrderId(order.getId());
+        Map<String, Object> auditMap = new LinkedHashMap<>(); // 保持插入顺序，日志更好看
+        auditMap.put("action", "SETTLE_SUCCESS");
+        auditMap.put("orderNo", order.getOrderNo());
+        auditMap.put("memberId", dto.getMember());
+        auditMap.put("itemCount", totalItemCount);          // 真实的商品件数
+        auditMap.put("detailCount", orderDetails.size());   // 明细行数
+        auditMap.put("payMethods", distinctPayMethods);     // 去重且带tag的支付组合
+        auditMap.put("finalPay", finalPayAmount);
+        auditMap.put("totalPaid", payResult.getTotalPaid());
+        auditMap.put("change", payResult.getChangeAmount());
+        auditMap.put("net", payResult.getNetReceived());
+        orderLog.setDescription(JSONUtil.toJsonStr(auditMap));
+        omsOrderLogService.save(orderLog);
+
+        // 10. 组装增强版返回值 (小票友好)
+        SettleResultVO resultVO = new SettleResultVO();
+        resultVO.setOrderNo(order.getOrderNo());
+        resultVO.setTotalAmount(order.getTotalAmount());
+        resultVO.setFinalPayAmount(order.getPayAmount());
+        resultVO.setTotalPaid(payResult.getTotalPaid());
+        resultVO.setChangeAmount(payResult.getChangeAmount());
+        resultVO.setNetReceived(payResult.getNetReceived());
+        resultVO.setPaymentTime(order.getPaymentTime());
+        resultVO.setMemberName(order.getMember());
+        resultVO.setCouponDeduct(order.getCouponAmount());
+        resultVO.setVoucherDeduct(order.getUseVoucherAmount());
+        resultVO.setManualDeduct(order.getManualDiscountAmount());
+
+        return resultVO;
+    }
+
+    // ==========================================
+    // 内部协助组装与清洗方法
+    // ==========================================
+
+    /**
+     * 校验请求并查询会员（收口防重复查询）
+     */
+    private UmsMember validateSettleRequest(SettleAccountsDTO dto) {
+        if (StrUtil.isBlank(dto.getReqId())) throw new BaseException("缺少请求单号");
+        if (dto.getOrderDetail() == null || dto.getOrderDetail().isEmpty()) throw new BaseException("明细为空");
+        for (com.money.dto.OmsOrderDetail.OmsOrderDetailDTO item : dto.getOrderDetail()) {
+            if (item.getGoodsId() == null) throw new BaseException("含无效商品ID");
+            if (item.getQuantity() == null || item.getQuantity() <= 0) throw new BaseException("数量必须大于0");
+        }
+        if (dto.getUsedCouponCount() != null && dto.getUsedCouponCount() < 0) throw new BaseException("券数量不可为负");
+        if (dto.getManualDiscountAmount() != null && dto.getManualDiscountAmount().compareTo(BigDecimal.ZERO) < 0) throw new BaseException("手工优惠不可为负");
+        if (dto.getPayments() == null || dto.getPayments().isEmpty()) throw new BaseException("支付明细为空");
+
+        UmsMember verifiedMember = null;
+        if (dto.getMember() != null) {
+            verifiedMember = umsMemberService.getById(dto.getMember());
+            if (verifiedMember == null) throw new BaseException("【风控拦截】未找到对应的会员实体信息");
+        }
+
+        boolean hasValid = false;
+        for (SettleAccountsDTO.PaymentItem p : dto.getPayments()) {
+            if (StrUtil.isBlank(p.getPayMethodCode())) throw new BaseException("缺少支付编码");
+            if (p.getPayAmount() != null && p.getPayAmount().compareTo(BigDecimal.ZERO) < 0) throw new BaseException("支付金额不可为负");
+            if (p.getPayAmount() != null && p.getPayAmount().compareTo(BigDecimal.ZERO) > 0) hasValid = true;
+
+            PayMethodEnum methodEnum = PayMethodEnum.fromCode(p.getPayMethodCode());
+            if (methodEnum == null) throw new BaseException("【风控拦截】不支持的未知支付方式: " + p.getPayMethodCode());
+
+            // 🌟 任务 13：正反盲防，非聚合坚决不允许带 tag
+            if (methodEnum == PayMethodEnum.AGGREGATE && StrUtil.isBlank(p.getPayTag())) {
+                throw new BaseException("【风控拦截】聚合支付(AGGREGATE)必须明确具体的渠道标签(如 WECHAT)");
+            }
+            if (methodEnum != PayMethodEnum.AGGREGATE && StrUtil.isNotBlank(p.getPayTag())) {
+                throw new BaseException("【风控拦截】非聚合支付不允许传递附加渠道标签");
+            }
+
+            if (methodEnum.isAsset() && verifiedMember == null) {
+                throw new BaseException("【风控拦截】非会员禁用会员资产类支付");
+            }
+        }
+        if (!hasValid) throw new BaseException("请录入有效支付金额");
+
+        return verifiedMember;
+    }
+
+    private SettleTrialResVO executeTrial(SettleAccountsDTO dto) {
         SettleTrialReqDTO trialReq = new SettleTrialReqDTO();
         trialReq.setMember(dto.getMember());
         trialReq.setUsedCouponRuleId(dto.getUsedCouponRuleId());
         trialReq.setUsedCouponCount(dto.getUsedCouponCount());
         trialReq.setWaiveCoupon(dto.getWaiveCoupon());
         trialReq.setManualDiscountAmount(dto.getManualDiscountAmount());
-        if (dto.getOrderDetail() != null) {
-            trialReq.setItems(dto.getOrderDetail().stream().map(d -> {
-                SettleTrialReqDTO.TrialItem item = new SettleTrialReqDTO.TrialItem();
-                item.setGoodsId(d.getGoodsId());
-                item.setQuantity(d.getQuantity());
-                return item;
-            }).collect(Collectors.toList()));
+        trialReq.setItems(dto.getOrderDetail().stream().map(d -> {
+            SettleTrialReqDTO.TrialItem item = new SettleTrialReqDTO.TrialItem();
+            item.setGoodsId(d.getGoodsId());
+            item.setQuantity(d.getQuantity());
+            return item;
+        }).collect(Collectors.toList()));
+        return posCalculationEngine.calculate(trialReq);
+    }
+
+    private NormalizedPaymentResult normalizePayments(List<SettleAccountsDTO.PaymentItem> rawPayments, BigDecimal finalPayAmount) {
+        NormalizedPaymentResult result = new NormalizedPaymentResult();
+        for (SettleAccountsDTO.PaymentItem p : rawPayments) {
+            if (p.getPayAmount() == null || p.getPayAmount().compareTo(BigDecimal.ZERO) <= 0) continue;
+
+            BigDecimal itemPay = p.getPayAmount().setScale(2, RoundingMode.HALF_UP);
+            PayMethodEnum methodEnum = PayMethodEnum.fromCode(p.getPayMethodCode());
+            boolean isCash = methodEnum.isAllowChange();
+
+            NormalizedPaymentResult.StandardPayItem sItem = new NormalizedPaymentResult.StandardPayItem();
+            sItem.setMethodCode(p.getPayMethodCode());
+            sItem.setMethodName(p.getPayMethodName());
+            sItem.setPayTag(p.getPayTag());
+            sItem.setCash(isCash);
+            sItem.setOriginalAmount(itemPay);
+            sItem.setNetAmount(itemPay);
+            result.getValidItems().add(sItem);
+
+            result.setTotalPaid(result.getTotalPaid().add(itemPay));
+            if (isCash) result.setCashPaid(result.getCashPaid().add(itemPay));
+            else result.setNonCashPaid(result.getNonCashPaid().add(itemPay));
         }
 
-        SettleTrialResVO trialRes = posCalculationEngine.calculate(trialReq);
+        if (result.getTotalPaid().compareTo(finalPayAmount) < 0) throw new BaseException(String.format("实付不足. 应收: %s", finalPayAmount));
+        if (result.getNonCashPaid().compareTo(finalPayAmount) > 0) throw new BaseException("非现金支付总额超限，禁止套现！");
 
-        // 3. 🛡️ 校验账务红线
-        BigDecimal totalPaid = BigDecimal.ZERO;
-        if (dto.getPayments() != null) {
-            totalPaid = dto.getPayments().stream()
-                    .filter(p -> p.getPayAmount() != null)
-                    .map(SettleAccountsDTO.PaymentItem::getPayAmount)
-                    .reduce(BigDecimal.ZERO, BigDecimal::add)
-                    .setScale(2, RoundingMode.HALF_UP);
+        result.setChangeAmount(result.getTotalPaid().subtract(finalPayAmount));
+        result.setNetReceived(result.getTotalPaid().subtract(result.getChangeAmount()));
+
+        BigDecimal remainChange = result.getChangeAmount();
+        for (NormalizedPaymentResult.StandardPayItem item : result.getValidItems()) {
+            if (item.isCash() && remainChange.compareTo(BigDecimal.ZERO) > 0) {
+                if (item.getNetAmount().compareTo(remainChange) >= 0) {
+                    item.setNetAmount(item.getNetAmount().subtract(remainChange));
+                    remainChange = BigDecimal.ZERO;
+                } else {
+                    remainChange = remainChange.subtract(item.getNetAmount());
+                    item.setNetAmount(BigDecimal.ZERO);
+                }
+            }
+            item.setNetAmount(item.getNetAmount().setScale(2, RoundingMode.HALF_UP));
+            item.setOriginalAmount(item.getOriginalAmount().setScale(2, RoundingMode.HALF_UP));
         }
 
-        if (trialRes.getFinalPayAmount().compareTo(totalPaid) != 0) {
-            log.warn("【POS对账熔断】单号: {}, 后端应收: {}, 前端实收: {}", dto.getReqId(), trialRes.getFinalPayAmount(), totalPaid);
-            throw new BaseException(String.format("【金额核对异常】系统计算应收(￥%s)与输入实付总和(￥%s)不匹配。建议：请清空支付金额后重新输入。",
-                    trialRes.getFinalPayAmount().toPlainString(), totalPaid.toPlainString()));
-        }
+        // 🌟 任务 17：最终结果在此统一打上精度封印，严防末端漂移
+        result.setTotalPaid(result.getTotalPaid().setScale(2, RoundingMode.HALF_UP));
+        result.setCashPaid(result.getCashPaid().setScale(2, RoundingMode.HALF_UP));
+        result.setNonCashPaid(result.getNonCashPaid().setScale(2, RoundingMode.HALF_UP));
+        result.setChangeAmount(result.getChangeAmount().setScale(2, RoundingMode.HALF_UP));
+        result.setNetReceived(result.getNetReceived().setScale(2, RoundingMode.HALF_UP));
 
-        // 获取商品基底信息 (用于落库明细和扣库存)
-        List<Long> goodsIds = trialReq.getItems().stream().map(SettleTrialReqDTO.TrialItem::getGoodsId).collect(Collectors.toList());
-        Map<Long, GmsGoods> goodsMap = gmsGoodsService.listByIds(goodsIds).stream().collect(Collectors.toMap(GmsGoods::getId, g -> g));
+        return result;
+    }
 
-        // 4. 组装主订单落库
+    private OmsOrder assembleOrder(SettleAccountsDTO dto, SettleTrialResVO trialRes, UmsMember verifiedMember) {
         OmsOrder order = new OmsOrder();
         order.setOrderNo(dto.getReqId());
         order.setTotalAmount(trialRes.getTotalAmount());
@@ -221,55 +354,32 @@ public class PosServiceImpl implements PosService {
         order.setUseVoucherAmount(trialRes.getVoucherDeduct());
         order.setManualDiscountAmount(trialRes.getManualDeduct());
         order.setCostAmount(trialRes.getCostAmount());
+
+        // 🌟 任务 16：明确主表金额语义，均代表"本单业务应收"
         order.setPayAmount(trialRes.getFinalPayAmount());
         order.setFinalSalesAmount(trialRes.getFinalPayAmount());
+
         order.setStatus(OrderStatusEnum.PAID.name());
         order.setPaymentTime(LocalDateTime.now());
 
-        UmsMember member = null;
-        if (dto.getMember() != null) {
-            member = umsMemberService.getById(dto.getMember());
-            if (member == null) throw new BaseException("【会员异常】未找到该会员信息。");
+        // 🌟 任务 18：复用已查出的会员实体，不瞎猜
+        if (verifiedMember != null) {
             order.setVip(true);
-            order.setMemberId(member.getId());
-            order.setMember(member.getName());
-            order.setContact(member.getPhone());
-            order.setProvince(member.getProvince());
-            order.setCity(member.getCity());
-            order.setDistrict(member.getDistrict());
-            order.setAddress(member.getAddress());
+            order.setMemberId(verifiedMember.getId());
+            order.setMember(verifiedMember.getName());
+            order.setContact(verifiedMember.getPhone());
         } else {
             order.setVip(false);
         }
-        omsOrderService.save(order);
-
-        // 5. 编排落地附属表
-        List<OmsOrderDetail> orderDetails = saveOrderDetails(trialRes, goodsMap, order.getOrderNo());
-        saveOrderPayments(dto, order.getOrderNo());
-        processInventory(orderDetails, goodsMap, order.getOrderNo());
-
-        // 6. 原子核销营销与资金资产
-        if (order.getVip()) {
-            consumeMarketingAssets(member, dto, trialRes, order.getOrderNo());
-        }
-
-        // 7. 写入大一统结账日志
-        OmsOrderLog orderLog = new OmsOrderLog();
-        orderLog.setOrderId(order.getId());
-        orderLog.setDescription("执行强一致性结算 (计价引擎抽离/账务红线/原子资产防超扣/幂等防护 V2.0)");
-        omsOrderLogService.saveBatch(ListUtil.of(orderLog));
-
-        log.info("【POS结算成功】单号: {}, 实收: {}", order.getOrderNo(), order.getPayAmount());
-        return BeanMapUtil.to(order, OmsOrderVO::new);
+        return order;
     }
 
-    // ==========================================
-    // 内部协助方法：仅负责数据库原子化操作
-    // ==========================================
     private List<OmsOrderDetail> saveOrderDetails(SettleTrialResVO trialRes, Map<Long, GmsGoods> goodsMap, String orderNo) {
         List<OmsOrderDetail> details = new ArrayList<>();
         for (SettleTrialResVO.ItemRes itemRes : trialRes.getItems()) {
             GmsGoods goods = goodsMap.get(itemRes.getGoodsId());
+            if (goods == null) throw new BaseException("【异常】明细商品丢失，ID:" + itemRes.getGoodsId());
+
             OmsOrderDetail detail = new OmsOrderDetail();
             detail.setOrderNo(orderNo);
             detail.setStatus(OrderStatusEnum.PAID.name());
@@ -281,136 +391,26 @@ public class PosServiceImpl implements PosService {
             detail.setPurchasePrice(goods.getPurchasePrice() == null ? BigDecimal.ZERO : goods.getPurchasePrice());
             detail.setVipPrice(goods.getVipPrice());
             detail.setQuantity(itemRes.getQuantity());
-            // 🌟 直接信任试算引擎算出的实价和分摊的券
             detail.setGoodsPrice(itemRes.getRealPrice());
-            detail.setCoupon(itemRes.getCouponDeduct());
+            detail.setCoupon(itemRes.getCouponDeduct() != null ? itemRes.getCouponDeduct() : BigDecimal.ZERO);
             details.add(detail);
         }
         omsOrderDetailService.saveBatch(details);
         return details;
     }
 
-    private void saveOrderPayments(SettleAccountsDTO dto, String orderNo) {
-        if (dto.getPayments() == null) return;
+    private void saveNormalizedPayments(NormalizedPaymentResult payResult, String orderNo) {
         LocalDateTime now = LocalDateTime.now();
-        for (SettleAccountsDTO.PaymentItem item : dto.getPayments()) {
-            if (item.getPayAmount() == null || item.getPayAmount().compareTo(BigDecimal.ZERO) == 0) continue;
+        for (NormalizedPaymentResult.StandardPayItem item : payResult.getValidItems()) {
+            if (item.getNetAmount().compareTo(BigDecimal.ZERO) == 0) continue;
             OmsOrderPay payRecord = new OmsOrderPay();
             payRecord.setOrderNo(orderNo);
-            payRecord.setPayMethodCode(item.getPayMethodCode());
-            payRecord.setPayMethodName(item.getPayMethodName());
+            payRecord.setPayMethodCode(item.getMethodCode());
+            payRecord.setPayMethodName(item.getMethodName());
             payRecord.setPayTag(item.getPayTag());
-            payRecord.setPayAmount(item.getPayAmount());
+            payRecord.setPayAmount(item.getNetAmount());
             payRecord.setCreateTime(now);
             omsOrderPayMapper.insert(payRecord);
         }
-    }
-
-    private void processInventory(List<OmsOrderDetail> orderDetails, Map<Long, GmsGoods> goodsMap, String orderNo) {
-        LocalDateTime now = LocalDateTime.now();
-        List<Long> comboGoodsIds = goodsMap.values().stream().filter(g -> g.getIsCombo() != null && g.getIsCombo() == 1).map(GmsGoods::getId).collect(Collectors.toList());
-        Map<Long, List<GmsGoodsCombo>> comboMap = new HashMap<>();
-
-        if (!comboGoodsIds.isEmpty()) {
-            List<GmsGoodsCombo> allCombos = gmsGoodsComboMapper.selectList(new LambdaQueryWrapper<GmsGoodsCombo>().in(GmsGoodsCombo::getComboGoodsId, comboGoodsIds));
-            comboMap = allCombos.stream().collect(Collectors.groupingBy(GmsGoodsCombo::getComboGoodsId));
-        }
-
-        for (OmsOrderDetail detail : orderDetails) {
-            GmsGoods goods = goodsMap.get(detail.getGoodsId());
-
-            if (goods.getIsCombo() != null && goods.getIsCombo() == 1) {
-                List<GmsGoodsCombo> combos = comboMap.get(goods.getId());
-                if (combos != null && !combos.isEmpty()) {
-                    for (GmsGoodsCombo combo : combos) {
-                        GmsGoods subGoods = gmsGoodsService.getById(combo.getSubGoodsId());
-                        if (subGoods != null) {
-                            int deductQty = detail.getQuantity() * combo.getSubGoodsQty();
-                            int rows = gmsGoodsMapper.deductStockAtomically(subGoods.getId(), new BigDecimal(deductQty));
-                            if (rows == 0) throw new BaseException("【库存不足拦截】套餐子商品「" + subGoods.getName() + "」系统剩余库存不足或发生抢购。");
-                            writeStockLog(subGoods, -deductQty, orderNo, "前台套餐售出联动扣除", now);
-                        }
-                    }
-                }
-            } else {
-                int rows = gmsGoodsMapper.deductStockAtomically(goods.getId(), new BigDecimal(detail.getQuantity()));
-                if (rows == 0) throw new BaseException("【库存不足拦截】商品「" + goods.getName() + "」系统剩余库存不足或发生抢购。");
-                writeStockLog(goods, -detail.getQuantity(), orderNo, "前台智能收银售出", now);
-            }
-        }
-    }
-
-    private void writeStockLog(GmsGoods goods, int changeQty, String orderNo, String remark, LocalDateTime now) {
-        GmsGoods freshGoods = gmsGoodsService.getById(goods.getId());
-        com.money.entity.GmsStockLog stockLog = new com.money.entity.GmsStockLog();
-        stockLog.setGoodsId(freshGoods.getId());
-        stockLog.setGoodsName(freshGoods.getName());
-        stockLog.setGoodsBarcode(freshGoods.getBarcode());
-        stockLog.setType(STOCK_TYPE_SALE);
-        stockLog.setQuantity(changeQty);
-        stockLog.setAfterQuantity(freshGoods.getStock() == null ? 0 : freshGoods.getStock().intValue());
-        stockLog.setOrderNo(orderNo);
-        stockLog.setRemark(remark);
-        stockLog.setCreateTime(now);
-        gmsStockLogMapper.insert(stockLog);
-    }
-
-    private void consumeMarketingAssets(UmsMember member, SettleAccountsDTO dto, SettleTrialResVO trialRes, String orderNo) {
-        LocalDateTime now = LocalDateTime.now();
-
-        // 1. 原子扣减单品券 & 累加消费次数 (调用 UmsMemberService.consume)
-        umsMemberService.consume(member.getId(), trialRes.getFinalPayAmount(), trialRes.getMemberCouponDeduct(), orderNo);
-
-        // 2. 扣减满减券并写券流水
-        if (dto.getUsedCouponRuleId() != null && dto.getUsedCouponCount() != null && dto.getUsedCouponCount() > 0) {
-            List<PosMemberCoupon> availableCoupons = posMemberCouponMapper.selectList(new LambdaQueryWrapper<PosMemberCoupon>()
-                    .eq(PosMemberCoupon::getMemberId, member.getId()).eq(PosMemberCoupon::getRuleId, dto.getUsedCouponRuleId()).eq(PosMemberCoupon::getStatus, COUPON_UNUSED).last("LIMIT " + dto.getUsedCouponCount()));
-
-            if (!availableCoupons.isEmpty()) {
-                List<Long> couponIds = availableCoupons.stream().map(PosMemberCoupon::getId).collect(Collectors.toList());
-                PosMemberCoupon updateCoupon = new PosMemberCoupon();
-                updateCoupon.setStatus(COUPON_USED);
-                updateCoupon.setOrderNo(orderNo);
-                updateCoupon.setUseTime(now);
-                posMemberCouponMapper.update(updateCoupon, new LambdaUpdateWrapper<PosMemberCoupon>().in(PosMemberCoupon::getId, couponIds));
-
-                long remainVouchers = posMemberCouponMapper.selectCount(new LambdaQueryWrapper<PosMemberCoupon>()
-                        .eq(PosMemberCoupon::getMemberId, member.getId()).eq(PosMemberCoupon::getStatus, COUPON_UNUSED));
-
-                UmsMemberLog voucherLog = new UmsMemberLog();
-                voucherLog.setMemberId(member.getId());
-                voucherLog.setMemberName(member.getName());
-                voucherLog.setMemberPhone(member.getPhone());
-                voucherLog.setType(LOG_TYPE_VOUCHER);
-                voucherLog.setOperateType(OPERATE_CONSUME);
-                voucherLog.setAmount(BigDecimal.valueOf(-dto.getUsedCouponCount()));
-                voucherLog.setAfterAmount(BigDecimal.valueOf(remainVouchers));
-                voucherLog.setOrderNo(orderNo);
-
-                PosCouponRule rule = posCouponRuleMapper.selectById(dto.getUsedCouponRuleId());
-                voucherLog.setRemark("核销满减优惠券: " + (rule != null ? rule.getName() : "未知活动"));
-                voucherLog.setCreateTime(now);
-                umsMemberLogMapper.insert(voucherLog);
-            }
-        }
-
-        // 3. 🛡️ 原子扣除余额：计算实际使用了多少余额支付
-        if (dto.getPayments() != null) {
-            BigDecimal balanceCost = dto.getPayments().stream()
-                    .filter(p -> LOG_TYPE_BALANCE.equals(p.getPayMethodCode()) && p.getPayAmount() != null)
-                    .map(SettleAccountsDTO.PaymentItem::getPayAmount)
-                    .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-            if (balanceCost.compareTo(BigDecimal.ZERO) > 0) {
-                // 彻底交还给会员网关执行防超扣 CAS
-                umsMemberService.deductBalance(member.getId(), balanceCost, orderNo, "订单支付扣除会员余额");
-            }
-        }
-
-        // 4. 更新最后访问时间
-        umsMemberService.lambdaUpdate()
-                .set(UmsMember::getLastVisitTime, now)
-                .eq(UmsMember::getId, member.getId())
-                .update();
     }
 }

@@ -1,9 +1,10 @@
 package com.money.controller;
 
 import com.money.dto.OmsOrder.OmsOrderVO;
-import com.money.dto.Pos.PosGoodsVO;
-import com.money.dto.Pos.PosMemberVO;
+import com.money.dto.pos.PosGoodsVO;
+import com.money.dto.pos.PosMemberVO;
 import com.money.dto.pos.SettleAccountsDTO;
+import com.money.dto.pos.SettleResultVO; // 🌟 必须导入这个新创建的 VO
 import com.money.dto.pos.SettleTrialReqDTO;
 import com.money.dto.pos.SettleTrialResVO;
 import com.money.service.PosService;
@@ -43,7 +44,7 @@ public class PosController {
     @Operation(summary = "收款 (正式落库)")
     @PostMapping("/settleAccounts")
     @PreAuthorize("@rbac.hasPermission('pos:cashier')")
-    public OmsOrderVO settleAccounts(@Validated @RequestBody SettleAccountsDTO settleAccountsDTO) {
+    public SettleResultVO settleAccounts(@Validated @RequestBody SettleAccountsDTO settleAccountsDTO) {
         return posService.settleAccounts(settleAccountsDTO);
     }
 

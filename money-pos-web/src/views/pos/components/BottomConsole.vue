@@ -158,7 +158,7 @@ import MemberSmartSearch from '@/components/common/MemberSmartSearch.vue'
 const props = defineProps(['lastOrder', 'currentOrderNo', 'currentTime', 'memberTypesDict', 'suspendCount'])
 const emit = defineEmits(['open-checkout', 'open-drawer', 'clear-cart', 'suspend'])
 
-// 🌟 核心：直接从最强引擎 Store 中抽调计算好的成品变量！
+// 🌟 核心：引入 bindMember 和 clearMember
 const {
     currentMember,
     totalCount,
@@ -166,7 +166,9 @@ const {
     participatingAmount,
     actualCouponUsed,
     addToCart,
-    clearAll
+    clearAll,
+    bindMember,
+    clearMember
 } = usePosStore()
 
 const scanKeyword = ref('')
@@ -184,15 +186,17 @@ const openMemberDialog = () => { bindMemberId.value = null; memberDialogVisible.
 const focusMemberSearch = () => { memberSearchComp.value?.focus() }
 const handleMemberDialogClosed = () => { bindMemberId.value = null; focusInput(); }
 
+// 🌟 使用 bindMember 动作，确保立刻触发试算
 const handleMemberBind = (member) => {
-    currentMember.value = member
+    bindMember(member)
     memberDialogVisible.value = false
     ElMessage.success(`已绑定会员：${member.name}`)
     nextTick(() => focusInput())
 }
 
+// 🌟 使用 clearMember 动作，确保立刻触发试算
 const handleClearMember = () => {
-    currentMember.value = {}
+    clearMember()
     ElMessage.info('已清除当前会员绑定')
     nextTick(() => focusInput())
 }
@@ -239,7 +243,7 @@ const querySearchAsync = async (queryString, cb) => {
 }
 
 const handleSelect = (item) => {
-    addToCart(item); // 🌟 统一收口到 Store 的 addToCart 动作
+    addToCart(item);
     resetScanner();
 }
 

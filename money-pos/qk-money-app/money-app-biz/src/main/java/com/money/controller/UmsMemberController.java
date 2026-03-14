@@ -97,7 +97,7 @@ public class UmsMemberController {
 
     @GetMapping("/pos-search")
     @Operation(summary = "POS搜会员(手机号/会员码/姓名模糊联想)")
-    public java.util.List<com.money.dto.Pos.PosMemberVO> posSearchMember(@RequestParam String keyword) {
+    public java.util.List<com.money.dto.pos.PosMemberVO> posSearchMember(@RequestParam String keyword) {
         return posService.listMember(keyword);
     }
 
