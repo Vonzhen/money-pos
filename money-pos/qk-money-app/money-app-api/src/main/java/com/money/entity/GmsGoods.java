@@ -48,8 +48,18 @@ public class GmsGoods extends BaseEntity {
     @Schema(description="描述")
     private String description;
 
-    @Schema(description="进价")
+    @Schema(description="【遗留字段】进价 (建议后续逐步废弃，改用 avgCostPrice)")
     private BigDecimal purchasePrice;
+
+    // ==========================================
+    // 🌟 新增：进销存财务大一统核心底座字段
+    // ==========================================
+    @Schema(description="加权平均成本价 (全系统的成本取值基准)")
+    private BigDecimal avgCostPrice;
+
+    @Schema(description="最后一次采购价 (仅供下次采购入库时作参考)")
+    private BigDecimal lastPurchasePrice;
+    // ==========================================
 
     @Schema(description="售价")
     private BigDecimal salePrice;
@@ -80,7 +90,6 @@ public class GmsGoods extends BaseEntity {
     @io.swagger.v3.oas.annotations.media.Schema(description = "拼音助记码")
     private String mnemonicCode;
 
-    // 🌟 补上这个缺失的套餐身份牌
     @io.swagger.v3.oas.annotations.media.Schema(description = "是否为组合套餐(0:否, 1:是)")
     private Integer isCombo;
 }

@@ -1,6 +1,7 @@
 package com.money.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.money.constant.BizErrorStatus;
 import com.money.dto.pos.SettleTrialReqDTO;
 import com.money.dto.pos.SettleTrialResVO;
 import com.money.entity.GmsGoods;
@@ -69,12 +70,24 @@ public class PosCalculationEngine {
                 throw new BaseException("【试算拦截】发现不存在或已下架的商品ID: " + reqItem.getGoodsId());
             }
 
+            // 🌟🌟🌟 修复版：带有 {0} 和 {1} 的库存前置拦截 🌟🌟🌟
+            long currentStock = goods.getStock() != null ? goods.getStock() : 0L;
+            if (reqItem.getQuantity() > currentStock) {
+                log.warn("【计价引擎拦截】商品 {} 缺货。请求数量: {}, 实际库存: {}", goods.getName(), reqItem.getQuantity(), currentStock);
+
+                throw new BaseException(BizErrorStatus.STOCK_NOT_ENOUGH,
+                        "结算中断！商品【{0}】库存不足，当前仅剩 {1} 件，请修改购物车数量后再结账。",
+                        goods.getName(), currentStock).withData(currentStock);
+            }
+            // 🌟🌟🌟 ==================================== 🌟🌟🌟
+
             BigDecimal qty = new BigDecimal(reqItem.getQuantity());
 
             BigDecimal unitOriginalPrice = goods.getSalePrice() != null ? goods.getSalePrice() : BigDecimal.ZERO;
             BigDecimal unitRealPrice = unitOriginalPrice;
             BigDecimal unitCoupon = BigDecimal.ZERO;
-            BigDecimal unitCost = goods.getPurchasePrice() != null ? goods.getPurchasePrice() : BigDecimal.ZERO;
+            BigDecimal unitCost = goods.getAvgCostPrice() != null ? goods.getAvgCostPrice() :
+                    (goods.getPurchasePrice() != null ? goods.getPurchasePrice() : BigDecimal.ZERO);
 
             String brandKey = goods.getBrandId() != null ? String.valueOf(goods.getBrandId()) : "";
             String levelCode = memberBrandLevels.get(brandKey);
@@ -85,7 +98,6 @@ public class PosCalculationEngine {
                         if (sp.getMemberPrice() == null || sp.getMemberPrice().compareTo(BigDecimal.ZERO) < 0) {
                             throw new BaseException("商品「" + goods.getName() + "」的会员价配置异常，请联系管理员核实");
                         }
-                        // 🌟 会员价永远是应收的基石
                         unitRealPrice = sp.getMemberPrice();
                         if (!Boolean.TRUE.equals(req.getWaiveCoupon()) && sp.getMemberCoupon() != null) {
                             unitCoupon = sp.getMemberCoupon();
@@ -125,20 +137,21 @@ public class PosCalculationEngine {
 
             BigDecimal requiredAmount = rule.getThresholdAmount().multiply(new BigDecimal(req.getUsedCouponCount()));
             if (res.getParticipatingAmount().compareTo(requiredAmount) < 0) {
-                throw new BaseException(String.format("【券风控拦截】参与满减活动商品总额未达到%s张券的门槛要求", req.getUsedCouponCount()));
+                // 🌟🌟🌟 修复版：带有 {0} 的满减券风控拦截
+                throw new BaseException(BizErrorStatus.COUPON_NOT_ENOUGH,
+                        "【券风控拦截】参与满减活动商品总额未达到使用 {0} 张券的门槛！",
+                        req.getUsedCouponCount());
             }
 
             BigDecimal voucherDeduct = rule.getDiscountAmount().multiply(new BigDecimal(req.getUsedCouponCount()));
             res.setVoucherDeduct(voucherDeduct);
         }
 
-        // 🌟 修正关键：手工优惠的上限，不能减去 MemberCouponDeduct，因为它不属于现金抵减！
         BigDecimal maxAllowedManual = res.getTotalAmount().subtract(res.getVoucherDeduct());
         if (res.getManualDeduct().compareTo(maxAllowedManual) > 0) {
-            throw new BaseException("【风控拦截】手工优惠额超过了本单可优惠上限");
+            throw new BaseException(BizErrorStatus.POS_MANUAL_DISCOUNT_EXCEED, "【风控拦截】手工优惠额超过了本单可优惠上限");
         }
 
-        // 🌟 修正关键：最终真理应收。决不减去会员单品券！会员单品券只作为资产并行扣除！
         BigDecimal finalPay = res.getTotalAmount()
                 .subtract(res.getVoucherDeduct())
                 .subtract(res.getManualDeduct());

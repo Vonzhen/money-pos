@@ -60,8 +60,6 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
 
     @Override
     public OrderCountVO countOrderAndSales(LocalDateTime startTime, LocalDateTime endTime) {
-        // 🌟 万源归宗：彻底废弃 Java 内存循环统计！
-        // 直接调用大盘专属的 Mapper 接口获取原子数据，确保列表顶部统计与报表大屏一分钱都不差。
         List<AnalysisAtomicDataDTO> stats = this.getBaseMapper().getPeriodAtomicStats(startTime, endTime, "DAILY");
 
         OrderCountVO vo = new OrderCountVO();
@@ -69,7 +67,6 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
         BigDecimal totalSales = BigDecimal.ZERO;
         BigDecimal totalCost = BigDecimal.ZERO;
 
-        // 这里的 stats 通常只有 1 条（如果是查当天），或者几天的数据。
         for (AnalysisAtomicDataDTO stat : stats) {
             totalOrder += stat.getOrderCount();
             totalSales = MoneyUtil.add(totalSales, stat.getNetSalesAmount());
@@ -80,7 +77,6 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
         vo.setTotalSales(totalSales);
         vo.setSaleCount(totalSales);
         vo.setCostCount(totalCost);
-        // 使用 MoneyUtil 扣减，规避精度丢失
         vo.setProfit(MoneyUtil.subtract(totalSales, totalCost));
 
         return vo;
@@ -89,16 +85,18 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
     @Override
     public OrderDetailVO getOrderDetail(Long id) {
         OmsOrder order = this.getById(id);
-        if (order == null) throw new BaseException(BizErrorStatus.POS_SETTLE_REQ_EMPTY, "未找到对应的订单记录");
+        // 🌟 异常升维：精准定位
+        if (order == null) throw new BaseException(BizErrorStatus.POS_SETTLE_REQ_EMPTY, "查询失败：未找到系统ID为【{}】的订单记录", id);
         return assembleOrderDetail(order);
     }
 
     @Override
     public OrderDetailVO getOrderDetailByNo(String orderNo) {
-        if (StrUtil.isBlank(orderNo)) throw new BaseException("订单编号不能为空");
+        if (StrUtil.isBlank(orderNo)) throw new BaseException("查询失败：订单编号不能为空");
 
         OmsOrder order = this.lambdaQuery().eq(OmsOrder::getOrderNo, orderNo).one();
-        if (order == null) throw new BaseException(BizErrorStatus.POS_SETTLE_REQ_EMPTY, "未找到对应的订单记录：" + orderNo);
+        // 🌟 异常升维：带入业务参数
+        if (order == null) throw new BaseException(BizErrorStatus.POS_SETTLE_REQ_EMPTY, "查询失败：未找到单号为【{}】的订单记录", orderNo);
 
         return assembleOrderDetail(order);
     }
@@ -184,7 +182,8 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
                 .in(OmsOrder::getStatus, Arrays.asList(OrderStatusEnum.PAID.name(), "PARTIAL", "REFUNDED"))
                 .update();
 
-        if (!lockSuccess) throw new BaseException("订单当前状态不可退款，请勿重复操作！");
+        // 🌟 异常升维：防重复提交大白话
+        if (!lockSuccess) throw new BaseException(BizErrorStatus.POS_ORDER_DUPLICATED, "单号【{}】当前状态不可退款，可能已完成退款，请刷新列表确认！", orderNo);
 
         OmsOrder order = this.lambdaQuery().eq(OmsOrder::getOrderNo, orderNo).one();
         List<OmsOrderDetail> details = omsOrderDetailService.list(new LambdaQueryWrapper<OmsOrderDetail>().eq(OmsOrderDetail::getOrderNo, order.getOrderNo()));
@@ -201,7 +200,6 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
             }
         }
 
-        // 🌟 新增：整单退款审计日志
         OmsOrderLog orderLog = new OmsOrderLog();
         orderLog.setOrderId(order.getId());
         orderLog.setDescription("⚠️ 进行了【整单退款】操作，全额退回资金与库存");
@@ -220,16 +218,14 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
         if (dto.getReturnQty() <= 0) throw new BaseException("退货数量必须大于0");
 
         int returnQty = dto.getReturnQty();
-
-        // 1. 兵工厂原子更新明细
         int affectedRows = ((OmsOrderDetailMapper)omsOrderDetailService.getBaseMapper())
                 .refundGoodsAtomically(dto.getDetailId(), returnQty);
 
+        // 🌟 异常升维：精准并发拦截反馈
         if (affectedRows == 0) {
-            throw new BaseException("操作失败，该商品剩余可退数量不足或并发冲突！");
+            throw new BaseException(BizErrorStatus.STOCK_CALC_OVERFLOW, "操作失败：该商品剩余可退数量不足，或已被其他收银台处理，请刷新订单！");
         }
 
-        // 主表状态设为 'PARTIAL' (部分退款)
         this.lambdaUpdate()
                 .set(OmsOrder::getStatus, "PARTIAL")
                 .eq(OmsOrder::getOrderNo, dto.getOrderNo())
@@ -239,16 +235,13 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
         OmsOrderDetail detail = omsOrderDetailService.getById(dto.getDetailId());
         OmsOrder order = this.lambdaQuery().eq(OmsOrder::getOrderNo, dto.getOrderNo()).one();
 
-        // 2. 写入审计日志
         OmsOrderLog orderLog = new OmsOrderLog();
         orderLog.setOrderId(order.getId());
         orderLog.setDescription(String.format("🔄 进行了【单品退货】商品：%s，数量：%d", detail.getGoodsName(), returnQty));
         omsOrderLogService.save(orderLog);
 
-        // 3. 归还库存
         gmsGoodsMapper.addStockAtomically(detail.getGoodsId(), new BigDecimal(returnQty));
 
-        // 4. 资产返还
         if (order.getVip() != null && order.getVip()) {
             BigDecimal goodsPrice = Optional.ofNullable(detail.getGoodsPrice()).orElse(BigDecimal.ZERO);
             BigDecimal coupon = Optional.ofNullable(detail.getCoupon()).orElse(BigDecimal.ZERO);

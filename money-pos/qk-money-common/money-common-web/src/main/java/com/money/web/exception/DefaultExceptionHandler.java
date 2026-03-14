@@ -1,6 +1,5 @@
 package com.money.web.exception;
 
-
 import com.money.web.i18n.I18nSupport;
 import com.money.web.response.R;
 import lombok.extern.slf4j.Slf4j;
@@ -20,7 +19,7 @@ import javax.validation.ValidationException;
 import java.util.Iterator;
 
 /**
- * 默认全局异常处理器
+ * 默认全局异常处理器 (🌟 已接入大一统数据透传引擎)
  *
  * @author : money
  * @since : 1.0.0
@@ -44,18 +43,29 @@ public class DefaultExceptionHandler {
     }
 
     /**
-     * 处理业务异常
+     * 🌟 处理业务异常 (升级版：支持向前端透传具体金额/库存等数据)
+     * 将泛型改为 Object，以兼容各种类型的数据负荷
      *
-     * @param e e
-     * @return {@link R}<{@link String}>
+     * @param e 抛出的业务异常
+     * @return {@link R}<{@link Object}>
      */
     @ExceptionHandler(BaseException.class)
-    public R<String> handleBusinessException(BaseException e) {
+    public R<Object> handleBusinessException(BaseException e) {
         log.warn("业务异常：{}", e.getMessage());
+
+        R<Object> result;
         if (e.getErrorCode() == 0) {
-            return R.fail(e.getMessage());
+            result = R.fail(e.getMessage());
+        } else {
+            result = R.fail(e.getErrorCode(), e.getMessage());
         }
-        return R.fail(e.getErrorCode(), e.getMessage());
+
+        // 🌟 核心开关：如果异常里夹带了“数据负荷”，把它装进响应体里发给前端
+        if (e.getData() != null) {
+            result.setData(e.getData());
+        }
+
+        return result;
     }
 
     /**
@@ -125,5 +135,4 @@ public class DefaultExceptionHandler {
         log.warn("参数异常：{}", message);
         return message;
     }
-
 }

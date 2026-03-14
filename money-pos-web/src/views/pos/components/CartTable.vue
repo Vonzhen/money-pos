@@ -1,6 +1,6 @@
 <template>
     <el-table
-        :data="cartList"
+        :data="enrichedCartList"
         height="100%"
         stripe
         border
@@ -24,11 +24,8 @@
 
         <el-table-column label="会员价" width="120" align="right">
             <template #default="{ row }">
-                <span v-if="getLevelCode(row.brandId) && getTrialItemInfo(row.id) && currentMember.id" class="text-blue-600 font-bold">
-                    ￥{{ getTrialItemInfo(row.id).realPrice.toFixed(2) }}
-                </span>
-                <span v-else-if="getLevelCode(row.brandId) && getMemberPrice(row) !== null" class="text-blue-600 font-bold">
-                    ￥{{ getMemberPrice(row)?.toFixed(2) }}
+                <span v-if="getLevelCode(row.brandId)" class="text-blue-600 font-bold">
+                    ￥{{ row.displayPrice?.toFixed(2) }}
                 </span>
                 <span v-else class="text-gray-400">-</span>
             </template>
@@ -36,25 +33,39 @@
 
         <el-table-column label="会员券" width="120" align="right">
             <template #default="{ row }">
-                <span v-if="getLevelCode(row.brandId) && getTrialItemInfo(row.id) && getTrialItemInfo(row.id).couponDeduct > 0" class="text-green-600 font-bold">
-                    ￥{{ (getTrialItemInfo(row.id).couponDeduct / (row.qty || 1)).toFixed(2) }}
-                </span>
-                <span v-else-if="getLevelCode(row.brandId) && getMemberCoupon(row) > 0" class="text-green-600 font-bold">
-                    ￥{{ getMemberCoupon(row)?.toFixed(2) }}
+                <span v-if="getLevelCode(row.brandId) && row.displayCouponDeduct > 0" class="text-green-600 font-bold">
+                    ￥{{ (row.displayCouponDeduct / row.qty).toFixed(2) }}
                 </span>
                 <span v-else class="text-gray-400">-</span>
             </template>
         </el-table-column>
 
         <el-table-column label="数量" width="160" align="center">
-            <template #default="{ row }">
-                <el-input-number v-model="row.qty" :min="1" :max="9999" size="small" class="!w-28" @change="runTrial" />
+            <template #default="{ row, $index }">
+                <el-input-number
+                    :model-value="row.qty"
+                    :min="1" :max="9999" size="small" class="!w-28"
+                    @change="(val) => handleQtyChange($index, val)"
+                />
             </template>
         </el-table-column>
 
         <el-table-column label="小计" width="160" align="right">
             <template #default="{ row }">
-                <span class="text-red-600 font-bold text-lg">￥{{ getDisplaySubtotal(row).toFixed(2) }}</span>
+                <span
+                    class="text-red-600 font-bold text-lg transition-opacity duration-300"
+                    :class="{ 'opacity-40': row.isPending }"
+                >
+                    ￥{{ row.displaySubtotal?.toFixed(2) }}
+                </span>
+            </template>
+        </el-table-column>
+
+        <el-table-column label="库存" width="100" align="center">
+            <template #default="{ row }">
+                <span :class="{'text-red-600 font-bold': row.qty > (row.stock || 0), 'text-gray-600': row.qty <= (row.stock || 0)}">
+                    {{ row.stock !== undefined ? row.stock : '-' }}
+                </span>
             </template>
         </el-table-column>
 
@@ -69,32 +80,17 @@
 <script setup>
 import { usePosStore } from '../hooks/usePosStore'
 
-const { cartList, currentMember, removeItem, runTrial, getTrialItemInfo } = usePosStore()
+const { cartList, enrichedCartList, currentMember, removeItem, runTrial } = usePosStore()
 
-// 🌟 根据当前会员和商品品牌，检查是否有特权等级
+// 🌟 原汁原味恢复：保留判断是否有会员特权的逻辑
 const getLevelCode = (brandId) => {
     if (!currentMember.value?.id || !brandId) return null;
     return currentMember.value.brandLevels?.[String(brandId)] || null;
 }
 
-const getMemberPrice = (row) => {
-    const code = getLevelCode(row.brandId);
-    if (code && row.levelPrices && row.levelPrices[code] != null) return row.levelPrices[code];
-    return null;
-}
-
-const getMemberCoupon = (row) => {
-    const code = getLevelCode(row.brandId);
-    if (code && row.levelCoupons && row.levelCoupons[code] != null) return row.levelCoupons[code];
-    return 0;
-}
-
-const getDisplaySubtotal = (row) => {
-    const trialInfo = getTrialItemInfo(row.id);
-    if (trialInfo && trialInfo.subTotal !== undefined) {
-        return trialInfo.subTotal;
-    }
-    const activePrice = getMemberPrice(row) !== null ? getMemberPrice(row) : (row.salePrice || 0);
-    return activePrice * (row.qty || 1);
+// 🌟 极速响应枢纽：控制数据流向，立即触发前端计算并防抖请求后端
+const handleQtyChange = (index, newVal) => {
+    cartList.value[index].qty = newVal;
+    runTrial();
 }
 </script>

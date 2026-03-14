@@ -7,6 +7,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.money.constant.BizErrorStatus;
 import com.money.web.exception.BaseException;
 import com.money.web.vo.PageVO;
 import com.money.dto.UmsMember.UmsMemberDTO;
@@ -44,7 +45,7 @@ import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
-@Slf4j // 🌟 引入日志
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional(rollbackFor = Exception.class)
@@ -177,7 +178,7 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
 
     @Override
     public void batchIssueVoucher(List<Long> memberIds, Long ruleId, Integer quantity) {
-        if (memberIds == null || memberIds.isEmpty() || ruleId == null || quantity == null || quantity <= 0) throw new BaseException("发券参数错误");
+        if (memberIds == null || memberIds.isEmpty() || ruleId == null || quantity == null || quantity <= 0) throw new BaseException("批量发券参数异常，请核对后再试");
         LocalDateTime now = LocalDateTime.now();
 
         List<PosMemberCoupon> coupons = new ArrayList<>(memberIds.size() * quantity);
@@ -229,10 +230,6 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
         this.lambdaUpdate().set(UmsMember::getDeleted, true).in(UmsMember::getId, ids).update();
     }
 
-    // ==========================================
-    // 🌟 核心重构区域：资产核销网关
-    // ==========================================
-
     @Override
     public void consume(Long id, BigDecimal amount, BigDecimal couponAmount, String orderNo) {
         LambdaUpdateWrapper<UmsMember> updateWrapper = new LambdaUpdateWrapper<UmsMember>()
@@ -240,20 +237,27 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
                 .setSql("consume_times = consume_times + 1")
                 .eq(UmsMember::getId, id);
 
-        // 如果涉及扣券，加入 CAS 防超扣条件
         if (couponAmount != null && couponAmount.compareTo(BigDecimal.ZERO) > 0) {
             updateWrapper.setSql("consume_coupon = consume_coupon + " + couponAmount)
                     .setSql("coupon = coupon - " + couponAmount)
-                    .ge(UmsMember::getCoupon, couponAmount); // 🔒 核心锁：余券必须大于等于扣减额
+                    .ge(UmsMember::getCoupon, couponAmount);
         }
 
         boolean success = this.update(updateWrapper);
+
         if (!success) {
-            log.warn("【POS会员券扣减熔断】单号: {}, 会员ID: {}, 尝试扣除券额: {}", orderNo, id, couponAmount);
-            throw new BaseException("【会员券扣减失败】该会员账户内的会员券余额不足，或状态异常。建议：请刷新会员信息后重试。");
+            UmsMember member = this.getById(id);
+            BigDecimal currentCoupon = member != null && member.getCoupon() != null ? member.getCoupon() : BigDecimal.ZERO;
+            BigDecimal lackCoupon = couponAmount.subtract(currentCoupon);
+
+            log.warn("【POS会员券扣减熔断】单号: {}, 会员ID: {}, 需扣: {}, 仅剩: {}", orderNo, id, couponAmount, currentCoupon);
+
+            // 🌟🌟🌟 修复版：带编号的白话文 🌟🌟🌟
+            throw new BaseException(BizErrorStatus.COUPON_NOT_ENOUGH,
+                    "订单抵扣失败！当前会员券余额仅剩 {0} 元，本次结账需抵扣 {1} 元，缺口为 {2} 元。建议取消使用券或刷新会员信息。",
+                    currentCoupon, couponAmount, lackCoupon).withData(lackCoupon);
         }
 
-        // 写券消耗日志
         if (couponAmount != null && couponAmount.compareTo(BigDecimal.ZERO) > 0) {
             UmsMember freshMember = this.getById(id);
             UmsMemberLog couponLog = new UmsMemberLog();
@@ -278,15 +282,22 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
         boolean success = this.lambdaUpdate()
                 .setSql("balance = balance - " + amount)
                 .eq(UmsMember::getId, memberId)
-                .ge(UmsMember::getBalance, amount) // 🔒 核心锁：余额必须大于等于扣减额
+                .ge(UmsMember::getBalance, amount)
                 .update();
 
         if (!success) {
-            log.warn("【POS余额扣减熔断】单号: {}, 会员ID: {}, 尝试扣除余额: {}", orderNo, memberId, amount);
-            throw new BaseException("【余额扣款失败】该会员的实际余额不足以支付本次金额。建议：请顾客充值或更换为微信/支付宝付款。");
+            UmsMember member = this.getById(memberId);
+            BigDecimal currentBalance = member != null && member.getBalance() != null ? member.getBalance() : BigDecimal.ZERO;
+            BigDecimal lackAmount = amount.subtract(currentBalance);
+
+            log.warn("【POS余额扣减熔断】单号: {}, 会员ID: {}, 需扣: {}, 仅剩: {}", orderNo, memberId, amount, currentBalance);
+
+            // 🌟🌟🌟 修复版：带编号的白话文 🌟🌟🌟
+            throw new BaseException(BizErrorStatus.BALANCE_INSUFFICIENT,
+                    "余额扣款失败！会员当前账户余额仅剩 {0} 元，本次需支付 {1} 元（差额 {2} 元）。建议引导顾客充值，或改用混合支付补足差额。",
+                    currentBalance, amount, lackAmount).withData(lackAmount);
         }
 
-        // 记录余额流水
         UmsMember freshMember = this.getById(memberId);
         UmsMemberLog balanceLog = new UmsMemberLog();
         balanceLog.setMemberId(freshMember.getId());
@@ -340,7 +351,10 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
     @Override
     public void recharge(RechargeDTO dto) {
         UmsMember member = this.getById(dto.getMemberId());
-        if (member == null) throw new BaseException("未找到该会员信息");
+
+        // 🌟 修复版：带编号的白话文
+        if (member == null) throw new BaseException(BizErrorStatus.MEMBER_NOT_FOUND, "未找到ID为【{0}】的会员信息，充值中断！", dto.getMemberId());
+
         if (member.getBalance() == null) member.setBalance(BigDecimal.ZERO);
         if (member.getCoupon() == null) member.setCoupon(BigDecimal.ZERO);
         LocalDateTime now = LocalDateTime.now();
@@ -394,7 +408,9 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
             this.updateById(member);
 
         } else if ("VOUCHER".equals(dto.getType())) {
-            if (dto.getRuleId() == null || dto.getQuantity() == null || dto.getQuantity() <= 0) throw new BaseException("发券参数错误");
+            if (dto.getRuleId() == null || dto.getQuantity() == null || dto.getQuantity() <= 0)
+                throw new BaseException("发券参数异常：请确认规则和数量正确");
+
             List<PosMemberCoupon> coupons = new ArrayList<>();
             for (int i = 0; i < dto.getQuantity(); i++) {
                 PosMemberCoupon pc = new PosMemberCoupon(); pc.setMemberId(member.getId()); pc.setRuleId(dto.getRuleId()); pc.setStatus("UNUSED"); pc.setGetTime(now); coupons.add(pc);
