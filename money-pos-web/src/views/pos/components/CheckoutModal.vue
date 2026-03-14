@@ -46,9 +46,6 @@
                                 </div>
                             </template>
                         </div>
-                        <div v-if="currentMember.id" class="text-[10px] text-gray-400 text-right">
-                            当前符合满减活动的总额: ￥{{ participatingAmount.toFixed(2) }}
-                        </div>
                     </div>
 
                     <div class="flex flex-col mt-2">
@@ -77,41 +74,25 @@
                         <div v-if="currentMember.id && theoreticalCouponUsed > 0 && !isWaiveCoupon" class="text-xs font-bold text-teal-600 mt-1 whitespace-nowrap">
                             (扣除会员券: ￥{{ theoreticalCouponUsed.toFixed(2) }})
                         </div>
-                        <div v-else-if="currentMember.id && theoreticalCouponUsed > 0 && isWaiveCoupon" class="text-xs font-bold text-gray-400 line-through mt-1 whitespace-nowrap">
-                            (免扣会员券: ￥{{ theoreticalCouponUsed.toFixed(2) }})
-                        </div>
                     </div>
                     <div class="text-right flex-1 flex justify-end items-center overflow-hidden">
-                        <span
-                            class="font-black tracking-tighter"
-                            :class="finalPayAmount >= 100000 ? 'text-4xl' : (finalPayAmount >= 10000 ? 'text-5xl' : 'text-6xl')"
-                        >
+                        <span class="font-black tracking-tighter" :class="finalPayAmount >= 10000 ? 'text-5xl' : 'text-6xl'">
                             ￥{{ finalPayAmount.toFixed(2) }}
                         </span>
                     </div>
                 </div>
                 <div class="flex-1 bg-white p-4 overflow-y-auto">
                     <div class="text-gray-500 font-bold mb-3 flex justify-between items-center border-b pb-2">
-                        <span>组合支付金额 (智能分摊)</span><span v-if="changeAmount > 0" class="text-green-500 text-sm flex items-center gap-1 font-bold"><el-icon><Money /></el-icon>包含找零</span>
+                        <span>组合支付明细</span>
                     </div>
-
                     <div class="grid gap-3" :class="paymentList.length > 3 ? 'grid-cols-2' : 'grid-cols-1'">
-                        <div v-for="(pay, index) in paymentList" :key="pay.code"
-                             class="flex flex-col bg-gray-50 p-2 rounded border focus-within:border-blue-400 focus-within:bg-blue-50 transition-colors">
+                        <div v-for="(pay, index) in paymentList" :key="pay.code" class="flex flex-col bg-gray-50 p-2 rounded border focus-within:border-blue-400 focus-within:bg-blue-50">
                             <div class="flex items-center gap-3">
-                                <div class="w-20 font-bold text-gray-700 text-sm tracking-wider truncate" :title="pay.name">{{ pay.name }}</div>
-                                <el-input-number :model-value="pay.amount" :min="0" :precision="2" :step="10" class="flex-1 !h-[45px] !text-2xl font-bold" :controls="false" placeholder="0" @update:model-value="(val) => handlePaymentChange(index, val)" />
+                                <div class="w-20 font-bold text-gray-700 text-sm truncate">{{ pay.name }}</div>
+                                <el-input-number :model-value="pay.amount" :min="0" :precision="2" class="flex-1 !h-[45px] !text-2xl font-bold" :controls="false" @update:model-value="(val) => handlePaymentChange(index, val)" />
                             </div>
-
-                            <div v-if="pay.code === 'AGGREGATE' && payTagDict && payTagDict.length > 0" class="flex flex-wrap gap-2 mt-2 ml-[5.5rem]">
-                                <el-tag
-                                    v-for="tag in payTagDict"
-                                    :key="tag.value"
-                                    :type="pay.activeTag === tag.value ? 'success' : 'info'"
-                                    :effect="pay.activeTag === tag.value ? 'dark' : 'plain'"
-                                    class="cursor-pointer font-bold border-0 shadow-sm transition-all hover:scale-105"
-                                    @click="pay.activeTag = tag.value"
-                                >
+                            <div v-if="pay.code === 'AGGREGATE' && payTagDict?.length > 0" class="flex flex-wrap gap-2 mt-2 ml-[5.5rem]">
+                                <el-tag v-for="tag in payTagDict" :key="tag.value" :type="pay.activeTag === tag.value ? 'success' : 'info'" :effect="pay.activeTag === tag.value ? 'dark' : 'plain'" class="cursor-pointer" @click="pay.activeTag = tag.value">
                                     {{ tag.desc }}
                                 </el-tag>
                             </div>
@@ -120,16 +101,17 @@
                 </div>
             </div>
         </div>
+
         <template #footer>
             <div class="flex justify-between items-center px-4 py-3 bg-gray-100 rounded-b-lg border-t mt-2">
-                <div class="text-left shrink-0">
+                <div class="text-left">
                     <div class="text-gray-600 font-bold text-sm">实收总计: <span class="text-gray-900 font-black text-xl">￥{{ totalPaid.toFixed(2) }}</span></div>
                     <div v-if="changeAmount > 0" class="text-green-600 font-black text-xl mt-1">找零金额: ￥{{ changeAmount.toFixed(2) }}</div>
                     <div v-else-if="unpaidAmount > 0" class="text-red-500 font-black text-xl mt-1">还差金额: ￥{{ unpaidAmount.toFixed(2) }}</div>
                 </div>
-                <div class="flex gap-3 flex-1 justify-end ml-4">
-                    <el-button size="large" class="w-28 font-bold text-base" @click="visible = false">取消(Esc)</el-button>
-                    <el-button type="danger" size="large" class="!text-2xl font-black tracking-widest shadow-md px-8" @click="submitOrderAction" :loading="submitLoading" :disabled="unpaidAmount > 0 || (!isWaiveCoupon && currentMember.id && currentMember.coupon < theoreticalCouponUsed)">确认收款</el-button>
+                <div class="flex gap-3">
+                    <el-button size="large" @click="visible = false">取消(Esc)</el-button>
+                    <el-button type="danger" size="large" class="!text-2xl font-black px-8" @click="submitOrderAction" :loading="submitLoading" :disabled="unpaidAmount > 0 || (!isWaiveCoupon && currentMember.id && currentMember.coupon < theoreticalCouponUsed)">确认收款</el-button>
                 </div>
             </div>
         </template>
@@ -141,6 +123,7 @@ import { ref, computed, watch } from 'vue'
 import { UserFilled, Ticket, PriceTag, Money } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { usePosStore } from '../hooks/usePosStore'
+import { settleAccounts } from '@/api/pos/pos' // 🌟 引入我们的 API 模块
 
 const props = defineProps({
     modelValue: Boolean,
@@ -157,32 +140,12 @@ const visible = computed({
 
 const submitLoading = ref(false)
 
+// 🌟 从 Store 获取 100% 原始变量
 const {
     cartList, currentMember, isWaiveCoupon, manualDiscount, selectedCouponRule, usedCouponCount, paymentList,
-    totalAmount, actualCouponUsed, finalPayAmount, submitOrder, getCartItemPrices
+    totalAmount, finalPayAmount, participatingAmount, theoreticalCouponUsed,
+    prepareCheckout, reqId, clearAll, getCartItemPrices
 } = usePosStore();
-
-const theoreticalCouponUsed = computed(() => {
-    if (!currentMember.value.id) return 0;
-    return cartList.value.reduce((sum, item) => {
-        const levelCode = currentMember.value.brandLevels?.[String(item.brandId)] || null;
-        let coupon = 0;
-        if (levelCode && item.levelCoupons && item.levelCoupons[levelCode] != null) {
-            coupon = Number(item.levelCoupons[levelCode]);
-        }
-        return sum + (coupon * (Number(item.qty) || 1));
-    }, 0);
-});
-
-const participatingAmount = computed(() => {
-    return cartList.value.reduce((sum, item) => {
-        if (item.isDiscountParticipable === 1) {
-            const { unitPrice } = getCartItemPrices(item, currentMember.value);
-            return sum + (unitPrice * (Number(item.qty) || 1));
-        }
-        return sum;
-    }, 0);
-});
 
 const availableCoupons = computed(() => {
     if (!currentMember.value.id || !Array.isArray(currentMember.value.couponList)) return []
@@ -196,17 +159,18 @@ const maxUsableCoupons = computed(() => {
 })
 
 const totalPaid = computed(() => paymentList.value.reduce((sum, item) => sum + (item.amount || 0), 0))
-const unpaidAmount = computed(() => Math.max(0, finalPayAmount.value - totalPaid.value))
+const unpaidAmount = computed(() => Math.max(0, Number((finalPayAmount.value - totalPaid.value).toFixed(2))))
 
 const changeAmount = computed(() => {
-    const total = paymentList.value.reduce((sum, p) => sum + (p.amount || 0), 0);
+    const total = totalPaid.value;
     if (total <= finalPayAmount.value) return 0;
     const hasCash = paymentList.value.some(p => p.code.includes('CASH') && p.amount > 0);
-    return hasCash ? total - finalPayAmount.value : 0;
+    return hasCash ? Number((total - finalPayAmount.value).toFixed(2)) : 0;
 })
 
 watch(visible, (newVal) => {
     if (newVal) {
+        prepareCheckout(); // 🌟 生成幂等 ID
         usedCouponCount.value = maxUsableCoupons.value;
         const sourceDict = props.payMethodDict.length > 0 ? props.payMethodDict : [{value: 'AGGREGATE', desc: '聚合扫码'}, {value: 'CASH', desc: '现金支付'}]
 
@@ -227,31 +191,28 @@ const recalculatePayments = () => {
     const aggIndex = paymentList.value.findIndex(p => p.code.includes('AGGREGATE'));
     const targetIndex = aggIndex >= 0 ? aggIndex : 0;
     paymentList.value.forEach((p, i) => { if (i !== targetIndex) p.amount = 0; });
-    // 🌟 在主计算逻辑里强制加上 .toFixed(2) 清洗
     paymentList.value[targetIndex].amount = Number((finalPayAmount.value).toFixed(2));
 }
 
 const handlePaymentChange = (index, val) => {
-    // 🌟 处理输入数值，强转并保留两位小数防崩塌
     let newVal = Number((val || 0).toFixed(2));
-
     if (paymentList.value[index].code.includes('BALANCE')) {
         const maxBal = currentMember.value.balance || 0;
-        if (newVal > maxBal) { newVal = maxBal; ElMessage.warning('已限制为最大可用会员余额！'); }
+        if (newVal > maxBal) { newVal = maxBal; ElMessage.warning('不可超过会员余额！'); }
     }
-
     paymentList.value[index].amount = newVal;
     const aggIndex = paymentList.value.findIndex(p => p.code.includes('AGGREGATE'));
     if (aggIndex !== -1 && aggIndex !== index) {
         let otherSum = paymentList.value.reduce((sum, p, i) => i !== aggIndex ? sum + p.amount : sum, 0);
-        // 🌟 核心防泄漏：算出余额后强制 Number().toFixed(2) 脱水
         paymentList.value[aggIndex].amount = Number(Math.max(0, finalPayAmount.value - otherSum).toFixed(2));
     }
 }
 
+// 🌟 核心：执行金融级对账结算
 const submitOrderAction = async () => {
     if (unpaidAmount.value > 0) return ElMessage.error(`实付不足 ￥${unpaidAmount.value.toFixed(2)}`);
 
+    // 映射支付流水到后端 DTO
     const validPayments = paymentList.value
         .filter(p => p.amount > 0)
         .map(p => ({
@@ -261,18 +222,20 @@ const submitOrderAction = async () => {
             payTag: p.activeTag || null
         }));
 
+    // 映射订单明细到后端 DTO
     const orderDetails = cartList.value.map(item => {
         const { unitPrice } = getCartItemPrices(item, currentMember.value);
         return {
             goodsId: item.id,
             quantity: Number(item.qty) || 1,
-            goodsPrice: unitPrice
+            goodsPrice: unitPrice // 传递前端计算出的会员价，后端会二次核对
         };
     });
 
     submitLoading.value = true
     try {
         const payload = {
+            reqId: reqId.value, // 🌟 幂等键
             member: currentMember.value.id || null,
             usedCouponRuleId: selectedCouponRule.value?.ruleId || null,
             usedCouponCount: selectedCouponRule.value ? usedCouponCount.value : 0,
@@ -282,18 +245,17 @@ const submitOrderAction = async () => {
             payments: validPayments
         };
 
-        await submitOrder(payload)
-        ElMessage.success('收款成功！订单已真实入库！')
+        await settleAccounts(payload)
+        ElMessage.success('收款成功！')
 
         emit('checkout-success', {
             total: totalAmount.value,
-            paid: totalPaid.value,
-            couponUsed: actualCouponUsed.value
+            paid: totalPaid.value
         })
         visible.value = false;
+        clearAll(); // 成功后重置收银台
     } catch (error) {
-        console.error("结账异常", error);
-        ElMessage.error(error.message || '结账失败，后端计算拦截')
+        console.error("结账拦截:", error);
     } finally {
         submitLoading.value = false
     }

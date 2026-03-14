@@ -10,48 +10,40 @@ import java.util.Set;
 
 /**
  * <p>
- * 订单表 服务类
+ * 订单表 服务类 (2.0 重构版)
  * </p>
- *
- * @author money
- * @since 2023-02-27
  */
 public interface OmsOrderService extends IService<OmsOrder> {
 
+    /**
+     * 订单列表查询
+     */
     PageVO<OmsOrderVO> list(OmsOrderQueryDTO queryDTO);
 
     /**
-     * 订单统计
-     *
-     * @param startTime 开始时间
-     * @param endTime   结束时间
-     * @return {@link OrderCountVO}
+     * 订单统计 (看板使用)
      */
     OrderCountVO countOrderAndSales(LocalDateTime startTime, LocalDateTime endTime);
 
     /**
      * 获取订单详情
-     *
-     * @param id id
-     * @return {@link OrderDetailVO}
      */
     OrderDetailVO getOrderDetail(Long id);
 
     /**
-     * 退单
-     *
-     * @param ids id
+     * 🌟 契约重塑：整单退款 (按单号执行，支持幂等)
+     * 注意：原 Set<Long> ids 已被弃用，改为 String orderNo
      */
-    void returnOrder(Set<Long> ids);
+    void returnOrder(String orderNo);
 
     /**
-     * 退货
-     *
-     * @param returnGoodsDTO 返回商品dto
+     * 🌟 契约重塑：部分退货 (使用 DTO 传参)
      */
     void returnGoods(ReturnGoodsDTO returnGoodsDTO);
 
-    // 🌟 6.6 真实损益毛利审计
-    com.money.web.vo.PageVO<com.money.dto.OmsOrder.ProfitAuditVO> getProfitAuditPage(com.money.dto.OmsOrder.OmsOrderQueryDTO queryDTO);
+    /**
+     * 真实损益毛利审计分页
+     */
+    PageVO<ProfitAuditVO> getProfitAuditPage(OmsOrderQueryDTO queryDTO);
 
 }

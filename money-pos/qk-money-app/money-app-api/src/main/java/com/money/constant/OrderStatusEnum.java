@@ -1,23 +1,32 @@
 package com.money.constant;
 
 /**
- * @author : money
- * @version : 1.0.0
- * @description : 订单状态
- * @createTime : 2022-04-20 22:05:34
+ * 🌟 金融级订单状态机枚举
  */
 public enum OrderStatusEnum {
 
     /**
-     * 已支付
+     * 待支付 (预留，当前 POS 场景通常直接 PAID)
+     */
+    UNPAID,
+
+    /**
+     * 已支付 (正常结算完成)
      */
     PAID,
+
     /**
-     * 已完成
+     * 部分退款 (发生过部分退货，但还能继续退)
      */
-    DONE,
+    PARTIAL_REFUNDED,
+
     /**
-     * 退单
+     * 全额退款 (终态，不可再操作)
      */
-    RETURN;
+    REFUNDED,
+
+    /**
+     * 已取消 (未支付直接作废的订单)
+     */
+    CLOSED;
 }

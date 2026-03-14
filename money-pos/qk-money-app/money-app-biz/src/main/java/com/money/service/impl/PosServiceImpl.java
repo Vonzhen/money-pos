@@ -1,24 +1,24 @@
 package com.money.service.impl;
 
 import cn.hutool.core.collection.ListUtil;
-import cn.hutool.core.date.DatePattern;
-import cn.hutool.core.util.RandomUtil;
 import cn.hutool.core.util.StrUtil;
+import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.money.web.exception.BaseException;
 import com.money.web.util.BeanMapUtil;
 import com.money.constant.OrderStatusEnum;
 import com.money.dto.OmsOrder.OmsOrderVO;
-import com.money.dto.OmsOrderDetail.OmsOrderDetailDTO;
 import com.money.dto.Pos.PosGoodsVO;
 import com.money.dto.Pos.PosMemberVO;
-import com.money.dto.Pos.SettleAccountsDTO;
+import com.money.dto.pos.SettleAccountsDTO;
+import com.money.dto.pos.SettleTrialReqDTO;
+import com.money.dto.pos.SettleTrialResVO;
 import com.money.entity.*;
 import com.money.mapper.*;
 import com.money.service.*;
-import lombok.Data;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -28,12 +28,11 @@ import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class PosServiceImpl implements PosService {
 
-    // --- 消除魔法字符串的业务常量 ---
-    private static final String LOG_TYPE_COUPON = "COUPON";
     private static final String LOG_TYPE_VOUCHER = "VOUCHER";
     private static final String LOG_TYPE_BALANCE = "BALANCE";
     private static final String OPERATE_CONSUME = "CONSUME";
@@ -47,6 +46,10 @@ public class PosServiceImpl implements PosService {
     private final OmsOrderDetailService omsOrderDetailService;
     private final OmsOrderLogService omsOrderLogService;
 
+    // 🌟 注入我们刚切分出去的“计价大脑”
+    private final PosCalculationEngine posCalculationEngine;
+
+    // 基础查询依然需要这些 Mapper
     private final GmsGoodsMapper gmsGoodsMapper;
     private final PosSkuLevelPriceMapper posSkuLevelPriceMapper;
     private final PosCouponRuleMapper posCouponRuleMapper;
@@ -54,13 +57,12 @@ public class PosServiceImpl implements PosService {
     private final OmsOrderPayMapper omsOrderPayMapper;
     private final UmsMemberLogMapper umsMemberLogMapper;
     private final com.money.mapper.GmsStockLogMapper gmsStockLogMapper;
-
     private final SysBrandConfigMapper sysBrandConfigMapper;
     private final UmsMemberBrandLevelMapper umsMemberBrandLevelMapper;
     private final GmsGoodsComboMapper gmsGoodsComboMapper;
 
     // ==========================================
-    // 基础查询模块
+    // 基础查询模块 (保持原样)
     // ==========================================
     @Override
     public List<PosGoodsVO> listGoods(String barcode) {
@@ -157,261 +159,165 @@ public class PosServiceImpl implements PosService {
     }
 
     // ==========================================
-    // 核心重构：编排器模式 (Orchestrator Pattern)
+    // 核心重构：事务大管家 (完全信任计价大脑)
     // ==========================================
     @Override
     @Transactional(rollbackFor = Exception.class)
     public OmsOrderVO settleAccounts(SettleAccountsDTO dto) {
-        SettleContext ctx = buildContext(dto);
-        processPricing(ctx, dto);
-        processMarketing(ctx, dto);
-        processPersistenceAndPayment(ctx, dto);
-        processInventory(ctx);
-        postProcessMember(ctx);
-        return BeanMapUtil.to(ctx.order, OmsOrderVO::new);
-    }
+        log.info("【POS发起结算】请求单号: {}, 入参明细: {}", dto.getReqId(), JSONUtil.toJsonStr(dto));
 
-    @Data
-    private static class SettleContext {
-        String orderNo;
-        LocalDateTime now = LocalDateTime.now();
-        UmsMember member;
-        boolean isVip;
+        // 1. 幂等拦截
+        if (StrUtil.isBlank(dto.getReqId())) {
+            throw new BaseException("【请求异常】缺少交易唯一单号，请刷新收银台后重试。");
+        }
+        if (omsOrderService.lambdaQuery().eq(OmsOrder::getOrderNo, dto.getReqId()).count() > 0) {
+            log.warn("【POS重复提单拦截】单号: {}", dto.getReqId());
+            throw new BaseException("【订单已处理】该订单已成功落库，请勿重复点击提交！");
+        }
 
-        BigDecimal totalAmount = BigDecimal.ZERO;
-        BigDecimal couponAmount = BigDecimal.ZERO;
-        BigDecimal costAmount = BigDecimal.ZERO;
-        BigDecimal participatingAmount = BigDecimal.ZERO;
-        BigDecimal voucherAmount = BigDecimal.ZERO;
-        BigDecimal manualDiscount = BigDecimal.ZERO;
-        BigDecimal actualBalanceCost = BigDecimal.ZERO;
+        // 🌟 2. 复用计价引擎，获取绝对真理 (前后端共用大脑)
+        SettleTrialReqDTO trialReq = new SettleTrialReqDTO();
+        trialReq.setMember(dto.getMember());
+        trialReq.setUsedCouponRuleId(dto.getUsedCouponRuleId());
+        trialReq.setUsedCouponCount(dto.getUsedCouponCount());
+        trialReq.setWaiveCoupon(dto.getWaiveCoupon());
+        trialReq.setManualDiscountAmount(dto.getManualDiscountAmount());
+        if (dto.getOrderDetail() != null) {
+            trialReq.setItems(dto.getOrderDetail().stream().map(d -> {
+                SettleTrialReqDTO.TrialItem item = new SettleTrialReqDTO.TrialItem();
+                item.setGoodsId(d.getGoodsId());
+                item.setQuantity(d.getQuantity());
+                return item;
+            }).collect(Collectors.toList()));
+        }
 
+        SettleTrialResVO trialRes = posCalculationEngine.calculate(trialReq);
+
+        // 3. 🛡️ 校验账务红线
+        BigDecimal totalPaid = BigDecimal.ZERO;
+        if (dto.getPayments() != null) {
+            totalPaid = dto.getPayments().stream()
+                    .filter(p -> p.getPayAmount() != null)
+                    .map(SettleAccountsDTO.PaymentItem::getPayAmount)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add)
+                    .setScale(2, RoundingMode.HALF_UP);
+        }
+
+        if (trialRes.getFinalPayAmount().compareTo(totalPaid) != 0) {
+            log.warn("【POS对账熔断】单号: {}, 后端应收: {}, 前端实收: {}", dto.getReqId(), trialRes.getFinalPayAmount(), totalPaid);
+            throw new BaseException(String.format("【金额核对异常】系统计算应收(￥%s)与输入实付总和(￥%s)不匹配。建议：请清空支付金额后重新输入。",
+                    trialRes.getFinalPayAmount().toPlainString(), totalPaid.toPlainString()));
+        }
+
+        // 获取商品基底信息 (用于落库明细和扣库存)
+        List<Long> goodsIds = trialReq.getItems().stream().map(SettleTrialReqDTO.TrialItem::getGoodsId).collect(Collectors.toList());
+        Map<Long, GmsGoods> goodsMap = gmsGoodsService.listByIds(goodsIds).stream().collect(Collectors.toMap(GmsGoods::getId, g -> g));
+
+        // 4. 组装主订单落库
         OmsOrder order = new OmsOrder();
-        List<OmsOrderDetail> orderDetails = new ArrayList<>();
+        order.setOrderNo(dto.getReqId());
+        order.setTotalAmount(trialRes.getTotalAmount());
+        order.setCouponAmount(trialRes.getMemberCouponDeduct());
+        order.setUseVoucherAmount(trialRes.getVoucherDeduct());
+        order.setManualDiscountAmount(trialRes.getManualDeduct());
+        order.setCostAmount(trialRes.getCostAmount());
+        order.setPayAmount(trialRes.getFinalPayAmount());
+        order.setFinalSalesAmount(trialRes.getFinalPayAmount());
+        order.setStatus(OrderStatusEnum.PAID.name());
+        order.setPaymentTime(LocalDateTime.now());
 
-        Map<Long, GmsGoods> goodsMap;
-        Map<String, Boolean> brandCouponStrategyMap;
-        Map<String, String> memberBrandLevels;
-        Map<Long, Map<String, PosSkuLevelPrice>> goodsLevelPriceMap;
-    }
-
-    private SettleContext buildContext(SettleAccountsDTO dto) {
-        SettleContext ctx = new SettleContext();
-        ctx.setOrderNo(getOrderNo());
-        ctx.order.setOrderNo(ctx.getOrderNo());
-        ctx.setVip(dto.getMember() != null);
-
-        if (ctx.isVip()) {
-            ctx.setMember(umsMemberService.getById(dto.getMember()));
-            if (ctx.getMember() == null) throw new BaseException("未找到该会员");
-            ctx.order.setMember(ctx.getMember().getName());
-            ctx.order.setMemberId(ctx.getMember().getId());
-            ctx.order.setVip(true);
-            ctx.order.setContact(ctx.getMember().getPhone());
-            ctx.order.setProvince(ctx.getMember().getProvince());
-            ctx.order.setCity(ctx.getMember().getCity());
-            ctx.order.setDistrict(ctx.getMember().getDistrict());
-            ctx.order.setAddress(ctx.getMember().getAddress());
+        UmsMember member = null;
+        if (dto.getMember() != null) {
+            member = umsMemberService.getById(dto.getMember());
+            if (member == null) throw new BaseException("【会员异常】未找到该会员信息。");
+            order.setVip(true);
+            order.setMemberId(member.getId());
+            order.setMember(member.getName());
+            order.setContact(member.getPhone());
+            order.setProvince(member.getProvince());
+            order.setCity(member.getCity());
+            order.setDistrict(member.getDistrict());
+            order.setAddress(member.getAddress());
         } else {
-            ctx.order.setVip(false);
+            order.setVip(false);
+        }
+        omsOrderService.save(order);
+
+        // 5. 编排落地附属表
+        List<OmsOrderDetail> orderDetails = saveOrderDetails(trialRes, goodsMap, order.getOrderNo());
+        saveOrderPayments(dto, order.getOrderNo());
+        processInventory(orderDetails, goodsMap, order.getOrderNo());
+
+        // 6. 原子核销营销与资金资产
+        if (order.getVip()) {
+            consumeMarketingAssets(member, dto, trialRes, order.getOrderNo());
         }
 
-        List<Long> goodsIds = dto.getOrderDetail().stream().map(OmsOrderDetailDTO::getGoodsId).collect(Collectors.toList());
-        ctx.setGoodsMap(gmsGoodsService.listByIds(goodsIds).stream().collect(Collectors.toMap(GmsGoods::getId, g -> g)));
+        // 7. 写入大一统结账日志
+        OmsOrderLog orderLog = new OmsOrderLog();
+        orderLog.setOrderId(order.getId());
+        orderLog.setDescription("执行强一致性结算 (计价引擎抽离/账务红线/原子资产防超扣/幂等防护 V2.0)");
+        omsOrderLogService.saveBatch(ListUtil.of(orderLog));
 
-        Set<String> brandIdSet = ctx.getGoodsMap().values().stream().map(g -> g.getBrandId() != null ? String.valueOf(g.getBrandId()) : "0").collect(Collectors.toSet());
-        ctx.setBrandCouponStrategyMap(new HashMap<>());
-        if (!brandIdSet.isEmpty()) {
-            sysBrandConfigMapper.selectList(new LambdaQueryWrapper<SysBrandConfig>().in(SysBrandConfig::getBrand, brandIdSet))
-                    .forEach(config -> ctx.getBrandCouponStrategyMap().put(config.getBrand(), config.getCouponEnabled()));
-        }
-
-        ctx.setMemberBrandLevels(new HashMap<>());
-        if (ctx.isVip() && !brandIdSet.isEmpty()) {
-            umsMemberBrandLevelMapper.selectList(new LambdaQueryWrapper<UmsMemberBrandLevel>().eq(UmsMemberBrandLevel::getMemberId, ctx.getMember().getId()).in(UmsMemberBrandLevel::getBrand, brandIdSet))
-                    .forEach(bl -> ctx.getMemberBrandLevels().put(bl.getBrand(), bl.getLevelCode()));
-        }
-
-        ctx.setGoodsLevelPriceMap(new HashMap<>());
-        if (!goodsIds.isEmpty()) {
-            posSkuLevelPriceMapper.selectList(new LambdaQueryWrapper<PosSkuLevelPrice>().in(PosSkuLevelPrice::getSkuId, goodsIds))
-                    .forEach(p -> ctx.getGoodsLevelPriceMap().computeIfAbsent(p.getSkuId(), k -> new HashMap<>()).put(p.getLevelId(), p));
-        }
-
-        return ctx;
+        log.info("【POS结算成功】单号: {}, 实收: {}", order.getOrderNo(), order.getPayAmount());
+        return BeanMapUtil.to(order, OmsOrderVO::new);
     }
 
-    private void processPricing(SettleContext ctx, SettleAccountsDTO dto) {
-        for (OmsOrderDetailDTO detailDTO : dto.getOrderDetail()) {
-            GmsGoods goods = ctx.getGoodsMap().get(detailDTO.getGoodsId());
-            if (goods == null) throw new BaseException("购物车中存在无效商品，请重新扫码");
-
-            String brandIdStr = goods.getBrandId() != null ? String.valueOf(goods.getBrandId()) : "0";
-            Boolean isCouponEnabled = ctx.getBrandCouponStrategyMap().getOrDefault(brandIdStr, true);
-            String levelCode = ctx.isVip() ? ctx.getMemberBrandLevels().get(brandIdStr) : null;
-
-            BigDecimal unitBasePrice = goods.getSalePrice();
-            BigDecimal unitCoupon = BigDecimal.ZERO;
-
-            if (StrUtil.isNotBlank(levelCode) && ctx.getGoodsLevelPriceMap().containsKey(goods.getId())) {
-                PosSkuLevelPrice levelPrice = ctx.getGoodsLevelPriceMap().get(goods.getId()).get(levelCode);
-                if (levelPrice != null) {
-                    if (isCouponEnabled) {
-                        unitBasePrice = goods.getSalePrice();
-                        unitCoupon = levelPrice.getMemberCoupon() != null ? levelPrice.getMemberCoupon() : BigDecimal.ZERO;
-                    } else {
-                        unitBasePrice = levelPrice.getMemberPrice() != null ? levelPrice.getMemberPrice() : goods.getSalePrice();
-                        unitCoupon = BigDecimal.ZERO;
-                    }
-                }
-            }
-
-            if (Boolean.TRUE.equals(dto.getWaiveCoupon())) {
-                unitCoupon = BigDecimal.ZERO;
-            }
-
+    // ==========================================
+    // 内部协助方法：仅负责数据库原子化操作
+    // ==========================================
+    private List<OmsOrderDetail> saveOrderDetails(SettleTrialResVO trialRes, Map<Long, GmsGoods> goodsMap, String orderNo) {
+        List<OmsOrderDetail> details = new ArrayList<>();
+        for (SettleTrialResVO.ItemRes itemRes : trialRes.getItems()) {
+            GmsGoods goods = goodsMap.get(itemRes.getGoodsId());
             OmsOrderDetail detail = new OmsOrderDetail();
-            detail.setOrderNo(ctx.getOrderNo());
+            detail.setOrderNo(orderNo);
             detail.setStatus(OrderStatusEnum.PAID.name());
             detail.setGoodsId(goods.getId());
             detail.setBrandId(goods.getBrandId());
             detail.setGoodsBarcode(goods.getBarcode());
             detail.setGoodsName(goods.getName());
-            detail.setSalePrice(unitBasePrice);
+            detail.setSalePrice(itemRes.getOriginalPrice());
             detail.setPurchasePrice(goods.getPurchasePrice() == null ? BigDecimal.ZERO : goods.getPurchasePrice());
             detail.setVipPrice(goods.getVipPrice());
-            detail.setQuantity(detailDTO.getQuantity());
-
-            BigDecimal finalGoodsPrice = unitBasePrice.subtract(unitCoupon);
-            detail.setGoodsPrice(finalGoodsPrice);
-            detail.setCoupon(unitCoupon);
-            ctx.getOrderDetails().add(detail);
-
-            BigDecimal qty = new BigDecimal(detail.getQuantity());
-            ctx.setTotalAmount(ctx.getTotalAmount().add(unitBasePrice.multiply(qty)));
-            ctx.setCouponAmount(ctx.getCouponAmount().add(unitCoupon.multiply(qty)));
-            ctx.setCostAmount(ctx.getCostAmount().add(detail.getPurchasePrice().multiply(qty)));
-
-            if (goods.getIsDiscountParticipable() != null && goods.getIsDiscountParticipable() == 1) {
-                ctx.setParticipatingAmount(ctx.getParticipatingAmount().add(finalGoodsPrice.multiply(qty)));
-            }
+            detail.setQuantity(itemRes.getQuantity());
+            // 🌟 直接信任试算引擎算出的实价和分摊的券
+            detail.setGoodsPrice(itemRes.getRealPrice());
+            detail.setCoupon(itemRes.getCouponDeduct());
+            details.add(detail);
         }
-        ctx.order.setTotalAmount(ctx.getTotalAmount());
-        ctx.order.setCouponAmount(ctx.getCouponAmount());
-        ctx.order.setCostAmount(ctx.getCostAmount());
+        omsOrderDetailService.saveBatch(details);
+        return details;
     }
 
-    private void processMarketing(SettleContext ctx, SettleAccountsDTO dto) {
-        if (!ctx.isVip()) return;
-
-        UmsMember member = ctx.getMember();
-
-        if (ctx.getCouponAmount().compareTo(BigDecimal.ZERO) > 0) {
-            BigDecimal consumeCoupon = member.getCoupon().subtract(ctx.getCouponAmount());
-            if (consumeCoupon.compareTo(BigDecimal.ZERO) < 0) throw new BaseException("顾客账户内【会员券】余额不足！需扣: " + ctx.getCouponAmount());
-            member.setCoupon(consumeCoupon);
-
-            UmsMemberLog couponLog = new UmsMemberLog();
-            couponLog.setMemberId(member.getId());
-            // 🌟 补齐快照字段，确保对账溯源完整
-            couponLog.setMemberName(member.getName());
-            couponLog.setMemberPhone(member.getPhone());
-            couponLog.setType(LOG_TYPE_COUPON);
-            couponLog.setOperateType(OPERATE_CONSUME);
-            couponLog.setAmount(ctx.getCouponAmount().negate());
-            couponLog.setAfterAmount(member.getCoupon());
-            couponLog.setOrderNo(ctx.getOrderNo());
-            couponLog.setRemark("订单自动抵扣关联品牌会员券");
-            couponLog.setCreateTime(ctx.getNow());
-            umsMemberLogMapper.insert(couponLog);
+    private void saveOrderPayments(SettleAccountsDTO dto, String orderNo) {
+        if (dto.getPayments() == null) return;
+        LocalDateTime now = LocalDateTime.now();
+        for (SettleAccountsDTO.PaymentItem item : dto.getPayments()) {
+            if (item.getPayAmount() == null || item.getPayAmount().compareTo(BigDecimal.ZERO) == 0) continue;
+            OmsOrderPay payRecord = new OmsOrderPay();
+            payRecord.setOrderNo(orderNo);
+            payRecord.setPayMethodCode(item.getPayMethodCode());
+            payRecord.setPayMethodName(item.getPayMethodName());
+            payRecord.setPayTag(item.getPayTag());
+            payRecord.setPayAmount(item.getPayAmount());
+            payRecord.setCreateTime(now);
+            omsOrderPayMapper.insert(payRecord);
         }
-
-        if (dto.getUsedCouponRuleId() != null && dto.getUsedCouponCount() != null && dto.getUsedCouponCount() > 0) {
-            Long ruleId = dto.getUsedCouponRuleId();
-            Integer usedCount = dto.getUsedCouponCount();
-            PosCouponRule rule = posCouponRuleMapper.selectById(ruleId);
-            if (rule == null) throw new BaseException("满减券异常或已停用");
-
-            BigDecimal requiredThreshold = rule.getThresholdAmount().multiply(new BigDecimal(usedCount));
-            if (ctx.getParticipatingAmount().compareTo(requiredThreshold) < 0) {
-                throw new BaseException("购物车中【参与活动】的商品总额未达到用券门槛！");
-            }
-
-            List<PosMemberCoupon> availableCoupons = posMemberCouponMapper.selectList(new LambdaQueryWrapper<PosMemberCoupon>().eq(PosMemberCoupon::getMemberId, member.getId()).eq(PosMemberCoupon::getRuleId, ruleId).eq(PosMemberCoupon::getStatus, COUPON_UNUSED).last("LIMIT " + usedCount));
-            if (availableCoupons.size() < usedCount) throw new BaseException("卡包内满减券可用张数不足！");
-
-            List<Long> couponIds = availableCoupons.stream().map(PosMemberCoupon::getId).collect(Collectors.toList());
-            PosMemberCoupon updateCoupon = new PosMemberCoupon();
-            updateCoupon.setStatus(COUPON_USED);
-            updateCoupon.setOrderNo(ctx.getOrderNo());
-            updateCoupon.setUseTime(ctx.getNow());
-            posMemberCouponMapper.update(updateCoupon, new LambdaUpdateWrapper<PosMemberCoupon>().in(PosMemberCoupon::getId, couponIds));
-
-            ctx.setVoucherAmount(rule.getDiscountAmount().multiply(new BigDecimal(usedCount)));
-
-            long remainVouchers = posMemberCouponMapper.selectCount(new LambdaQueryWrapper<PosMemberCoupon>().eq(PosMemberCoupon::getMemberId, member.getId()).eq(PosMemberCoupon::getStatus, COUPON_UNUSED));
-            UmsMemberLog voucherLog = new UmsMemberLog();
-            voucherLog.setMemberId(member.getId());
-            // 🌟 补齐快照字段
-            voucherLog.setMemberName(member.getName());
-            voucherLog.setMemberPhone(member.getPhone());
-            voucherLog.setType(LOG_TYPE_VOUCHER);
-            voucherLog.setOperateType(OPERATE_CONSUME);
-            voucherLog.setAmount(BigDecimal.valueOf(-usedCount));
-            voucherLog.setAfterAmount(BigDecimal.valueOf(remainVouchers));
-            voucherLog.setOrderNo(ctx.getOrderNo());
-            voucherLog.setRemark("核销满减优惠券: " + rule.getName());
-            voucherLog.setCreateTime(ctx.getNow());
-            umsMemberLogMapper.insert(voucherLog);
-        }
-        ctx.order.setUseVoucherAmount(ctx.getVoucherAmount());
     }
 
-    private void processPersistenceAndPayment(SettleContext ctx, SettleAccountsDTO dto) {
-        ctx.setManualDiscount(dto.getManualDiscountAmount() != null ? dto.getManualDiscountAmount() : BigDecimal.ZERO);
-        ctx.order.setManualDiscountAmount(ctx.getManualDiscount());
-
-        BigDecimal finalPay = ctx.getTotalAmount().subtract(ctx.getCouponAmount()).subtract(ctx.getVoucherAmount()).subtract(ctx.getManualDiscount());
-        if (finalPay.compareTo(BigDecimal.ZERO) < 0) finalPay = BigDecimal.ZERO;
-
-        ctx.order.setPayAmount(finalPay);
-        ctx.order.setFinalSalesAmount(finalPay);
-        ctx.order.setStatus(OrderStatusEnum.PAID.name());
-        ctx.order.setPaymentTime(ctx.getNow());
-        omsOrderService.save(ctx.order);
-
-        if (dto.getPayments() != null) {
-            for (SettleAccountsDTO.PaymentItem item : dto.getPayments()) {
-                OmsOrderPay payRecord = new OmsOrderPay();
-                payRecord.setOrderNo(ctx.getOrderNo());
-                payRecord.setPayMethodCode(item.getPayMethodCode());
-                payRecord.setPayMethodName(item.getPayMethodName());
-
-                // 🌟 新增：将前端的支付标签无损落库
-                payRecord.setPayTag(item.getPayTag());
-
-                payRecord.setPayAmount(item.getPayAmount());
-                payRecord.setCreateTime(ctx.getNow());
-                omsOrderPayMapper.insert(payRecord);
-
-                if (LOG_TYPE_BALANCE.equals(item.getPayMethodCode())) {
-                    ctx.setActualBalanceCost(ctx.getActualBalanceCost().add(item.getPayAmount()));
-                }
-            }
-        }
-        omsOrderDetailService.saveBatch(ctx.getOrderDetails());
-    }
-
-    private void processInventory(SettleContext ctx) {
-        List<Long> comboGoodsIds = ctx.getGoodsMap().values().stream().filter(g -> g.getIsCombo() != null && g.getIsCombo() == 1).map(GmsGoods::getId).collect(Collectors.toList());
+    private void processInventory(List<OmsOrderDetail> orderDetails, Map<Long, GmsGoods> goodsMap, String orderNo) {
+        LocalDateTime now = LocalDateTime.now();
+        List<Long> comboGoodsIds = goodsMap.values().stream().filter(g -> g.getIsCombo() != null && g.getIsCombo() == 1).map(GmsGoods::getId).collect(Collectors.toList());
         Map<Long, List<GmsGoodsCombo>> comboMap = new HashMap<>();
+
         if (!comboGoodsIds.isEmpty()) {
             List<GmsGoodsCombo> allCombos = gmsGoodsComboMapper.selectList(new LambdaQueryWrapper<GmsGoodsCombo>().in(GmsGoodsCombo::getComboGoodsId, comboGoodsIds));
             comboMap = allCombos.stream().collect(Collectors.groupingBy(GmsGoodsCombo::getComboGoodsId));
         }
 
-        for (OmsOrderDetail detail : ctx.getOrderDetails()) {
-            GmsGoods goods = ctx.getGoodsMap().get(detail.getGoodsId());
+        for (OmsOrderDetail detail : orderDetails) {
+            GmsGoods goods = goodsMap.get(detail.getGoodsId());
 
             if (goods.getIsCombo() != null && goods.getIsCombo() == 1) {
                 List<GmsGoodsCombo> combos = comboMap.get(goods.getId());
@@ -420,26 +326,21 @@ public class PosServiceImpl implements PosService {
                         GmsGoods subGoods = gmsGoodsService.getById(combo.getSubGoodsId());
                         if (subGoods != null) {
                             int deductQty = detail.getQuantity() * combo.getSubGoodsQty();
-
-                            // 🌟 修复强类型转换报错：使用 new BigDecimal() 包装整数
                             int rows = gmsGoodsMapper.deductStockAtomically(subGoods.getId(), new BigDecimal(deductQty));
-                            if (rows == 0) throw new BaseException("库存不足或发生并发抢单: " + subGoods.getName());
-
-                            writeStockLog(subGoods, -deductQty, ctx, "前台套餐售出联动扣除");
+                            if (rows == 0) throw new BaseException("【库存不足拦截】套餐子商品「" + subGoods.getName() + "」系统剩余库存不足或发生抢购。");
+                            writeStockLog(subGoods, -deductQty, orderNo, "前台套餐售出联动扣除", now);
                         }
                     }
                 }
             } else {
-                // 🌟 修复强类型转换报错：使用 new BigDecimal() 包装整数
                 int rows = gmsGoodsMapper.deductStockAtomically(goods.getId(), new BigDecimal(detail.getQuantity()));
-                if (rows == 0) throw new BaseException("库存不足或发生并发抢单: " + goods.getName());
-
-                writeStockLog(goods, -detail.getQuantity(), ctx, "前台智能收银售出");
+                if (rows == 0) throw new BaseException("【库存不足拦截】商品「" + goods.getName() + "」系统剩余库存不足或发生抢购。");
+                writeStockLog(goods, -detail.getQuantity(), orderNo, "前台智能收银售出", now);
             }
         }
     }
 
-    private void writeStockLog(GmsGoods goods, int changeQty, SettleContext ctx, String remark) {
+    private void writeStockLog(GmsGoods goods, int changeQty, String orderNo, String remark, LocalDateTime now) {
         GmsGoods freshGoods = gmsGoodsService.getById(goods.getId());
         com.money.entity.GmsStockLog stockLog = new com.money.entity.GmsStockLog();
         stockLog.setGoodsId(freshGoods.getId());
@@ -448,49 +349,68 @@ public class PosServiceImpl implements PosService {
         stockLog.setType(STOCK_TYPE_SALE);
         stockLog.setQuantity(changeQty);
         stockLog.setAfterQuantity(freshGoods.getStock() == null ? 0 : freshGoods.getStock().intValue());
-        stockLog.setOrderNo(ctx.getOrderNo());
+        stockLog.setOrderNo(orderNo);
         stockLog.setRemark(remark);
-        stockLog.setCreateTime(ctx.getNow());
+        stockLog.setCreateTime(now);
         gmsStockLogMapper.insert(stockLog);
     }
 
-    private void postProcessMember(SettleContext ctx) {
-        if (ctx.isVip()) {
-            UmsMember member = ctx.getMember();
-            umsMemberService.consume(member.getId(), ctx.order.getPayAmount(), ctx.order.getCouponAmount());
+    private void consumeMarketingAssets(UmsMember member, SettleAccountsDTO dto, SettleTrialResVO trialRes, String orderNo) {
+        LocalDateTime now = LocalDateTime.now();
 
-            if (ctx.getActualBalanceCost().compareTo(BigDecimal.ZERO) > 0) {
-                BigDecimal newBalance = member.getBalance().subtract(ctx.getActualBalanceCost());
-                if (newBalance.compareTo(BigDecimal.ZERO) < 0) newBalance = BigDecimal.ZERO;
-                member.setBalance(newBalance);
+        // 1. 原子扣减单品券 & 累加消费次数 (调用 UmsMemberService.consume)
+        umsMemberService.consume(member.getId(), trialRes.getFinalPayAmount(), trialRes.getMemberCouponDeduct(), orderNo);
 
-                UmsMemberLog balanceLog = new UmsMemberLog();
-                balanceLog.setMemberId(member.getId());
-                // 🌟 补齐快照字段
-                balanceLog.setMemberName(member.getName());
-                balanceLog.setMemberPhone(member.getPhone());
-                balanceLog.setType(LOG_TYPE_BALANCE);
-                balanceLog.setOperateType(OPERATE_CONSUME);
-                balanceLog.setAmount(ctx.getActualBalanceCost().negate());
-                balanceLog.setAfterAmount(member.getBalance());
-                balanceLog.setOrderNo(ctx.getOrderNo());
-                balanceLog.setRemark("订单支付扣除会员余额");
-                balanceLog.setCreateTime(ctx.getNow());
-                umsMemberLogMapper.insert(balanceLog);
+        // 2. 扣减满减券并写券流水
+        if (dto.getUsedCouponRuleId() != null && dto.getUsedCouponCount() != null && dto.getUsedCouponCount() > 0) {
+            List<PosMemberCoupon> availableCoupons = posMemberCouponMapper.selectList(new LambdaQueryWrapper<PosMemberCoupon>()
+                    .eq(PosMemberCoupon::getMemberId, member.getId()).eq(PosMemberCoupon::getRuleId, dto.getUsedCouponRuleId()).eq(PosMemberCoupon::getStatus, COUPON_UNUSED).last("LIMIT " + dto.getUsedCouponCount()));
+
+            if (!availableCoupons.isEmpty()) {
+                List<Long> couponIds = availableCoupons.stream().map(PosMemberCoupon::getId).collect(Collectors.toList());
+                PosMemberCoupon updateCoupon = new PosMemberCoupon();
+                updateCoupon.setStatus(COUPON_USED);
+                updateCoupon.setOrderNo(orderNo);
+                updateCoupon.setUseTime(now);
+                posMemberCouponMapper.update(updateCoupon, new LambdaUpdateWrapper<PosMemberCoupon>().in(PosMemberCoupon::getId, couponIds));
+
+                long remainVouchers = posMemberCouponMapper.selectCount(new LambdaQueryWrapper<PosMemberCoupon>()
+                        .eq(PosMemberCoupon::getMemberId, member.getId()).eq(PosMemberCoupon::getStatus, COUPON_UNUSED));
+
+                UmsMemberLog voucherLog = new UmsMemberLog();
+                voucherLog.setMemberId(member.getId());
+                voucherLog.setMemberName(member.getName());
+                voucherLog.setMemberPhone(member.getPhone());
+                voucherLog.setType(LOG_TYPE_VOUCHER);
+                voucherLog.setOperateType(OPERATE_CONSUME);
+                voucherLog.setAmount(BigDecimal.valueOf(-dto.getUsedCouponCount()));
+                voucherLog.setAfterAmount(BigDecimal.valueOf(remainVouchers));
+                voucherLog.setOrderNo(orderNo);
+
+                PosCouponRule rule = posCouponRuleMapper.selectById(dto.getUsedCouponRuleId());
+                voucherLog.setRemark("核销满减优惠券: " + (rule != null ? rule.getName() : "未知活动"));
+                voucherLog.setCreateTime(now);
+                umsMemberLogMapper.insert(voucherLog);
             }
-            member.setLastVisitTime(ctx.getNow());
-            umsMemberService.updateById(member);
         }
 
-        OmsOrderLog log = new OmsOrderLog();
-        log.setOrderId(ctx.order.getId());
-        log.setDescription("执行强一致性 SettleEngine 结算 (防超卖重构版)");
-        omsOrderLogService.saveBatch(ListUtil.of(log));
-    }
+        // 3. 🛡️ 原子扣除余额：计算实际使用了多少余额支付
+        if (dto.getPayments() != null) {
+            BigDecimal balanceCost = dto.getPayments().stream()
+                    .filter(p -> LOG_TYPE_BALANCE.equals(p.getPayMethodCode()) && p.getPayAmount() != null)
+                    .map(SettleAccountsDTO.PaymentItem::getPayAmount)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-    private synchronized String getOrderNo() {
-        String date = LocalDateTime.now().format(DatePattern.PURE_DATETIME_FORMATTER);
-        String random = RandomUtil.randomNumbers(1);
-        return date + random;
+            if (balanceCost.compareTo(BigDecimal.ZERO) > 0) {
+                // 彻底交还给会员网关执行防超扣 CAS
+                umsMemberService.deductBalance(member.getId(), balanceCost, orderNo, "订单支付扣除会员余额");
+            }
+        }
+
+        // 4. 更新最后访问时间
+        umsMemberService.lambdaUpdate()
+                .set(UmsMember::getLastVisitTime, now)
+                .eq(UmsMember::getId, member.getId())
+                .update();
     }
 }

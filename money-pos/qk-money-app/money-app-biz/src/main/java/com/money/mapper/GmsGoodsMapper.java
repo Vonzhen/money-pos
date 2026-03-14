@@ -7,13 +7,25 @@ import org.apache.ibatis.annotations.Update;
 
 import java.math.BigDecimal;
 
+/**
+ * <p>
+ * 商品表 Mapper 接口
+ * </p>
+ */
 public interface GmsGoodsMapper extends BaseMapper<GmsGoods> {
 
     /**
-     * 🌟 原子化库存扣减 (支持线下门店超卖场景)
-     * 移除了 stock >= qty 的限制，允许库存跌穿至负数（负数代表系统欠实物的账，后续入库可抹平）。
-     * 依然保留 UPDATE ... SET stock = stock - X 的行锁特性，确保并发下扣减数值绝对精准。
+     * 🌟 原子扣减库存 (CAS 保证不超卖)
+     * WHERE stock >= #{qty} 确保库存不会减成负数（除非业务允许负库存，此处为严谨逻辑）
      */
-    @Update("UPDATE gms_goods SET stock = stock - #{qty} WHERE id = #{id}")
+    @Update("UPDATE gms_goods SET stock = stock - #{qty} WHERE id = #{id} AND stock >= #{qty}")
     int deductStockAtomically(@Param("id") Long id, @Param("qty") BigDecimal qty);
+
+    /**
+     * 🌟 原子回补库存 (用于退货/取消订单)
+     * 无需额外条件，直接在数据库层执行原子加法，防止并发覆盖
+     */
+    @Update("UPDATE gms_goods SET stock = stock + #{qty} WHERE id = #{id}")
+    int addStockAtomically(@Param("id") Long id, @Param("qty") BigDecimal qty);
+
 }
