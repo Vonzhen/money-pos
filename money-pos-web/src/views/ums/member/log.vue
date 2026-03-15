@@ -21,7 +21,7 @@
                 <el-option label="系统导入" value="IMPORT" />
                 <el-option label="充值赠送" value="GIFT" />
                 <el-option label="活动发放" value="ISSUE" />
-            </el-select>
+                <el-option label="红冲撤销" value="REVERSAL" /> </el-select>
         </MoneyRR>
 
         <MoneyCrudTable :money-crud="moneyCrud">
@@ -86,7 +86,13 @@
             </template>
         </MoneyCrudTable>
 
-        <OrderDetailModal v-model="detailVisible" :order-no="currentSearchOrderNo" />
+        <OrderDetailModal v-model="salesDetailVisible" :order-no="currentSearchOrderNo" />
+
+        <RechargeOrderDetail
+            v-model="rechargeDetailVisible"
+            :order-no="currentSearchOrderNo"
+            @refresh="moneyCrud.doQuery()"
+        />
 
         <MemberProfileModal
             v-model="profileVisible"
@@ -111,21 +117,19 @@ import brandApi from "@/api/gms/brand.js"
 import { ElMessage } from 'element-plus'
 
 import OrderDetailModal from "@/components/OrderDetailModal.vue";
+import RechargeOrderDetail from "@/views/ums/member/components/RechargeOrderDetail.vue"; // 🌟 引入新弹窗
 import MemberSmartSearch from "@/components/common/MemberSmartSearch.vue";
 import MemberProfileModal from "@/components/common/MemberProfileModal.vue";
 
-// 🌟 重新分配列宽：加大手机号和单号的安全冗余，彻底告别 "..."
 const columns = [
     {prop: 'createTime', label: '发生时间', width: 95, align: 'center'},
     {prop: 'memberName', label: '会员姓名', minWidth: 90, showOverflowTooltip: true},
-    // 👇 这里的 115 改成了 130，绝对管够！
     {prop: 'memberPhone', label: '手机号', minWidth: 130},
     {prop: 'operateType', label: '业务类型', width: 100, align: 'center'},
     {prop: 'type', label: '资金账户', width: 140, align: 'center'},
     {prop: 'amount', label: '变动明细', minWidth: 130, align: 'right'},
     {prop: 'realAmount', label: '实收现金', minWidth: 120, align: 'right'},
     {prop: 'afterAmount', label: '变动后余额', minWidth: 130, align: 'right'},
-    // 👇 顺手把单号也稍微加宽一点点，防患于未然
     {prop: 'orderNo', label: '关联单号', minWidth: 170, align: 'center'},
     {prop: 'remark', label: '备注说明', minWidth: 200},
 ]
@@ -165,19 +169,32 @@ const handleMemberClear = () => {
 }
 
 const getTypeName = (type) => {
-    const map = { 'RECHARGE': '充值', 'CONSUME': '消费', 'IMPORT': '系统导入', 'GIFT': '赠送', 'REFUND': '退货退款', 'ISSUE': '发券' }
+    // 🌟 增加 REVERSAL 的中文翻译
+    const map = { 'RECHARGE': '充值', 'CONSUME': '消费', 'IMPORT': '系统导入', 'GIFT': '赠送', 'REFUND': '退货退款', 'ISSUE': '发券', 'REVERSAL': '红冲撤销' }
     return map[type] || type
 }
 const getTagType = (type) => {
-    const map = { 'RECHARGE': 'success', 'CONSUME': 'danger', 'IMPORT': 'warning', 'GIFT': 'primary', 'ISSUE': 'warning', 'REFUND': 'info' }
+    // 🌟 REVERSAL 采用 info 灰色标签，代表冲正作废
+    const map = { 'RECHARGE': 'success', 'CONSUME': 'danger', 'IMPORT': 'warning', 'GIFT': 'primary', 'ISSUE': 'warning', 'REFUND': 'info', 'REVERSAL': 'info' }
     return map[type] || ''
 }
 
-const detailVisible = ref(false)
+// 🌟 弹窗分流控制逻辑
+const salesDetailVisible = ref(false)
+const rechargeDetailVisible = ref(false)
 const currentSearchOrderNo = ref('')
+
 const showOrderDetail = (orderNo) => {
+    if (!orderNo) return;
     currentSearchOrderNo.value = orderNo;
-    detailVisible.value = true;
+
+    // 智能路由
+    if (orderNo.startsWith('RC')) {
+        rechargeDetailVisible.value = true;
+    } else {
+        // 如果是 RE 开头，或者是退款单号，交给销售弹窗处理
+        salesDetailVisible.value = true;
+    }
 }
 
 const profileVisible = ref(false)

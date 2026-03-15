@@ -14,6 +14,7 @@ import com.money.mapper.GmsGoodsMapper;
 import com.money.mapper.OmsOrderDetailMapper;
 import com.money.mapper.OmsOrderMapper;
 import com.money.mapper.OmsOrderPayMapper;
+import com.money.mapper.UmsMemberBrandLevelMapper; // 🌟 新增：注入多轨身份 Mapper
 import com.money.service.OmsOrderDetailService;
 import com.money.service.OmsOrderLogService;
 import com.money.service.OmsOrderService;
@@ -31,7 +32,9 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @Slf4j
@@ -44,6 +47,7 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
     private final UmsMemberService umsMemberService;
     private final GmsGoodsMapper gmsGoodsMapper;
     private final OmsOrderPayMapper omsOrderPayMapper;
+    private final UmsMemberBrandLevelMapper umsMemberBrandLevelMapper; // 🌟 新增：用于查询多轨身份
 
     @Override
     public PageVO<OmsOrderVO> list(OmsOrderQueryDTO queryDTO) {
@@ -85,7 +89,6 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
     @Override
     public OrderDetailVO getOrderDetail(Long id) {
         OmsOrder order = this.getById(id);
-        // 🌟 异常升维：精准定位
         if (order == null) throw new BaseException(BizErrorStatus.POS_SETTLE_REQ_EMPTY, "查询失败：未找到系统ID为【{}】的订单记录", id);
         return assembleOrderDetail(order);
     }
@@ -95,7 +98,6 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
         if (StrUtil.isBlank(orderNo)) throw new BaseException("查询失败：订单编号不能为空");
 
         OmsOrder order = this.lambdaQuery().eq(OmsOrder::getOrderNo, orderNo).one();
-        // 🌟 异常升维：带入业务参数
         if (order == null) throw new BaseException(BizErrorStatus.POS_SETTLE_REQ_EMPTY, "查询失败：未找到单号为【{}】的订单记录", orderNo);
 
         return assembleOrderDetail(order);
@@ -109,10 +111,27 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
         );
         vo.setOrderDetails(BeanMapUtil.to(details, OmsOrderDetailVO::new));
 
+        // 🌟 核心修复区：在组装会员信息时，主动去查多轨身份并塞进去
         if (order.getMemberId() != null) {
             UmsMember member = umsMemberService.getById(order.getMemberId());
             if (member != null) {
-                vo.setMemberInfo(BeanMapUtil.to(member, UmsMemberVO::new));
+                UmsMemberVO memberVO = BeanMapUtil.to(member, UmsMemberVO::new);
+
+                // 👉 查身份表
+                List<UmsMemberBrandLevel> levels = umsMemberBrandLevelMapper.selectList(
+                        new LambdaQueryWrapper<UmsMemberBrandLevel>().eq(UmsMemberBrandLevel::getMemberId, member.getId())
+                );
+
+                // 👉 组装成 Map
+                if (levels != null && !levels.isEmpty()) {
+                    Map<String, String> levelMap = new HashMap<>();
+                    for (UmsMemberBrandLevel bl : levels) {
+                        levelMap.put(bl.getBrand(), bl.getLevelCode());
+                    }
+                    memberVO.setBrandLevels(levelMap); // 赋值给 VO
+                }
+
+                vo.setMemberInfo(memberVO);
             }
         }
 
@@ -182,7 +201,6 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
                 .in(OmsOrder::getStatus, Arrays.asList(OrderStatusEnum.PAID.name(), "PARTIAL", "REFUNDED"))
                 .update();
 
-        // 🌟 异常升维：防重复提交大白话
         if (!lockSuccess) throw new BaseException(BizErrorStatus.POS_ORDER_DUPLICATED, "单号【{}】当前状态不可退款，可能已完成退款，请刷新列表确认！", orderNo);
 
         OmsOrder order = this.lambdaQuery().eq(OmsOrder::getOrderNo, orderNo).one();
@@ -221,7 +239,6 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
         int affectedRows = ((OmsOrderDetailMapper)omsOrderDetailService.getBaseMapper())
                 .refundGoodsAtomically(dto.getDetailId(), returnQty);
 
-        // 🌟 异常升维：精准并发拦截反馈
         if (affectedRows == 0) {
             throw new BaseException(BizErrorStatus.STOCK_CALC_OVERFLOW, "操作失败：该商品剩余可退数量不足，或已被其他收银台处理，请刷新订单！");
         }
@@ -244,10 +261,15 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
 
         if (order.getVip() != null && order.getVip()) {
             BigDecimal goodsPrice = Optional.ofNullable(detail.getGoodsPrice()).orElse(BigDecimal.ZERO);
-            BigDecimal coupon = Optional.ofNullable(detail.getCoupon()).orElse(BigDecimal.ZERO);
+            BigDecimal lineTotalCoupon = Optional.ofNullable(detail.getCoupon()).orElse(BigDecimal.ZERO);
 
             BigDecimal refundCash = MoneyUtil.multiply(goodsPrice, returnQty);
-            BigDecimal refundCoupon = MoneyUtil.multiply(coupon, returnQty);
+
+            BigDecimal refundCoupon = BigDecimal.ZERO;
+            if (lineTotalCoupon.compareTo(BigDecimal.ZERO) > 0 && detail.getQuantity() != null && detail.getQuantity() > 0) {
+                BigDecimal unitCoupon = lineTotalCoupon.divide(new BigDecimal(detail.getQuantity()), 2, java.math.RoundingMode.HALF_UP);
+                refundCoupon = unitCoupon.multiply(new BigDecimal(returnQty));
+            }
 
             umsMemberService.processReturn(order.getMemberId(), refundCash, refundCoupon, false, dto.getOrderNo());
         }

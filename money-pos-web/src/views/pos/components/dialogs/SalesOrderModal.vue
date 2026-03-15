@@ -59,17 +59,43 @@
                             <div class="font-bold text-gray-800 text-lg">单号: <span class="font-mono">{{ currentOrderDetail.orderNo }}</span></div>
                             <div class="text-xs text-gray-500 mt-1">创建时间: {{ currentOrderDetail.createTime }} | 收银员: {{ cashierName }}</div>
                         </div>
-                        <el-tag effect="dark" :type="statusColor[currentOrderDetail.status] || 'info'" class="tracking-widest font-bold">
-                            {{ dict?.orderStatusKv?.[currentOrderDetail.status] || currentOrderDetail.status }}
+                        <el-tag effect="dark" :type="getOrderStatusType(currentOrderDetail.status)" class="tracking-widest font-bold">
+                            {{ getOrderStatusName(currentOrderDetail.status) }}
                         </el-tag>
                     </div>
 
                     <div class="flex-1 overflow-y-auto p-4 bg-white space-y-4">
                         <div class="border border-blue-100 rounded-lg overflow-hidden text-sm shadow-sm">
-                            <div class="bg-blue-50 px-3 py-1.5 font-bold text-blue-700 border-b border-blue-100 flex items-center gap-2"><el-icon><User /></el-icon> 会员身份</div>
-                            <div class="p-3 grid grid-cols-2 gap-y-2">
-                                <div><span class="text-gray-500 mr-2">会员姓名:</span><span class="font-bold text-gray-800">{{ currentOrderDetail.member?.name || currentOrderDetail.member || '散客' }}</span></div>
-                                <div><span class="text-gray-500 mr-2">联系电话:</span><span class="font-mono text-gray-800">{{ currentOrderDetail.member?.phone || '-' }}</span></div>
+                            <div class="bg-blue-50 px-3 py-1.5 font-bold text-blue-700 border-b border-blue-100 flex items-center gap-2"><el-icon><User /></el-icon> 会员信息</div>
+
+                            <div class="p-3 flex items-center gap-6">
+                                <div class="shrink-0">
+                                    <span class="text-gray-500 mr-2">会员姓名:</span>
+                                    <span class="font-bold text-gray-800">{{ currentOrderDetail.member?.name || currentOrderDetail.member || '散客' }}</span>
+                                </div>
+
+                                <div class="shrink-0">
+                                    <span class="text-gray-500 mr-2">联系电话:</span>
+                                    <span class="font-mono text-gray-800">{{ currentOrderDetail.member?.phone || '-' }}</span>
+                                </div>
+
+                                <div class="flex flex-1 items-center gap-2 border-l border-gray-200 pl-4">
+                                    <span class="text-gray-500 shrink-0">会员身份:</span>
+                                    <div class="flex flex-wrap gap-2" v-if="currentOrderDetail.member?.brandLevels && Object.keys(currentOrderDetail.member.brandLevels).length > 0">
+                                        <el-tag
+                                            v-for="(levelCode, brandId) in currentOrderDetail.member.brandLevels"
+                                            :key="brandId"
+                                            size="small"
+                                            type="success"
+                                            effect="light"
+                                            class="border-success-300"
+                                        >
+                                            <span class="font-bold text-gray-700 mr-1">{{ brandsKv[brandId] || getBrandName(brandId) || '未知' }}</span>
+                                            <span class="text-green-600 font-bold">{{ (dict.memberTypeKv && dict.memberTypeKv[levelCode]) || getLevelName(levelCode) || levelCode }}</span>
+                                        </el-tag>
+                                    </div>
+                                    <span v-else class="text-gray-400 font-bold text-sm">无关联身份 / 散客</span>
+                                </div>
                             </div>
                         </div>
 
@@ -160,6 +186,7 @@ import dayjs from 'dayjs'
 import { req } from "@/api/index.js"
 import { ElMessage, ElMessageBox } from 'element-plus'
 import dictApi from "@/api/system/dict.js"
+import brandApi from "@/api/gms/brand.js"
 import NP from "number-precision"
 
 const props = defineProps(['modelValue'])
@@ -174,19 +201,12 @@ const currentOrderDetail = ref(null); const detailLoading = ref(false)
 const payTagDict = ref([])
 const dict = ref({ orderStatusKv: {} })
 
-// 🌟 对齐着色映射
-const statusColor = {
-    'RETURN': 'info',
-    'REFUNDED': 'info',
-    'PAID': 'success',
-    'DONE': 'success',
-    'PARTIAL': 'warning'
-}
+const brandList = ref([])
+const brandsKv = ref({})
 
 onMounted(async () => {
     try {
-        // 🌟 同时加载支付标签和订单状态字典
-        const dictRes = await dictApi.loadDict(["paySubTag", "orderStatus"])
+        const dictRes = await dictApi.loadDict(["paySubTag", "orderStatus", "memberType"])
         if (dictRes) {
             if (dictRes.paySubTag) payTagDict.value = dictRes.paySubTag
             dict.value = dictRes
@@ -194,7 +214,49 @@ onMounted(async () => {
     } catch (e) {
         console.error("字典加载失败", e)
     }
+
+    try {
+        const brandRes = await (brandApi.list ? brandApi.list({ size: 1000 }) : brandApi.getSelect())
+        brandList.value = brandRes?.data?.records || brandRes?.data || brandRes?.records || brandRes || []
+        brandList.value.forEach(e => { brandsKv.value[e.id || e.value] = e.name || e.label })
+    } catch (e) {
+        console.error("品牌字典加载失败", e)
+    }
 })
+
+const getOrderStatusName = (status) => {
+    if (!status) return '-';
+    const statuses = dict.value.orderStatus;
+    const fallbackMap = {
+        'PENDING': '待支付', 'PAID': '已支付', 'PARTIAL': '部分退款',
+        'RETURN': '全额退款', 'REFUNDED': '已退款', 'CLOSED': '已关闭', 'CANCELLED': '已取消'
+    };
+    if (!Array.isArray(statuses) || statuses.length === 0) return fallbackMap[status] || status;
+    const match = statuses.find(s => s && (s.value === status || s.dictValue === status));
+    return match ? (match.desc || match.dictLabel || status) : (fallbackMap[status] || status);
+}
+
+const getOrderStatusType = (status) => {
+    if (status === 'PAID') return 'success';
+    if (status === 'PARTIAL') return 'warning';
+    if (status === 'RETURN' || status === 'REFUNDED' || status === 'CLOSED' || status === 'CANCELLED') return 'info';
+    return 'danger';
+}
+
+const getBrandName = (brandId) => {
+    if (!brandId) return '未知'
+    if (/[\u4e00-\u9fa5]/.test(brandId.toString())) return brandId;
+    const match = brandList.value.find(b => b && b.id && b.id.toString() === brandId.toString())
+    return match ? match.name : `ID:${brandId}`
+}
+
+const getLevelName = (levelCode) => {
+    if (!levelCode) return '无等级'
+    const types = dict.value.memberType
+    if (!Array.isArray(types) || types.length === 0) return levelCode
+    const match = types.find(m => m && (m.value === levelCode || m.dictValue === levelCode))
+    return match ? (match.desc || match.dictLabel || levelCode) : levelCode
+}
 
 const getPayTagName = (tagCode) => {
     if (!tagCode) return '其他扫码'

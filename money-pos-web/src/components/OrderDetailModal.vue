@@ -8,33 +8,45 @@
             </div>
 
             <div v-else-if="currentOrderDetail" class="flex flex-col gap-6">
-                <el-descriptions title="关联会员档案" :column="2" border>
-                    <el-descriptions-item label="会员姓名" label-align="center" align="center" label-class-name="whitespace-nowrap w-32">{{ currentOrderDetail.member?.name || '-' }}</el-descriptions-item>
-                    <el-descriptions-item label="联系电话" label-align="center" align="center" label-class-name="whitespace-nowrap w-32">{{ currentOrderDetail.member?.phone || '-' }}</el-descriptions-item>
-                    <el-descriptions-item label="品牌多轨身份" :span="2" label-align="center" align="left" label-class-name="whitespace-nowrap w-32">
-                        <div class="flex flex-wrap gap-2" v-if="currentOrderDetail.member?.brandLevels">
-                            <el-tag
-                                v-for="(levelCode, brand) in currentOrderDetail.member.brandLevels"
-                                :key="brand"
-                                size="default"
-                                type="warning"
-                                effect="light"
-                                class="border-warning-300"
-                            >
-                                <span class="font-bold text-gray-700 mr-1">{{ getBrandName(brand) }}</span>
-                                <span class="text-orange-600 font-bold">{{ getLevelName(levelCode) }}</span>
-                            </el-tag>
+                <div class="border border-blue-100 rounded-lg overflow-hidden text-sm shadow-sm">
+                    <div class="bg-blue-50 px-3 py-1.5 font-bold text-blue-700 border-b border-blue-100 flex items-center gap-2">
+                        <el-icon><User /></el-icon> 会员信息
+                    </div>
+                    <div class="p-3 flex items-center gap-6">
+                        <div class="shrink-0">
+                            <span class="text-gray-500 mr-2">会员姓名:</span>
+                            <span class="font-bold text-gray-800">{{ currentOrderDetail.member?.name || '-' }}</span>
                         </div>
-                        <span v-else class="text-gray-400 font-bold">无关联身份</span>
-                    </el-descriptions-item>
-                </el-descriptions>
+                        <div class="shrink-0">
+                            <span class="text-gray-500 mr-2">联系电话:</span>
+                            <span class="font-mono text-gray-800">{{ currentOrderDetail.member?.phone || '-' }}</span>
+                        </div>
+                        <div class="flex flex-1 items-center gap-2 border-l border-gray-200 pl-4">
+                            <span class="text-gray-500 shrink-0">会员身份:</span>
+                            <div class="flex flex-wrap gap-2" v-if="currentOrderDetail.member?.brandLevels && Object.keys(currentOrderDetail.member.brandLevels).length > 0">
+                                <el-tag
+                                    v-for="(levelCode, brandId) in currentOrderDetail.member.brandLevels"
+                                    :key="brandId"
+                                    size="small"
+                                    type="success"
+                                    effect="light"
+                                    class="border-success-300"
+                                >
+                                    <span class="font-bold text-gray-700 mr-1">{{ brandsKv[brandId] || getBrandName(brandId) || '未知' }}</span>
+                                    <span class="text-green-600 font-bold">{{ (dict.memberTypeKv && dict.memberTypeKv[levelCode]) || getLevelName(levelCode) || levelCode }}</span>
+                                </el-tag>
+                            </div>
+                            <span v-else class="text-gray-400 font-bold text-sm">无关联身份 / 散客</span>
+                        </div>
+                    </div>
+                </div>
 
                 <div>
                     <div class="flex justify-between items-center mb-2">
                         <div class="font-bold text-gray-800 text-base">资金瀑布流 (强一致性核算)</div>
                         <div class="flex items-center gap-4 text-sm">
-                            <el-tag effect="light" :type="currentOrderDetail.status === 'PAID' ? 'success' : 'danger'" class="font-bold">
-                                状态: {{ currentOrderDetail.status === 'PAID' ? '已支付' : (currentOrderDetail.status === 'RETURN' || currentOrderDetail.status === 'REFUNDED' ? '已退款' : currentOrderDetail.status) }}
+                            <el-tag effect="light" :type="getOrderStatusType(currentOrderDetail.status)" class="font-bold">
+                                状态: {{ getOrderStatusName(currentOrderDetail.status) }}
                             </el-tag>
                             <span class="text-gray-500">交易时间: {{ currentOrderDetail.paymentTime || currentOrderDetail.createTime || '-' }}</span>
                         </div>
@@ -137,7 +149,7 @@
 
 <script setup>
 import { ref, computed, watch, onBeforeMount } from 'vue'
-import { Document } from '@element-plus/icons-vue'
+import { Document, User } from '@element-plus/icons-vue' // 🌟 补齐了 User 图标
 import { req } from "@/api/index.js"
 import dictApi from "@/api/system/dict.js"
 import brandApi from "@/api/gms/brand.js"
@@ -152,10 +164,11 @@ const detailLoading = ref(false)
 
 const dict = ref({})
 const brandList = ref([])
+const brandsKv = ref({})
 
 const fetchBaseData = async () => {
     try {
-        const dictRes = await dictApi.loadDict(["memberType", "paySubTag"])
+        const dictRes = await dictApi.loadDict(["memberType", "paySubTag", "orderStatus"])
         dict.value = dictRes || {}
     } catch (e) {
         console.error("字典加载失败", e)
@@ -163,6 +176,7 @@ const fetchBaseData = async () => {
     try {
         const brandRes = await (brandApi.list ? brandApi.list({ size: 1000 }) : brandApi.getSelect())
         brandList.value = brandRes?.data?.records || brandRes?.data || brandRes?.records || brandRes || []
+        brandList.value.forEach(e => { brandsKv.value[e.id || e.value] = e.name || e.label })
     } catch (e) {
         console.error("品牌字典加载失败", e)
     }
@@ -197,7 +211,25 @@ const getPayTagName = (tagCode) => {
     return match ? (match.desc || match.dictLabel || tagCode) : tagCode
 }
 
-// 🌟 核心：专门翻译支付方式数组
+const getOrderStatusName = (status) => {
+    if (!status) return '-';
+    const statuses = dict.value.orderStatus;
+    const fallbackMap = {
+        'PENDING': '待支付', 'PAID': '已支付', 'PARTIAL': '部分退款',
+        'RETURN': '全额退款', 'REFUNDED': '已退款', 'CLOSED': '已关闭', 'CANCELLED': '已取消'
+    };
+    if (!Array.isArray(statuses) || statuses.length === 0) return fallbackMap[status] || status;
+    const match = statuses.find(s => s && (s.value === status || s.dictValue === status));
+    return match ? (match.desc || match.dictLabel || status) : (fallbackMap[status] || status);
+}
+
+const getOrderStatusType = (status) => {
+    if (status === 'PAID') return 'success';
+    if (status === 'PARTIAL') return 'warning';
+    if (status === 'RETURN' || status === 'REFUNDED' || status === 'CLOSED' || status === 'CANCELLED') return 'info';
+    return 'danger';
+}
+
 const translatePayMethods = (methodsStr) => {
     if (!methodsStr) return '';
     return methodsStr.split(',').map(method => {
@@ -212,7 +244,6 @@ const translatePayMethods = (methodsStr) => {
     }).join(' + ');
 }
 
-// 🌟 解析 JSON 并调用翻译函数
 const formatLogMessage = (desc) => {
     if (!desc) return '-';
     if (desc.startsWith('{') && desc.endsWith('}')) {
@@ -241,7 +272,7 @@ const returnPrice = computed(() => {
 
 watch(visible, async (newVal) => {
     if (newVal && props.orderNo) {
-        if (!dict.value.memberType || dict.value.memberType.length === 0) {
+        if (!dict.value.memberType || !dict.value.orderStatus) {
             await fetchBaseData()
         }
 
@@ -250,6 +281,7 @@ watch(visible, async (newVal) => {
         try {
             const res = await req({ url: '/oms-order/detail', method: 'GET', params: { orderNo: props.orderNo } })
             const data = res?.data || res || {}
+
             currentOrderDetail.value = {
                 ...data,
                 details: data.orderDetails || [],

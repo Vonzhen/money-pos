@@ -84,4 +84,11 @@ public interface UmsMemberService extends IService<UmsMember> {
      * 导弹发射：批量为指定会员派发满减券
      */
     void batchIssueVoucher(java.util.List<Long> memberIds, Long ruleId, Integer quantity);
+
+    /**
+     * 充值订单红冲/撤销
+     * @param orderNo 充值单号
+     * @param reason 撤销原因
+     */
+    void voidRecharge(String orderNo, String reason);
 }

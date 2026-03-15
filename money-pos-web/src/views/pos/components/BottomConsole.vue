@@ -12,11 +12,22 @@
                 </div>
 
                 <div class="flex justify-between items-start mt-1">
-                    <span class="text-gray-400 shrink-0 mr-2 mt-0.5">会员等级:</span>
-                    <span class="text-orange-400 text-right leading-snug">
-                        <span v-if="!currentMember.brandLevels || Object.keys(currentMember.brandLevels).length === 0" class="text-gray-500">无</span>
-                        <span v-else>{{ Object.values(currentMember.brandLevels).map(code => getLevelName(code)).join(', ') }}</span>
-                    </span>
+                    <span class="text-gray-400 shrink-0 mr-2 mt-1">会员身份:</span>
+                    <div class="flex flex-wrap gap-1 justify-end">
+                        <template v-if="currentMember.brandLevels && Object.keys(currentMember.brandLevels).length > 0">
+                            <el-tag
+                                v-for="(levelCode, brandId) in currentMember.brandLevels"
+                                :key="brandId"
+                                size="small"
+                                type="success"
+                                effect="dark"
+                                class="font-bold tracking-wider border-0 shadow-[0_0_8px_rgba(16,185,129,0.3)]"
+                            >
+                                {{ brandsKv[brandId] || brandId }}: {{ getLevelName(levelCode) }}
+                            </el-tag>
+                        </template>
+                        <span v-else class="text-gray-500 font-bold mt-1">普通零售客</span>
+                    </div>
                 </div>
 
                 <div class="flex justify-between items-center">
@@ -152,13 +163,13 @@ import { ref, nextTick, onMounted } from 'vue'
 import { Search, Delete, User, Unlock, Tickets, Timer, Monitor } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { req } from '@/api/index.js'
+import brandApi from '@/api/gms/brand.js' // 🌟 新增：引入品牌 API
 import { usePosStore } from '../hooks/usePosStore'
 import MemberSmartSearch from '@/components/common/MemberSmartSearch.vue'
 
 const props = defineProps(['lastOrder', 'currentOrderNo', 'currentTime', 'memberTypesDict', 'suspendCount'])
 const emit = defineEmits(['open-checkout', 'open-drawer', 'clear-cart', 'suspend'])
 
-// 🌟 核心：引入 bindMember 和 clearMember
 const {
     currentMember,
     totalCount,
@@ -178,7 +189,19 @@ const bindMemberId = ref(null)
 const memberSearchComp = ref(null)
 const autocompleteKey = ref(0)
 
-onMounted(() => {
+// 🌟 新增：品牌字典容器
+const brandsKv = ref({})
+
+onMounted(async () => {
+    // 拉取品牌字典，用于翻译品牌 ID
+    try {
+        const brandRes = await (brandApi.list ? brandApi.list({ size: 1000 }) : brandApi.getSelect())
+        const brandList = brandRes?.data?.records || brandRes?.data || brandRes?.records || brandRes || []
+        brandList.forEach(e => { brandsKv.value[e.id || e.value] = e.name || e.label })
+    } catch (e) {
+        console.error("品牌字典加载失败", e)
+    }
+
     nextTick(() => { setTimeout(() => { focusInput() }, 300) })
 })
 
@@ -186,7 +209,6 @@ const openMemberDialog = () => { bindMemberId.value = null; memberDialogVisible.
 const focusMemberSearch = () => { memberSearchComp.value?.focus() }
 const handleMemberDialogClosed = () => { bindMemberId.value = null; focusInput(); }
 
-// 🌟 使用 bindMember 动作，确保立刻触发试算
 const handleMemberBind = (member) => {
     bindMember(member)
     memberDialogVisible.value = false
@@ -194,7 +216,6 @@ const handleMemberBind = (member) => {
     nextTick(() => focusInput())
 }
 
-// 🌟 使用 clearMember 动作，确保立刻触发试算
 const handleClearMember = () => {
     clearMember()
     ElMessage.info('已清除当前会员绑定')
@@ -211,15 +232,15 @@ const resetScanner = async () => {
 const focusInput = () => { scannerInput.value?.focus(); }
 
 const clearAllWithFocus = () => {
-    clearAll(); // 调用 Store 的全局清空指令
+    clearAll();
     emit('clear-cart');
     focusInput();
 }
 
 const getLevelName = (code) => {
     if (!props.memberTypesDict) return code;
-    const match = props.memberTypesDict.find(item => String(item.value) === String(code));
-    return match ? match.desc : code;
+    const match = props.memberTypesDict.find(item => String(item.value) === String(code) || String(item.dictValue) === String(code));
+    return match ? (match.desc || match.dictLabel || code) : code;
 }
 
 const formatMoney = (val) => {
