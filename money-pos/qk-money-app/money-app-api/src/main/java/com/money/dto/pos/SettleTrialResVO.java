@@ -27,5 +27,6 @@ public class SettleTrialResVO {
         private BigDecimal couponDeduct;  // 该行扣的单品券
         private Integer quantity;
         private BigDecimal subTotal;      // 该行实收小计
+        private BigDecimal costPrice;
     }
 }

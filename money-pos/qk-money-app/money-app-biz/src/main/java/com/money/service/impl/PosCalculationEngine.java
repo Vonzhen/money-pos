@@ -118,6 +118,7 @@ public class PosCalculationEngine {
             itemRes.setCouponDeduct(itemTotalCoupon);
             itemRes.setQuantity(reqItem.getQuantity());
             itemRes.setSubTotal(itemTotalReal);
+            itemRes.setCostPrice(unitCost);
             res.getItems().add(itemRes);
 
             res.setTotalAmount(res.getTotalAmount().add(itemTotalReal));

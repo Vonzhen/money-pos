@@ -51,12 +51,34 @@
 
         <OrderDetailModal v-model="orderDetailVisible" :order-no="currentSearchOrderNo" />
 
-        <el-dialog v-model="otherDetailVisible" :title="detailTitle" width="750px" destroy-on-close>
+        <el-dialog v-model="otherDetailVisible" :title="detailTitle" width="900px" destroy-on-close>
+            <div class="mb-4 flex justify-between items-center bg-gray-50 p-3 rounded border border-dashed">
+                <div class="text-sm text-gray-500">
+                    单据编号: <span class="font-mono font-bold text-gray-800">{{ currentSearchOrderNo }}</span>
+                </div>
+                <div class="text-sm">
+                    本次合计盈亏:
+                    <span :class="totalImpact >= 0 ? 'text-green-600' : 'text-red-600'" class="text-xl font-black font-mono ml-2">
+                        {{ totalImpact >= 0 ? '+' : '' }}￥{{ totalImpact.toFixed(2) }}
+                    </span>
+                </div>
+            </div>
+
             <el-table :data="detailList" v-loading="detailLoading" stripe border size="default" class="w-full">
                 <el-table-column type="index" label="#" width="50" align="center" />
-                <el-table-column prop="goodsName" label="商品名称" show-overflow-tooltip>
-                    <template #default="{row}"><span class="font-bold text-gray-700">{{ row.goodsName }}</span></template>
+                <el-table-column prop="goodsName" label="商品信息" min-width="180" show-overflow-tooltip>
+                    <template #default="{row}">
+                        <div class="font-bold text-gray-700">{{ row.goodsName }}</div>
+                        <div class="text-[10px] text-gray-400 font-mono">{{ row.goodsBarcode }}</div>
+                    </template>
                 </el-table-column>
+
+                <el-table-column label="成本快照" width="130" align="right">
+                    <template #default="{row}">
+                        <span class="text-gray-500 font-mono">￥{{ Number(row.costPriceSnapshot || 0).toFixed(2) }}</span>
+                    </template>
+                </el-table-column>
+
                 <el-table-column prop="quantity" label="数量变动" width="120" align="center">
                     <template #default="{row}">
                         <span class="font-black text-lg" :class="row.quantity > 0 ? 'text-green-600' : 'text-red-600'">
@@ -64,7 +86,23 @@
                         </span>
                     </template>
                 </el-table-column>
+
+                <el-table-column label="资产影响 (盈亏)" width="150" align="right">
+                    <template #default="{row}">
+                        <span class="font-bold font-mono text-base" :class="row.impactAmount >= 0 ? 'text-green-600' : 'text-red-600'">
+                            {{ row.impactAmount >= 0 ? '+' : '' }}￥{{ Number(row.impactAmount || 0).toFixed(2) }}
+                        </span>
+                    </template>
+                </el-table-column>
+
+                <el-table-column prop="remark" label="备注" show-overflow-tooltip />
             </el-table>
+
+            <template #footer>
+                <div class="text-xs text-gray-400 text-left italic">
+                    * 成本快照记录了变动发生时的移动加权平均单价（入库除外，记录为录入价）。
+                </div>
+            </template>
         </el-dialog>
     </PageWrapper>
 </template>
@@ -76,11 +114,11 @@ import MoneyCrudTable from "@/components/crud/MoneyCrudTable.vue";
 import MoneyRR from "@/components/crud/MoneyRR.vue";
 import stockLogApi from "@/api/gms/stockLog.js";
 import { req } from "@/api/index.js";
-import { ref } from "vue";
+import { ref, computed } from "vue";
 import { Document } from "@element-plus/icons-vue";
 
 import OrderDetailModal from "@/components/OrderDetailModal.vue";
-import SmartGoodsSelector from "@/components/common/SmartGoodsSelector.vue" // 🌟 引入智能搜索组件
+import SmartGoodsSelector from "@/components/common/SmartGoodsSelector.vue"
 
 const columns = [
     {prop: 'createTime', label: '发生时间', width: 170},
@@ -109,19 +147,26 @@ const detailLoading = ref(false)
 const detailList = ref([])
 const detailTitle = ref('')
 
+// 计算单据总盈亏额
+const totalImpact = computed(() => {
+    return detailList.value.reduce((sum, item) => sum + (Number(item.impactAmount) || 0), 0);
+});
+
 const showDetail = async (row) => {
+    currentSearchOrderNo.value = row.orderNo;
+
     if (row.type === 'SALE' || row.type === 'RETURN') {
-        currentSearchOrderNo.value = row.orderNo;
         orderDetailVisible.value = true;
     } else {
         const typeName = { 'INBOUND': '采购入库单', 'CHECK': '盘点单', 'SCRAP': '报损单' }[row.type] || '单据'
-        detailTitle.value = `📦 ${typeName}明细 - ${row.orderNo}`
+        detailTitle.value = `📊 ${typeName}审计 - ${row.orderNo}`
         otherDetailVisible.value = true;
         detailLoading.value = true;
         detailList.value = [];
         try {
+            // 🌟 核心：从后台拉取该单号下的所有流水记录，包含我们新加的成本快照和资产影响字段
             const res = await req({ url: '/gms/stockLog', method: 'GET', params: { orderNo: row.orderNo, size: 500 } })
-            detailList.value = res.data?.records || []
+            detailList.value = res.data?.records || res || []
         } catch (e) {
             console.error(e)
         } finally {

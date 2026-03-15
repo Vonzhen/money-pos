@@ -7,6 +7,7 @@ import com.money.mapper.OmsOrderPayMapper;
 import com.money.mapper.PosCouponRuleMapper;
 import com.money.mapper.PosMemberCouponMapper;
 import com.money.mapper.UmsMemberLogMapper;
+import com.money.mapper.GmsInventoryDocMapper; // 🌟 新增：引入大一统库存单据 Mapper
 import com.money.service.OmsOrderDetailService;
 import com.money.service.OmsOrderService;
 import com.money.service.UmsMemberService;
@@ -37,6 +38,7 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
     private final PosCouponRuleMapper posCouponRuleMapper;
     private final PosMemberCouponMapper posMemberCouponMapper;
     private final GmsBrandService gmsBrandService;
+    private final GmsInventoryDocMapper gmsInventoryDocMapper; // 🌟 新增：注入库存单据查询能力
 
     @Override
     public FinanceDashboardVO getDashboardData(String date) {
@@ -79,7 +81,28 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
         vo.setPayAmount(payAmount);
         vo.setRefundAmount(refundAmount);
         vo.setNetIncome(netIncome);
-        vo.setGrossProfit(netIncome.subtract(costAmount));
+
+        // 🌟🌟🌟 核心重构：计算包含商品损耗的【真实净利润】 🌟🌟🌟
+        BigDecimal salesGrossProfit = netIncome.subtract(costAmount); // 纯卖货的毛利
+
+        // 查出当天的异常库存流失单据 (报损单 OUTBOUND、盘点单 CHECK)
+        List<GmsInventoryDoc> inventoryDocs = gmsInventoryDocMapper.selectList(new LambdaQueryWrapper<GmsInventoryDoc>()
+                .ge(GmsInventoryDoc::getCreateTime, startOfDay)
+                .le(GmsInventoryDoc::getCreateTime, endOfDay)
+                .in(GmsInventoryDoc::getDocType, "OUTBOUND", "CHECK"));
+
+        BigDecimal inventoryLoss = BigDecimal.ZERO;
+        for (GmsInventoryDoc doc : inventoryDocs) {
+            // totalAmount 为负数时代表资产流失（亏损）
+            if (doc.getTotalAmount() != null && doc.getTotalAmount().compareTo(BigDecimal.ZERO) < 0) {
+                // 取绝对值，累加到当天的总损耗中
+                inventoryLoss = inventoryLoss.add(doc.getTotalAmount().abs());
+            }
+        }
+
+        // 真实毛利 = 销售毛利 - 非正常资产流失
+        vo.setGrossProfit(salesGrossProfit.subtract(inventoryLoss));
+        // 🌟🌟🌟 ==================================== 🌟🌟🌟
 
         // 2. 获取当天的支付流水和会员充值记录
         List<OmsOrderPay> dailyPays = omsOrderPayMapper.selectList(new LambdaQueryWrapper<OmsOrderPay>()
@@ -211,6 +234,7 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
         Map<String, ProfitRankVO> rankMap = new HashMap<>();
         for (OmsOrderDetail d : details) {
             BigDecimal qty = new BigDecimal(d.getQuantity());
+            // 🌟 利润排行榜：现在这里的 getPurchasePrice 拿到的已经是真实记录下来的移动均价了！
             BigDecimal unitProfit = d.getGoodsPrice().subtract(d.getPurchasePrice() != null ? d.getPurchasePrice() : BigDecimal.ZERO);
             ProfitRankVO vo = rankMap.getOrDefault(d.getGoodsName(), new ProfitRankVO(d.getGoodsName(), 0, BigDecimal.ZERO, BigDecimal.ZERO));
             vo.setTotalQuantity(vo.getTotalQuantity() + d.getQuantity());
@@ -336,7 +360,6 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
         BigDecimal totalScan = BigDecimal.ZERO, totalCash = BigDecimal.ZERO, totalBalance = BigDecimal.ZERO;
         BigDecimal totalCoupon = BigDecimal.ZERO, totalVoucher = BigDecimal.ZERO;
 
-        // 🌟 将高级报表也加入标签动态识别，保证与主页一致
         Map<String, BigDecimal> scanTagMap = new HashMap<>();
 
         for (LocalDate date = start; !date.isAfter(end); date = date.plusDays(1)) {
