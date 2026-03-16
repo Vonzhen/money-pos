@@ -66,4 +66,14 @@ public class OmsOrderDetail extends BaseEntity {
      * 品牌ID (数据冗余，专为报表提速)
      */
     private Long brandId;
+
+    /**
+     * 分类ID快照 (防止商品修改分类导致历史报表错乱)
+     */
+    private Long categoryId;
+
+    /**
+     * 分类名称快照
+     */
+    private String categoryName;
 }

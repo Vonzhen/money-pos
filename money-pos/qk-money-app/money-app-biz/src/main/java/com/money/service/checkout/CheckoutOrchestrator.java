@@ -19,14 +19,13 @@ import java.util.stream.Collectors;
 
 /**
  * 🌟 结算大总管 (Orchestrator)
- * 核心职责：调度六大服务，记录审计日志，控制事务边界。
+ * 核心升级：增加幂等拦截闸口。
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class CheckoutOrchestrator {
 
-    // 注入流水线上的 6 个工人和 1 个日志服务
     private final CheckoutValidationService validationService;
     private final CheckoutPricingService pricingService;
     private final CheckoutOrderService orderService;
@@ -42,7 +41,16 @@ public class CheckoutOrchestrator {
         CheckoutContext context = new CheckoutContext();
         context.setRequest(request);
 
-        // 🌟 六大工序，依次执行，任何一步报错，全部回滚！
+        // ================= 🌟 1. 幂等拦截闸口 =================
+        if (orderService.loadExistingOrder(context)) {
+            log.info("【幂等拦截生效】检测到重复请求，直接返回已成功结果，跳过所有资产扣减！单号: {}", request.getReqId());
+            // 找回支付流水拼装小票
+            paymentService.loadExistingPayments(context);
+            // 拦截放行，直接返回小票
+            return buildFinalResult(context);
+        }
+
+        // ================= 🌟 2. 正常流水线 =================
         validationService.validate(context);
         pricingService.calculate(context);
         orderService.createOrder(context);
@@ -50,17 +58,13 @@ public class CheckoutOrchestrator {
         memberAssetService.handleAsset(context);
         paymentService.handlePayment(context);
 
-        // 🌟 补齐：记录高可用的 JSON 结构化审计日志
         saveAuditLog(context);
 
-        // 🌟 组装给顾客的最终小票
         return buildFinalResult(context);
     }
 
-    /**
-     * 内部动作：记录审计日志
-     */
     private void saveAuditLog(CheckoutContext context) {
+        // ... 原有逻辑不变 ...
         OmsOrder order = context.getOrder();
         NormalizedPaymentResult payResult = context.getPaymentResult();
 
@@ -73,7 +77,7 @@ public class CheckoutOrchestrator {
         OmsOrderLog orderLog = new OmsOrderLog();
         orderLog.setOrderId(order.getId());
 
-        Map<String, Object> auditMap = new LinkedHashMap<>(); // 保持插入顺序
+        Map<String, Object> auditMap = new LinkedHashMap<>();
         auditMap.put("action", "SETTLE_SUCCESS");
         auditMap.put("orderNo", order.getOrderNo());
         auditMap.put("memberId", context.getRequest().getMember());
@@ -89,9 +93,6 @@ public class CheckoutOrchestrator {
         omsOrderLogService.save(orderLog);
     }
 
-    /**
-     * 内部动作：把公文包里的数据，整理成小票返回
-     */
     private SettleResultVO buildFinalResult(CheckoutContext context) {
         OmsOrder order = context.getOrder();
         NormalizedPaymentResult payResult = context.getPaymentResult();

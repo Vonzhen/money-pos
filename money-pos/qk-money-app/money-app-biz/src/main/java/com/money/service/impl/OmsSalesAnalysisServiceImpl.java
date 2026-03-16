@@ -1,10 +1,19 @@
 package com.money.service.impl;
 
 import cn.hutool.core.util.StrUtil;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.money.dto.OmsOrder.AnalysisAtomicDataDTO;
+import com.money.dto.OmsOrder.OmsOrderQueryDTO;
 import com.money.dto.OmsOrder.OmsSalesDataVO.*;
+import com.money.dto.OmsOrder.OrderCountVO;
+import com.money.dto.OmsOrder.ProfitAuditVO;
+import com.money.entity.OmsOrder;
 import com.money.mapper.OmsOrderMapper;
 import com.money.service.OmsSalesAnalysisService;
+import com.money.util.MoneyUtil;
+import com.money.util.PageUtil;
+import com.money.web.vo.PageVO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -23,7 +32,7 @@ public class OmsSalesAnalysisServiceImpl implements OmsSalesAnalysisService {
 
     private final OmsOrderMapper omsOrderMapper;
 
-    // 🌟 自适应前端时间格式引擎：不管前端传的是 YYYY-MM-DD 还是带时分秒，统一补齐到极值
+    // 自适应前端时间格式引擎：不管前端传的是 YYYY-MM-DD 还是带时分秒，统一补齐到极值
     private LocalDateTime parseStartTime(String dateStr) {
         if (StrUtil.isBlank(dateStr)) return LocalDate.now().minusDays(29).atStartOfDay();
         if (dateStr.length() == 10) return LocalDate.parse(dateStr).atStartOfDay();
@@ -127,5 +136,42 @@ public class OmsSalesAnalysisServiceImpl implements OmsSalesAnalysisService {
         }
         results.sort((a, b) -> b.getRoiMultiplier().compareTo(a.getRoiMultiplier()));
         return results;
+    }
+
+    // ==========================================
+    // 从原 OmsOrderServiceImpl 无缝收编的统计与分页方法
+    // ==========================================
+
+    @Override
+    public OrderCountVO countOrderAndSales(LocalDateTime startTime, LocalDateTime endTime) {
+        List<AnalysisAtomicDataDTO> stats = omsOrderMapper.getPeriodAtomicStats(startTime, endTime, "DAILY");
+
+        OrderCountVO vo = new OrderCountVO();
+        long totalOrder = 0;
+        BigDecimal totalSales = BigDecimal.ZERO;
+        BigDecimal totalCost = BigDecimal.ZERO;
+
+        for (AnalysisAtomicDataDTO stat : stats) {
+            totalOrder += stat.getOrderCount();
+            totalSales = MoneyUtil.add(totalSales, stat.getNetSalesAmount());
+            totalCost = MoneyUtil.add(totalCost, stat.getCostAmount());
+        }
+
+        vo.setOrderCount(totalOrder);
+        vo.setTotalSales(totalSales);
+        vo.setSaleCount(totalSales);
+        vo.setCostCount(totalCost);
+        vo.setProfit(MoneyUtil.subtract(totalSales, totalCost)); // 净利润 = 净销售额 - 成本
+
+        return vo;
+    }
+
+    @Override
+    public PageVO<ProfitAuditVO> getProfitAuditPage(OmsOrderQueryDTO queryDTO) {
+        Page<OmsOrder> page = omsOrderMapper.selectPage(PageUtil.toPage(queryDTO), new LambdaQueryWrapper<OmsOrder>()
+                .between(queryDTO.getStartTime() != null && queryDTO.getEndTime() != null,
+                        OmsOrder::getCreateTime, queryDTO.getStartTime(), queryDTO.getEndTime())
+                .orderByDesc(OmsOrder::getCreateTime));
+        return PageUtil.toPageVO(page, ProfitAuditVO::new);
     }
 }

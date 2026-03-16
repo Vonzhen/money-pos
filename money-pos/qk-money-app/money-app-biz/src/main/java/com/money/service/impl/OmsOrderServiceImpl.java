@@ -5,16 +5,16 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.money.constant.BizErrorStatus;
-import com.money.constant.OrderStatusEnum;
-import com.money.dto.OmsOrder.*;
+import com.money.constant.PayMethodEnum;
+import com.money.dto.OmsOrder.OmsOrderQueryDTO;
+import com.money.dto.OmsOrder.OmsOrderVO;
+import com.money.dto.OmsOrder.OrderDetailVO;
 import com.money.dto.OmsOrderDetail.OmsOrderDetailVO;
 import com.money.dto.UmsMember.UmsMemberVO;
 import com.money.entity.*;
-import com.money.mapper.GmsGoodsMapper;
-import com.money.mapper.OmsOrderDetailMapper;
 import com.money.mapper.OmsOrderMapper;
 import com.money.mapper.OmsOrderPayMapper;
-import com.money.mapper.UmsMemberBrandLevelMapper; // 🌟 新增：注入多轨身份 Mapper
+import com.money.mapper.UmsMemberBrandLevelMapper;
 import com.money.service.OmsOrderDetailService;
 import com.money.service.OmsOrderLogService;
 import com.money.service.OmsOrderService;
@@ -25,150 +25,125 @@ import com.money.web.exception.BaseException;
 import com.money.web.util.BeanMapUtil;
 import com.money.web.vo.PageVO;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
-@Slf4j
-@Service
+@Service // 🌟 挂牌，纳入 Spring 容器管理
 @RequiredArgsConstructor
 public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> implements OmsOrderService {
 
+    private final OmsOrderMapper omsOrderMapper;
     private final OmsOrderDetailService omsOrderDetailService;
     private final OmsOrderLogService omsOrderLogService;
     private final UmsMemberService umsMemberService;
-    private final GmsGoodsMapper gmsGoodsMapper;
     private final OmsOrderPayMapper omsOrderPayMapper;
-    private final UmsMemberBrandLevelMapper umsMemberBrandLevelMapper; // 🌟 新增：用于查询多轨身份
+    private final UmsMemberBrandLevelMapper umsMemberBrandLevelMapper;
 
     @Override
     public PageVO<OmsOrderVO> list(OmsOrderQueryDTO queryDTO) {
-        Page<OmsOrder> page = this.lambdaQuery()
-                .eq(queryDTO.getMember() != null, OmsOrder::getMember, queryDTO.getMember())
-                .eq(StrUtil.isNotBlank(queryDTO.getOrderNo()), OmsOrder::getOrderNo, queryDTO.getOrderNo())
+        // 提取前端可能传过来的字符串关键字（防呆处理：兼容 String 或 Long 类型）
+        String memberKeyword = queryDTO.getMember() != null ? String.valueOf(queryDTO.getMember()) : null;
+
+        Page<OmsOrder> page = omsOrderMapper.selectPage(PageUtil.toPage(queryDTO), new LambdaQueryWrapper<OmsOrder>()
+                // 🌟 修复 1：会员智能搜索。如果输入了手机号或姓名，进行双字段模糊匹配
+                .and(StrUtil.isNotBlank(memberKeyword), w -> w
+                        .like(OmsOrder::getMember, memberKeyword)
+                        .or()
+                        .like(OmsOrder::getContact, memberKeyword))
+
+                // 🌟 修复 2：订单号智能搜索。必须用 like 模糊查询，不能用 eq！
+                .like(StrUtil.isNotBlank(queryDTO.getOrderNo()), OmsOrder::getOrderNo, queryDTO.getOrderNo())
+
+                // 状态和时间精确匹配保持不变
                 .eq(StrUtil.isNotBlank(queryDTO.getStatus()), OmsOrder::getStatus, queryDTO.getStatus())
                 .between(queryDTO.getStartTime() != null && queryDTO.getEndTime() != null,
-                        OmsOrder::getPaymentTime, queryDTO.getStartTime(), queryDTO.getEndTime())
-                .orderByDesc(OmsOrder::getPaymentTime)
-                .page(PageUtil.toPage(queryDTO));
+                        OmsOrder::getCreateTime, queryDTO.getStartTime(), queryDTO.getEndTime())
+                .orderByDesc(OmsOrder::getCreateTime));
+
         return PageUtil.toPageVO(page, OmsOrderVO::new);
     }
 
     @Override
-    public OrderCountVO countOrderAndSales(LocalDateTime startTime, LocalDateTime endTime) {
-        List<AnalysisAtomicDataDTO> stats = this.getBaseMapper().getPeriodAtomicStats(startTime, endTime, "DAILY");
-
-        OrderCountVO vo = new OrderCountVO();
-        long totalOrder = 0;
-        BigDecimal totalSales = BigDecimal.ZERO;
-        BigDecimal totalCost = BigDecimal.ZERO;
-
-        for (AnalysisAtomicDataDTO stat : stats) {
-            totalOrder += stat.getOrderCount();
-            totalSales = MoneyUtil.add(totalSales, stat.getNetSalesAmount());
-            totalCost = MoneyUtil.add(totalCost, stat.getCostAmount());
-        }
-
-        vo.setOrderCount(totalOrder);
-        vo.setTotalSales(totalSales);
-        vo.setSaleCount(totalSales);
-        vo.setCostCount(totalCost);
-        vo.setProfit(MoneyUtil.subtract(totalSales, totalCost));
-
-        return vo;
-    }
-
-    @Override
     public OrderDetailVO getOrderDetail(Long id) {
-        OmsOrder order = this.getById(id);
-        if (order == null) throw new BaseException(BizErrorStatus.POS_SETTLE_REQ_EMPTY, "查询失败：未找到系统ID为【{}】的订单记录", id);
+        OmsOrder order = omsOrderMapper.selectById(id);
+        if (order == null) throw new BaseException(BizErrorStatus.POS_SETTLE_REQ_EMPTY, "订单不存在");
         return assembleOrderDetail(order);
     }
 
     @Override
     public OrderDetailVO getOrderDetailByNo(String orderNo) {
-        if (StrUtil.isBlank(orderNo)) throw new BaseException("查询失败：订单编号不能为空");
-
-        OmsOrder order = this.lambdaQuery().eq(OmsOrder::getOrderNo, orderNo).one();
-        if (order == null) throw new BaseException(BizErrorStatus.POS_SETTLE_REQ_EMPTY, "查询失败：未找到单号为【{}】的订单记录", orderNo);
-
+        OmsOrder order = omsOrderMapper.selectOne(new LambdaQueryWrapper<OmsOrder>().eq(OmsOrder::getOrderNo, orderNo));
+        if (order == null) throw new BaseException(BizErrorStatus.POS_SETTLE_REQ_EMPTY, "订单不存在");
         return assembleOrderDetail(order);
     }
 
     private OrderDetailVO assembleOrderDetail(OmsOrder order) {
         OrderDetailVO vo = BeanMapUtil.to(order, OrderDetailVO::new);
 
-        List<OmsOrderDetail> details = omsOrderDetailService.list(
-                new LambdaQueryWrapper<OmsOrderDetail>().eq(OmsOrderDetail::getOrderNo, order.getOrderNo())
-        );
+        // 1. 组装明细
+        List<OmsOrderDetail> details = omsOrderDetailService.list(new LambdaQueryWrapper<OmsOrderDetail>().eq(OmsOrderDetail::getOrderNo, order.getOrderNo()));
         vo.setOrderDetails(BeanMapUtil.to(details, OmsOrderDetailVO::new));
 
-        // 🌟 核心修复区：在组装会员信息时，主动去查多轨身份并塞进去
+        // 2. 组装会员及多轨身份
         if (order.getMemberId() != null) {
             UmsMember member = umsMemberService.getById(order.getMemberId());
             if (member != null) {
                 UmsMemberVO memberVO = BeanMapUtil.to(member, UmsMemberVO::new);
-
-                // 👉 查身份表
-                List<UmsMemberBrandLevel> levels = umsMemberBrandLevelMapper.selectList(
-                        new LambdaQueryWrapper<UmsMemberBrandLevel>().eq(UmsMemberBrandLevel::getMemberId, member.getId())
-                );
-
-                // 👉 组装成 Map
+                List<UmsMemberBrandLevel> levels = umsMemberBrandLevelMapper.selectList(new LambdaQueryWrapper<UmsMemberBrandLevel>().eq(UmsMemberBrandLevel::getMemberId, member.getId()));
                 if (levels != null && !levels.isEmpty()) {
                     Map<String, String> levelMap = new HashMap<>();
-                    for (UmsMemberBrandLevel bl : levels) {
-                        levelMap.put(bl.getBrand(), bl.getLevelCode());
-                    }
-                    memberVO.setBrandLevels(levelMap); // 赋值给 VO
+                    for (UmsMemberBrandLevel bl : levels) levelMap.put(bl.getBrand(), bl.getLevelCode());
+                    memberVO.setBrandLevels(levelMap);
                 }
-
                 vo.setMemberInfo(memberVO);
             }
         }
 
-        List<OmsOrderLog> logs = omsOrderLogService.list(
-                new LambdaQueryWrapper<OmsOrderLog>()
-                        .eq(OmsOrderLog::getOrderId, order.getId())
-                        .orderByAsc(OmsOrderLog::getCreateTime)
-        );
+        // 3. 组装操作日志
+        List<OmsOrderLog> logs = omsOrderLogService.list(new LambdaQueryWrapper<OmsOrderLog>().eq(OmsOrderLog::getOrderId, order.getId()).orderByAsc(OmsOrderLog::getCreateTime));
         vo.setOrderLog(BeanMapUtil.to(logs, OrderDetailVO.OrderLogVO::new));
 
-        List<OmsOrderPay> pays = omsOrderPayMapper.selectList(
-                new LambdaQueryWrapper<OmsOrderPay>().eq(OmsOrderPay::getOrderNo, order.getOrderNo())
-        );
+        // 4. 组装支付流与找零计算
+        List<OmsOrderPay> pays = omsOrderPayMapper.selectList(new LambdaQueryWrapper<OmsOrderPay>().eq(OmsOrderPay::getOrderNo, order.getOrderNo()));
         vo.setPayments(BeanMapUtil.to(pays, OrderDetailVO.OrderPayVO::new));
 
+        // 执行找零逻辑
+        calculateChange(vo, pays, order.getPayAmount());
+
+        return vo;
+    }
+
+    // 🌟 修复版找零计算：严格执行支付降维建模
+    private void calculateChange(OrderDetailVO vo, List<OmsOrderPay> pays, BigDecimal orderReceivableAmount) {
         BigDecimal balanceAmount = BigDecimal.ZERO;
         BigDecimal scanAmount = BigDecimal.ZERO;
         BigDecimal cashAmount = BigDecimal.ZERO;
         BigDecimal changeAmount = BigDecimal.ZERO;
 
         for (OmsOrderPay pay : pays) {
-            if (pay.getPayMethodCode() != null) {
-                if (pay.getPayMethodCode().contains("BALANCE")) {
-                    balanceAmount = MoneyUtil.add(balanceAmount, pay.getPayAmount());
-                } else if (pay.getPayMethodCode().contains("AGGREGATE")) {
-                    scanAmount = MoneyUtil.add(scanAmount, pay.getPayAmount());
-                } else if (pay.getPayMethodCode().contains("CASH")) {
-                    cashAmount = MoneyUtil.add(cashAmount, pay.getPayAmount());
-                }
+            PayMethodEnum method = PayMethodEnum.fromCode(pay.getPayMethodCode());
+            if (method == null) method = PayMethodEnum.AGGREGATE; // 防御未知支付方式
+
+            if (method == PayMethodEnum.BALANCE) {
+                balanceAmount = MoneyUtil.add(balanceAmount, pay.getPayAmount());
+            } else if (method == PayMethodEnum.AGGREGATE) {
+                scanAmount = MoneyUtil.add(scanAmount, pay.getPayAmount());
+            } else if (method == PayMethodEnum.CASH) {
+                cashAmount = MoneyUtil.add(cashAmount, pay.getPayAmount());
             }
         }
 
         BigDecimal totalIn = MoneyUtil.add(MoneyUtil.add(balanceAmount, scanAmount), cashAmount);
-        changeAmount = MoneyUtil.subtract(totalIn, order.getPayAmount());
+        changeAmount = MoneyUtil.subtract(totalIn, orderReceivableAmount);
+
         if(changeAmount.compareTo(BigDecimal.ZERO) < 0) {
             changeAmount = BigDecimal.ZERO;
         } else {
+            // 找零只能从现金池里扣
             cashAmount = MoneyUtil.subtract(cashAmount, changeAmount);
         }
 
@@ -176,102 +151,5 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
         vo.setScanAmount(scanAmount);
         vo.setCashAmount(cashAmount);
         vo.setChangeAmount(changeAmount);
-
-        return vo;
-    }
-
-    @Override
-    public PageVO<ProfitAuditVO> getProfitAuditPage(OmsOrderQueryDTO queryDTO) {
-        Page<OmsOrder> page = this.lambdaQuery()
-                .between(queryDTO.getStartTime() != null && queryDTO.getEndTime() != null,
-                        OmsOrder::getPaymentTime, queryDTO.getStartTime(), queryDTO.getEndTime())
-                .orderByDesc(OmsOrder::getPaymentTime)
-                .page(PageUtil.toPage(queryDTO));
-        return PageUtil.toPageVO(page, ProfitAuditVO::new);
-    }
-
-    @Override
-    @Transactional(rollbackFor = Exception.class)
-    public void returnOrder(String orderNo) {
-        log.info("【资金逆向操作】收到整单退款请求，单号: {}", orderNo);
-
-        boolean lockSuccess = this.lambdaUpdate()
-                .set(OmsOrder::getStatus, OrderStatusEnum.REFUNDED.name())
-                .eq(OmsOrder::getOrderNo, orderNo)
-                .in(OmsOrder::getStatus, Arrays.asList(OrderStatusEnum.PAID.name(), "PARTIAL", "REFUNDED"))
-                .update();
-
-        if (!lockSuccess) throw new BaseException(BizErrorStatus.POS_ORDER_DUPLICATED, "单号【{}】当前状态不可退款，可能已完成退款，请刷新列表确认！", orderNo);
-
-        OmsOrder order = this.lambdaQuery().eq(OmsOrder::getOrderNo, orderNo).one();
-        List<OmsOrderDetail> details = omsOrderDetailService.list(new LambdaQueryWrapper<OmsOrderDetail>().eq(OmsOrderDetail::getOrderNo, order.getOrderNo()));
-
-        for (OmsOrderDetail detail : details) {
-            int alreadyReturned = detail.getReturnQuantity() != null ? detail.getReturnQuantity() : 0;
-            int canReturnQty = detail.getQuantity() - alreadyReturned;
-
-            if (canReturnQty > 0) {
-                ((OmsOrderDetailMapper)omsOrderDetailService.getBaseMapper())
-                        .refundGoodsAtomically(detail.getId(), canReturnQty);
-
-                gmsGoodsMapper.addStockAtomically(detail.getGoodsId(), new BigDecimal(canReturnQty));
-            }
-        }
-
-        OmsOrderLog orderLog = new OmsOrderLog();
-        orderLog.setOrderId(order.getId());
-        orderLog.setDescription("⚠️ 进行了【整单退款】操作，全额退回资金与库存");
-        omsOrderLogService.save(orderLog);
-
-        if (order.getVip() != null && order.getVip()) {
-            umsMemberService.processReturn(order.getMemberId(), order.getPayAmount(), order.getUseVoucherAmount(), true, orderNo);
-        }
-    }
-
-    @Override
-    @Transactional(rollbackFor = Exception.class)
-    public void returnGoods(ReturnGoodsDTO dto) {
-        log.info("【资金逆向操作】收到部分退货请求，单号: {}, 明细ID: {}, 数量: {}", dto.getOrderNo(), dto.getDetailId(), dto.getReturnQty());
-
-        if (dto.getReturnQty() <= 0) throw new BaseException("退货数量必须大于0");
-
-        int returnQty = dto.getReturnQty();
-        int affectedRows = ((OmsOrderDetailMapper)omsOrderDetailService.getBaseMapper())
-                .refundGoodsAtomically(dto.getDetailId(), returnQty);
-
-        if (affectedRows == 0) {
-            throw new BaseException(BizErrorStatus.STOCK_CALC_OVERFLOW, "操作失败：该商品剩余可退数量不足，或已被其他收银台处理，请刷新订单！");
-        }
-
-        this.lambdaUpdate()
-                .set(OmsOrder::getStatus, "PARTIAL")
-                .eq(OmsOrder::getOrderNo, dto.getOrderNo())
-                .eq(OmsOrder::getStatus, OrderStatusEnum.PAID.name())
-                .update();
-
-        OmsOrderDetail detail = omsOrderDetailService.getById(dto.getDetailId());
-        OmsOrder order = this.lambdaQuery().eq(OmsOrder::getOrderNo, dto.getOrderNo()).one();
-
-        OmsOrderLog orderLog = new OmsOrderLog();
-        orderLog.setOrderId(order.getId());
-        orderLog.setDescription(String.format("🔄 进行了【单品退货】商品：%s，数量：%d", detail.getGoodsName(), returnQty));
-        omsOrderLogService.save(orderLog);
-
-        gmsGoodsMapper.addStockAtomically(detail.getGoodsId(), new BigDecimal(returnQty));
-
-        if (order.getVip() != null && order.getVip()) {
-            BigDecimal goodsPrice = Optional.ofNullable(detail.getGoodsPrice()).orElse(BigDecimal.ZERO);
-            BigDecimal lineTotalCoupon = Optional.ofNullable(detail.getCoupon()).orElse(BigDecimal.ZERO);
-
-            BigDecimal refundCash = MoneyUtil.multiply(goodsPrice, returnQty);
-
-            BigDecimal refundCoupon = BigDecimal.ZERO;
-            if (lineTotalCoupon.compareTo(BigDecimal.ZERO) > 0 && detail.getQuantity() != null && detail.getQuantity() > 0) {
-                BigDecimal unitCoupon = lineTotalCoupon.divide(new BigDecimal(detail.getQuantity()), 2, java.math.RoundingMode.HALF_UP);
-                refundCoupon = unitCoupon.multiply(new BigDecimal(returnQty));
-            }
-
-            umsMemberService.processReturn(order.getMemberId(), refundCash, refundCoupon, false, dto.getOrderNo());
-        }
     }
 }

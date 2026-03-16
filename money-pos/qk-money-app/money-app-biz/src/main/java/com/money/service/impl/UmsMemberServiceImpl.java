@@ -48,7 +48,6 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
     private final GmsBrandMapper gmsBrandMapper;
     private final UmsRechargeOrderMapper umsRechargeOrderMapper;
 
-    // 统一定义常量，防止硬编码
     private static final String STATUS_UNUSED = "UNUSED";
     private static final String TYPE_BALANCE = "BALANCE";
     private static final String TYPE_COUPON = "COUPON";
@@ -83,7 +82,6 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
         if (pageVO.getRecords() != null && !pageVO.getRecords().isEmpty()) {
             List<Long> memberIds = pageVO.getRecords().stream().map(UmsMemberVO::getId).collect(Collectors.toList());
 
-            // 🌟 修复 N+1 查询逻辑
             QueryWrapper<PosMemberCoupon> countQw = new QueryWrapper<>();
             countQw.select("member_id", "COUNT(id) as count")
                     .in("member_id", memberIds)
@@ -160,27 +158,17 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
 
     @Override
     public List<MemberGoodsRankVO> getTop10Goods(Long memberId) {
-        List<OmsOrder> orders = omsOrderMapper.selectList(new LambdaQueryWrapper<OmsOrder>()
-                .eq(OmsOrder::getMemberId, memberId)
-                .eq(OmsOrder::getStatus, STATUS_PAID));
-        if (orders.isEmpty()) return new ArrayList<>();
+        // 🌟 V3.0 升级：废弃 Java 内存循环，直接召唤 Mapper 底层聚合，全状态覆盖且自动扣减退货！
+        List<Map<String, Object>> rankData = this.baseMapper.getTop10Goods(memberId);
 
-        List<String> orderNos = orders.stream().map(OmsOrder::getOrderNo).collect(Collectors.toList());
-        List<OmsOrderDetail> details = omsOrderDetailMapper.selectList(new LambdaQueryWrapper<OmsOrderDetail>()
-                .in(OmsOrderDetail::getOrderNo, orderNos));
-
-        Map<String, Integer> goodsCountMap = new HashMap<>();
-        for (OmsOrderDetail detail : details) {
-            int validQty = detail.getQuantity() - (detail.getReturnQuantity() != null ? detail.getReturnQuantity() : 0);
-            if (validQty > 0) {
-                goodsCountMap.put(detail.getGoodsName(), goodsCountMap.getOrDefault(detail.getGoodsName(), 0) + validQty);
-            }
+        if (rankData == null || rankData.isEmpty()) {
+            return new ArrayList<>();
         }
 
-        return goodsCountMap.entrySet().stream()
-                .sorted((e1, e2) -> e2.getValue().compareTo(e1.getValue()))
-                .limit(10)
-                .map(e -> new MemberGoodsRankVO(e.getKey(), e.getValue()))
+        return rankData.stream()
+                .map(map -> new MemberGoodsRankVO(
+                        (String) map.get("goodsName"),
+                        ((Number) map.get("buyCount")).intValue()))
                 .collect(Collectors.toList());
     }
 
@@ -246,7 +234,6 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
                 .eq(UmsMember::getId, id);
 
         if (couponAmount != null && couponAmount.compareTo(BigDecimal.ZERO) > 0) {
-            // 🌟 原子扣减加固
             updateWrapper.setSql("consume_coupon = consume_coupon + " + couponAmount)
                     .setSql("coupon = coupon - " + couponAmount)
                     .ge(UmsMember::getCoupon, couponAmount);
@@ -271,7 +258,6 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
 
         BigDecimal beforeBalance = member.getBalance() != null ? member.getBalance() : BigDecimal.ZERO;
 
-        // 🌟 原子扣减加固
         boolean success = this.lambdaUpdate()
                 .setSql("balance = balance - " + amount)
                 .eq(UmsMember::getId, memberId)
@@ -371,9 +357,7 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
         BigDecimal beforeBalance = member.getBalance() != null ? member.getBalance() : BigDecimal.ZERO;
         BigDecimal beforeCoupon = member.getCoupon() != null ? member.getCoupon() : BigDecimal.ZERO;
 
-        // 🌟 核心：原子更新加固逻辑 (防止并发)
         if (TYPE_BALANCE.equals(order.getType())) {
-            // 撤销余额充值
             boolean s1 = this.lambdaUpdate()
                     .setSql("balance = balance - " + order.getAmount())
                     .eq(UmsMember::getId, member.getId())
@@ -382,7 +366,6 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
             if (!s1) throw new BaseException("撤销失败：余额不足扣回");
             umsMemberLogMapper.insert(createLog(member, TYPE_BALANCE, "REVERSAL", order.getAmount().negate(), BigDecimal.ZERO, beforeBalance.subtract(order.getAmount()), orderNo, "【充值撤销】" + reason));
 
-            // 撤销赠送部分
             if (order.getGiftCoupon().compareTo(BigDecimal.ZERO) > 0) {
                 boolean s2 = this.lambdaUpdate()
                         .setSql("coupon = coupon - " + order.getGiftCoupon())
@@ -419,7 +402,6 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
     public void importMembers(MultipartFile file) {
         List<UmsMemberImportExcelDTO> list = EasyExcel.read(file.getInputStream()).head(UmsMemberImportExcelDTO.class).sheet().doReadSync();
         log.info("接收到 Excel 导入请求，数据量: {}", list.size());
-        // 导入核心逻辑待后续业务定制...
     }
 
     private UmsMemberLog createLog(UmsMember m, String type, String opType, BigDecimal amt, BigDecimal realAmt, BigDecimal afterAmt, String orderNo, String remark) {

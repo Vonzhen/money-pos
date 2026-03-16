@@ -1,6 +1,7 @@
 package com.money.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.money.constant.OrderStatusEnum;
 import com.money.dto.Home.HomeCountVO;
 import com.money.dto.OmsOrder.OrderCountVO;
 import com.money.entity.OmsOrder;
@@ -25,7 +26,7 @@ import java.util.Map;
 public class HomeServiceImpl implements HomeService {
 
     private final GmsGoodsService gmsGoodsService;
-    private final OmsOrderMapper omsOrderMapper; // 🌟 新增：直接召唤主订单表 Mapper
+    private final OmsOrderMapper omsOrderMapper;
     private final OmsOrderDetailMapper omsOrderDetailMapper;
     private final UmsMemberBrandLevelMapper umsMemberBrandLevelMapper;
 
@@ -52,17 +53,18 @@ public class HomeServiceImpl implements HomeService {
     }
 
     private OrderCountVO executeAggregateQuery(LocalDateTime startTime, LocalDateTime endTime) {
-        // 🌟 核心升级：不再去明细表里算缝合怪数据，直接拿主订单表的真金白银！
         QueryWrapper<OmsOrder> wrapper = new QueryWrapper<>();
 
         wrapper.select(
                 "COUNT(id) AS orderCount",
-                "IFNULL(SUM(IFNULL(final_sales_amount, pay_amount)), 0) AS saleCount", // 实际净收入
-                "IFNULL(SUM(cost_amount), 0) AS costCount" // 实际总成本
+                "IFNULL(SUM(IFNULL(final_sales_amount, pay_amount)), 0) AS saleCount",
+                "IFNULL(SUM(cost_amount), 0) AS costCount"
         );
 
-        wrapper.in("status", "PAID", "DONE"); // 排除已全额退款废弃的订单
+        // 🌟 状态归一化：直接调用枚举中的经营有效集，彻底消灭 "PAID", "DONE" 的硬编码
+        wrapper.in("status", OrderStatusEnum.getValidFinancialStatus());
 
+        // 🌟 时间口径统一：严格锁定 create_time
         if (startTime != null) {
             wrapper.ge("create_time", startTime);
         }
@@ -76,7 +78,6 @@ public class HomeServiceImpl implements HomeService {
         vo.setCostCount(BigDecimal.ZERO);
         vo.setProfit(BigDecimal.ZERO);
 
-        // 🌟 改用 omsOrderMapper 执行查询
         List<Map<String, Object>> maps = omsOrderMapper.selectMaps(wrapper);
         if (maps != null && !maps.isEmpty() && maps.get(0) != null) {
             Map<String, Object> map = maps.get(0);
@@ -88,7 +89,6 @@ public class HomeServiceImpl implements HomeService {
             vo.setOrderCount(count);
             vo.setSaleCount(sales);
             vo.setCostCount(costs);
-            // 毛利 = 最终实付净收款 - 实际出库成本 (与财务大屏 100% 严丝合缝)
             vo.setProfit(sales.subtract(costs));
         }
         return vo;

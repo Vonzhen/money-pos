@@ -1,5 +1,6 @@
 package com.money.mapper;
 
+import com.money.constant.FinancialMetric; // 🌟 引入真理模具
 import com.money.dto.Finance.FinanceWaterfallVO;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
@@ -12,8 +13,8 @@ import java.util.List;
 public interface FinanceReportMapper {
 
     /**
-     * 核心聚合 SQL：全口径资金流统计
-     * 🌟 架构优化：通过 UNION ALL 将销售流入(oms_order)和采购流出(gms_inventory_doc)在底层数据库直接对冲聚合
+     * 🌟 全口径资金流统计 (V6.0 突击版)
+     * 目标：通过引用 FinancialMetric，确保报表与首页、大屏数据 100% 绝对一致
      */
     @Select("<script>" +
             "SELECT " +
@@ -25,27 +26,27 @@ public interface FinanceReportMapper {
             "  SUM(payAmount) AS payAmount, " +
             "  SUM(refundAmount) AS refundAmount, " +
             "  SUM(netIncome) AS netIncome, " +
-            "  SUM(procurementAmount) AS procurementAmount " + // 🌟 新增的采购开支
+            "  SUM(procurementAmount) AS procurementAmount " +
             "FROM (" +
-            "    -- 1. 销售部分的资金流入 " +
+            "    -- 1. 销售流入 (严格套用真理公式) " +
             "    SELECT " +
             "      DATE(create_time) AS date, " +
             "      IFNULL(total_amount, 0) AS totalAmount, " +
             "      IFNULL(coupon_amount, 0) AS couponAmount, " +
             "      IFNULL(use_voucher_amount, 0) AS voucherAmount, " +
-            "      (IFNULL(total_amount, 0) - IFNULL(pay_amount, 0) - IFNULL(coupon_amount, 0) - IFNULL(use_voucher_amount, 0)) AS manualDiscountAmount, " +
+            "      IFNULL(manual_discount_amount, 0) AS manualDiscountAmount, " +
             "      IFNULL(pay_amount, 0) AS payAmount, " +
-            "      (IFNULL(pay_amount, 0) - IFNULL(final_sales_amount, 0)) AS refundAmount, " +
-            "      IFNULL(final_sales_amount, 0) AS netIncome, " +
+            "      " + FinancialMetric.REFUND_CASH_FORMULA + " AS refundAmount, " + // 🌟 引用退款真理
+            "      " + FinancialMetric.NET_SALES_FORMULA + " AS netIncome, " +     // 🌟 引用净收真理
             "      0 AS procurementAmount " +
             "    FROM oms_order " +
-            "    WHERE status IN ('PAID', 'RETURN', 'REFUNDED') " +
+            "    WHERE status IN (" + FinancialMetric.VALID_STATUS_SQL + ") " +    // 🌟 引用状态红线
             "    <if test='startTime != null'> AND create_time &gt;= #{startTime} </if>" +
             "    <if test='endTime != null'> AND create_time &lt;= #{endTime} </if>" +
             "    " +
             "    UNION ALL " +
             "    " +
-            "    -- 2. 采购入库的资金流出 " +
+            "    -- 2. 采购流出 " +
             "    SELECT " +
             "      DATE(create_time) AS date, " +
             "      0, 0, 0, 0, 0, 0, 0, " +

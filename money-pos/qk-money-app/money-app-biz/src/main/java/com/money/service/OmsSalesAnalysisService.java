@@ -2,7 +2,13 @@ package com.money.service;
 
 import com.money.dto.OmsOrder.OmsSalesDataVO.SalesDashboardVO;
 import com.money.dto.OmsOrder.OmsSalesDataVO.PerformanceReportVO;
-import com.money.dto.OmsOrder.OmsSalesDataVO.MarketingRoiVO; // 🌟 必须导入这个内部类
+import com.money.dto.OmsOrder.OmsSalesDataVO.MarketingRoiVO;
+import com.money.dto.OmsOrder.OrderCountVO;
+import com.money.dto.OmsOrder.ProfitAuditVO;
+import com.money.dto.OmsOrder.OmsOrderQueryDTO;
+import com.money.web.vo.PageVO;
+
+import java.time.LocalDateTime;
 import java.util.List;
 
 public interface OmsSalesAnalysisService {
@@ -21,4 +27,14 @@ public interface OmsSalesAnalysisService {
      * 5.4 营销活动核销成本与 ROI 深度分析
      */
     List<MarketingRoiVO> getMarketingRoiAnalysis(String startDate, String endDate);
+
+    /**
+     * 大盘订单与基础销售额统计
+     */
+    OrderCountVO countOrderAndSales(LocalDateTime startTime, LocalDateTime endTime);
+
+    /**
+     * 利润审计分页列表
+     */
+    PageVO<ProfitAuditVO> getProfitAuditPage(OmsOrderQueryDTO queryDTO);
 }

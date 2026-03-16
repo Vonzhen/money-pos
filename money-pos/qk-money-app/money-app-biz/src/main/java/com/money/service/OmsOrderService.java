@@ -1,53 +1,31 @@
 package com.money.service;
 
 import com.baomidou.mybatisplus.extension.service.IService;
-import com.money.web.vo.PageVO;
-import com.money.dto.OmsOrder.*;
+import com.money.dto.OmsOrder.OmsOrderQueryDTO;
+import com.money.dto.OmsOrder.OmsOrderVO;
+import com.money.dto.OmsOrder.OrderDetailVO;
 import com.money.entity.OmsOrder;
-
-import java.time.LocalDateTime;
+import com.money.web.vo.PageVO;
 
 /**
- * <p>
- * 订单表 服务类 (2.0 大一统重构版)
- * </p>
+ * 🌟 订单大总管 (V8.0 轻拆分版)
+ * 职责：基础CRUD、订单列表分页、详情组装、找零计算。
+ * 注意：退款请调用 OmsOrderRefundService；报表请调用 OmsSalesAnalysisService。
  */
 public interface OmsOrderService extends IService<OmsOrder> {
 
     /**
-     * 订单列表查询
+     * 订单分页列表
      */
     PageVO<OmsOrderVO> list(OmsOrderQueryDTO queryDTO);
 
     /**
-     * 订单统计 (看板使用)
-     */
-    OrderCountVO countOrderAndSales(LocalDateTime startTime, LocalDateTime endTime);
-
-    /**
-     * 获取订单详情 (按 ID)
+     * 根据 ID 获取订单详情
      */
     OrderDetailVO getOrderDetail(Long id);
 
     /**
-     * 🌟 新增大一统契约：获取订单详情 (按 订单号)
-     * 解决前台详情页 404 的核心方法
+     * 根据单号获取订单详情
      */
     OrderDetailVO getOrderDetailByNo(String orderNo);
-
-    /**
-     * 🌟 契约重塑：整单退款 (按单号执行，支持幂等)
-     */
-    void returnOrder(String orderNo);
-
-    /**
-     * 🌟 契约重塑：部分退货 (使用 DTO 传参)
-     */
-    void returnGoods(ReturnGoodsDTO returnGoodsDTO);
-
-    /**
-     * 真实损益毛利审计分页
-     */
-    PageVO<ProfitAuditVO> getProfitAuditPage(OmsOrderQueryDTO queryDTO);
-
 }

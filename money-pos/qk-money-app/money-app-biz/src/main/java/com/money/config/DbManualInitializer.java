@@ -7,10 +7,10 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 /**
- * 🌟 数据库手动初始化工具 (修复审计字段版)
+ * 🌟 数据库手动初始化工具 (一键推平重建：修复库存表审计字段版)
  */
 @Slf4j
-// @Component // ⬅️ 执行完毕看到成功日志后，注释掉此行：// @Component
+// @Component // ⬅️ 保持放开状态，让它在启动时执行
 @RequiredArgsConstructor
 public class DbManualInitializer implements CommandLineRunner {
 
@@ -18,13 +18,13 @@ public class DbManualInitializer implements CommandLineRunner {
 
     @Override
     public void run(String... args) throws Exception {
-        log.info("🚀 正在修复【库存单据表】缺失的审计字段...");
+        log.info("🚀 [数据库重建工具] 正在修复【库存单据表】缺失的审计字段...");
 
-        // 1. 删除之前的半成品表
+        // 1. 暴力清理：删除之前的半成品表
         jdbcTemplate.execute("DROP TABLE IF EXISTS `gms_inventory_doc`;");
         jdbcTemplate.execute("DROP TABLE IF EXISTS `gms_inventory_doc_item`;");
 
-        // 2. 重新创建【库存单据主表】（补全了审计字段）
+        // 2. 重新创建【库存单据主表】（已补全 BaseEntity 需要的全部审计字段）
         jdbcTemplate.execute("CREATE TABLE `gms_inventory_doc` (" +
                 "  `id` bigint NOT NULL AUTO_INCREMENT," +
                 "  `doc_no` varchar(32) NOT NULL COMMENT '单据号'," +
@@ -42,7 +42,7 @@ public class DbManualInitializer implements CommandLineRunner {
                 "  UNIQUE KEY `uk_doc_no` (`doc_no`)" +
                 ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='库存单据主表';");
 
-        // 3. 重新创建【库存单据明细表】（补全了审计字段）
+        // 3. 重新创建【库存单据明细表】（已补全 BaseEntity 需要的全部审计字段）
         jdbcTemplate.execute("CREATE TABLE `gms_inventory_doc_item` (" +
                 "  `id` bigint NOT NULL AUTO_INCREMENT," +
                 "  `doc_no` varchar(32) NOT NULL COMMENT '关联单据号'," +
@@ -62,6 +62,7 @@ public class DbManualInitializer implements CommandLineRunner {
                 "  KEY `idx_doc_no` (`doc_no`)" +
                 ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='库存单据明细表';");
 
-        log.info("✅ 【库存单据表】审计字段修复完毕！请注释掉 @Component 后重新启动。");
+        log.info("✅ [数据库重建工具] 【库存单据表】审计字段修复完毕！");
+        log.warn("⚠️ 警告：请立即去 DbManualInitializer.java 中注释掉 @Component，然后重新启动系统，防止下次启动再次清空数据！");
     }
 }
