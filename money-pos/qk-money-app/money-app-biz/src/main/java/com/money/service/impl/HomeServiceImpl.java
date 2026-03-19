@@ -54,23 +54,14 @@ public class HomeServiceImpl implements HomeService {
 
     private OrderCountVO executeAggregateQuery(LocalDateTime startTime, LocalDateTime endTime) {
         QueryWrapper<OmsOrder> wrapper = new QueryWrapper<>();
-
         wrapper.select(
                 "COUNT(id) AS orderCount",
                 "IFNULL(SUM(IFNULL(final_sales_amount, pay_amount)), 0) AS saleCount",
                 "IFNULL(SUM(cost_amount), 0) AS costCount"
         );
-
-        // 🌟 状态归一化：直接调用枚举中的经营有效集，彻底消灭 "PAID", "DONE" 的硬编码
         wrapper.in("status", OrderStatusEnum.getValidFinancialStatus());
-
-        // 🌟 时间口径统一：严格锁定 create_time
-        if (startTime != null) {
-            wrapper.ge("create_time", startTime);
-        }
-        if (endTime != null) {
-            wrapper.lt("create_time", endTime);
-        }
+        if (startTime != null) wrapper.ge("create_time", startTime);
+        if (endTime != null) wrapper.lt("create_time", endTime);
 
         OrderCountVO vo = new OrderCountVO();
         vo.setOrderCount(0L);
@@ -81,7 +72,6 @@ public class HomeServiceImpl implements HomeService {
         List<Map<String, Object>> maps = omsOrderMapper.selectMaps(wrapper);
         if (maps != null && !maps.isEmpty() && maps.get(0) != null) {
             Map<String, Object> map = maps.get(0);
-
             long count = map.get("orderCount") != null ? Long.parseLong(map.get("orderCount").toString()) : 0L;
             BigDecimal sales = map.get("saleCount") != null ? new BigDecimal(map.get("saleCount").toString()) : BigDecimal.ZERO;
             BigDecimal costs = map.get("costCount") != null ? new BigDecimal(map.get("costCount").toString()) : BigDecimal.ZERO;
@@ -94,13 +84,37 @@ public class HomeServiceImpl implements HomeService {
         return vo;
     }
 
+    // 🌟 图表引擎：动态计算时间范围
     @Override
-    public com.money.dto.Home.HomeChartsVO getChartsData() {
-        com.money.dto.Home.HomeChartsVO chartsVO = new com.money.dto.Home.HomeChartsVO();
-        LocalDateTime sevenDaysAgo = LocalDateTime.now().minusDays(6).withHour(0).withMinute(0).withSecond(0).withNano(0);
+    public com.money.dto.Home.HomeChartsVO getChartsData(String timeRange) {
+        LocalDateTime startTime = null;
+        LocalDateTime endTime = null;
 
-        chartsVO.setTrendData(omsOrderDetailMapper.getTrendData(sevenDaysAgo));
-        chartsVO.setPieData(omsOrderDetailMapper.getBrandPieData());
+        if ("today".equals(timeRange)) {
+            startTime = LocalDate.now().atStartOfDay();
+            endTime = startTime.plusDays(1);
+        } else if ("month".equals(timeRange)) {
+            startTime = YearMonth.now().atDay(1).atStartOfDay();
+            endTime = startTime.plusMonths(1);
+        } else if ("year".equals(timeRange)) {
+            startTime = Year.now().atDay(1).atStartOfDay();
+            endTime = startTime.plusYears(1);
+        }
+
+        com.money.dto.Home.HomeChartsVO chartsVO = new com.money.dto.Home.HomeChartsVO();
+
+        // 🌟 走势图智能处理：如果是今天，强行降级展示近7天（因为只展示当天的1个点没有意义）
+        LocalDateTime trendStartTime = startTime;
+        if ("today".equals(timeRange)) {
+            trendStartTime = LocalDateTime.now().minusDays(6).withHour(0).withMinute(0).withSecond(0).withNano(0);
+            endTime = null; // 查到最新
+        }
+
+        // 动态穿透 SQL
+        chartsVO.setTrendData(omsOrderDetailMapper.getTrendData(trendStartTime, endTime));
+        chartsVO.setPieData(omsOrderDetailMapper.getBrandPieData(startTime, endTime));
+
+        // 会员等级是即时状态（总资产），不跟时间联动
         chartsVO.setBarData(umsMemberBrandLevelMapper.getMemberBarData());
 
         return chartsVO;

@@ -3,10 +3,11 @@ package com.money.controller;
 import cn.hutool.core.util.StrUtil;
 import com.money.constant.BizErrorStatus;
 import com.money.dto.OmsOrder.*;
-// 🌟 引入 V8.0 轻拆分后的“三驾马车”
+// 🌟 引入 V8.0 轻拆分后的“三驾马车”与硬件驱动
 import com.money.service.OmsOrderService;
 import com.money.service.OmsOrderRefundService;
 import com.money.service.OmsSalesAnalysisService;
+import com.money.service.printer.PosPrinterService;
 import com.money.web.exception.BaseException;
 import com.money.web.vo.PageVO;
 import io.swagger.v3.oas.annotations.Operation;
@@ -30,6 +31,7 @@ public class OmsOrderController {
     private final OmsOrderService omsOrderService; // 大总管：负责查
     private final OmsOrderRefundService omsOrderRefundService; // 法医：负责退款
     private final OmsSalesAnalysisService omsSalesAnalysisService; // 会计：负责报表
+    private final PosPrinterService posPrinterService; // 🚀 硬件车间主任：负责开钱箱和打印
 
     @Operation(summary = "订单分页列表")
     @GetMapping("/page")
@@ -94,5 +96,18 @@ public class OmsOrderController {
     public PageVO<ProfitAuditVO> getProfitAuditPage(OmsOrderQueryDTO queryDTO) {
         // 审计报表归会计管
         return omsSalesAnalysisService.getProfitAuditPage(queryDTO);
+    }
+
+    @Operation(summary = "硬件级：打印小票并弹开钱箱")
+    @GetMapping("/hardware/print")
+    public Boolean printHardwareReceipt(@RequestParam String orderNo) {
+        // 1. 查出完整的订单快照
+        OrderDetailVO orderVO = omsOrderService.getOrderDetailByNo(orderNo);
+
+        // 2. 调用硬件打印机 (店名、电话等配置，Service 内部会自动去查数据库，不需要传参数了)
+        posPrinterService.printReceiptAndOpenDrawer(orderVO);
+
+        // 3. 直接返回 true，避免报找不到 Result 类的错
+        return true;
     }
 }
