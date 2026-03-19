@@ -18,11 +18,11 @@
                             <span>{{ level.desc }}</span>
                         </div>
                         <div class="flex items-center gap-2" :class="matrix.couponEnabled ? 'mb-2' : ''">
-                            <span class="text-xs text-gray-500 w-10 shrink-0">售价:</span>
+                            <span class="text-xs text-gray-500 w-10 shrink-0">会员价:</span>
                             <el-input v-model="matrix.prices[level.value]" size="small" placeholder="￥0.00" class="flex-1 font-bold text-gray-800" @input="() => handleCalcCoupon(level.value)" />
                         </div>
                         <div v-if="matrix.couponEnabled" class="flex items-center gap-2">
-                            <span class="text-xs text-green-600 font-bold w-10 shrink-0">专券:</span>
+                            <span class="text-xs text-green-600 font-bold w-10 shrink-0">会员券:</span>
                             <el-input v-model="matrix.coupons[level.value]" size="small" placeholder="差额" class="flex-1 text-green-600" @input="() => handleCalcPrice(level.value)" />
                         </div>
                     </div>

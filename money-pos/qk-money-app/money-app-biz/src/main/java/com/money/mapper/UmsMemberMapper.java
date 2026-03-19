@@ -30,7 +30,18 @@ public interface UmsMemberMapper extends BaseMapper<UmsMember> {
             "GROUP BY d.goods_id, d.goods_name " +
             "HAVING buyCount > 0 " +
             "ORDER BY buyCount DESC " +
-            "LIMIT 10")
-    List<Map<String, Object>> getTop10Goods(@Param("memberId") Long memberId);
+            "LIMIT 20")
 
+    List<Map<String, Object>> getTop20Goods(@Param("memberId") Long memberId);
+    // 1. 土豪榜：累计消费 Top 50
+    @org.apache.ibatis.annotations.Select("SELECT id, name, phone, consume_amount as amount FROM ums_member WHERE deleted = 0 ORDER BY consume_amount DESC LIMIT 50")
+    List<com.money.dto.UmsMember.MemberRankVO> getTopConsumeMembers();
+
+    // 2. 储值榜：当前余额 Top 50
+    @org.apache.ibatis.annotations.Select("SELECT id, name, phone, balance as amount FROM ums_member WHERE deleted = 0 ORDER BY balance DESC LIMIT 50")
+    List<com.money.dto.UmsMember.MemberRankVO> getTopBalanceMembers();
+
+    // 3. 铁粉榜：到店频次 Top 50
+    @org.apache.ibatis.annotations.Select("SELECT id, name, phone, consume_times as times FROM ums_member WHERE deleted = 0 ORDER BY consume_times DESC LIMIT 50")
+    List<com.money.dto.UmsMember.MemberRankVO> getTopFrequencyMembers();
 }

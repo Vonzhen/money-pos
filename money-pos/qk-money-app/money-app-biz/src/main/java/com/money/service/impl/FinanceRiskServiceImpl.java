@@ -1,86 +1,83 @@
 package com.money.service.impl;
 
-import com.money.constant.FinancialMetric; // 🌟 引入真理模具
-import com.money.dto.Finance.FinanceDataVO.*;
-import com.money.mapper.OmsOrderMapper;
+import cn.hutool.core.util.StrUtil;
+import com.money.mapper.OmsOrderAuditMapper;
 import com.money.service.FinanceRiskService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
-import java.util.*;
-import java.util.stream.Collectors;
+import java.time.format.DateTimeFormatter;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
- * 🌟 风控与异常监控服务 (V6.0 荣耀扫荡版)
- * 彻底消灭 Java 内存循环，实现数据口径像素级对齐
+ * 门店收银防损风控大脑
+ * 职责：调用审计集市数据，聚合生成风控雷达指标
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class FinanceRiskServiceImpl implements FinanceRiskService {
 
-    private final OmsOrderMapper omsOrderMapper;
+    private final OmsOrderAuditMapper omsOrderAuditMapper;
 
     @Override
-    public RiskControlVO getRiskControlData(String startDate, String endDate) {
-        LocalDate start = (startDate != null && !startDate.isEmpty()) ? LocalDate.parse(startDate) : LocalDate.now().minusDays(29);
-        LocalDate end = (endDate != null && !endDate.isEmpty()) ? LocalDate.parse(endDate) : LocalDate.now();
-        LocalDateTime startTime = LocalDateTime.of(start, LocalTime.MIN);
-        LocalDateTime endTime = LocalDateTime.of(end, LocalTime.MAX);
+    public Map<String, Object> getRiskSummary(String startDate, String endDate) {
+        LocalDateTime startTime = parseStartTime(startDate);
+        LocalDateTime endTime = parseEndTime(endDate);
 
-        RiskControlVO vo = new RiskControlVO();
+        // 1. 获取收银员操作统计 (处理改价让利和退单数)
+        List<Map<String, Object>> cashierRiskList = omsOrderAuditMapper.getCashierRiskSummary(startTime, endTime);
 
-        // --- 1. 扫荡收银员风险汇总 (从 Mapper 获取聚合结果) ---
-        List<Map<String, Object>> cashierStats = omsOrderMapper.getCashierRiskSummary(startTime, endTime);
-        List<CashierRiskVO> cashierList = cashierStats.stream().map(map -> {
-                    // 🌟 核心修复：对齐您之前的 4 参数构造函数: (String, Integer, BigDecimal, Integer)
-                    return new CashierRiskVO(
-                            (String) map.get("cashierName"),
-                            ((Number) map.get("orderCount")).intValue(),
-                            (BigDecimal) map.get("manualDiscountAmount"),
-                            ((Number) map.get("refundCount")).intValue()
-                    );
-                })
-                .sorted((a, b) -> b.getManualDiscountAmount().compareTo(a.getManualDiscountAmount()))
-                .collect(Collectors.toList());
+        // 2. 获取高危异常单据清单
+        List<Map<String, Object>> recentAbnormalOrders = omsOrderAuditMapper.getAbnormalOrderList(startTime, endTime);
 
-        vo.setCashierRiskList(cashierList);
+        // 3. 实时聚合前端卡片指标
+        int abnormalOrderCount = recentAbnormalOrders.size();
+        BigDecimal totalLossAmount = BigDecimal.ZERO;
+        BigDecimal totalManualDiscount = BigDecimal.ZERO;
+        long totalRefundCount = 0;
 
-        // --- 2. 扫荡异常订单明细 (利用 SQL 判别异常，不再遍历全表) ---
-        List<Map<String, Object>> abnormalRawList = omsOrderMapper.getAbnormalOrderList(startTime, endTime);
-        List<AbnormalOrderVO> abnormalOrders = abnormalRawList.stream().map(map -> {
-            AbnormalOrderVO ab = new AbnormalOrderVO();
-            ab.setOrderNo((String) map.get("orderNo"));
-            ab.setCreateTime((String) map.get("createTime"));
-            ab.setCashier((String) map.get("cashier"));
-            ab.setPayAmount((BigDecimal) map.get("payAmount"));
-            ab.setCostAmount((BigDecimal) map.get("costAmount"));
-            ab.setProfit((BigDecimal) map.get("profit"));
-            ab.setRiskType((String) map.get("riskType"));
-            return ab;
-        }).collect(Collectors.toList());
+        // 计算损失总额（只加负毛利的部分）
+        for (Map<String, Object> order : recentAbnormalOrders) {
+            BigDecimal profit = new BigDecimal(order.get("profit").toString());
+            if (profit.compareTo(BigDecimal.ZERO) < 0) {
+                totalLossAmount = totalLossAmount.add(profit.abs());
+            }
+        }
 
-        vo.setRecentAbnormalOrders(abnormalOrders);
+        // 计算手工让利和退单总数
+        for (Map<String, Object> cashier : cashierRiskList) {
+            BigDecimal manual = new BigDecimal(cashier.get("manualDiscountAmount").toString());
+            totalManualDiscount = totalManualDiscount.add(manual);
+            totalRefundCount += ((Number) cashier.get("refundCount")).longValue();
+        }
 
-        // --- 3. 汇总统计数据 ---
-        // 🌟 逻辑：汇总数据直接从上述聚合结果中提取，无需二次查库
-        vo.setAbnormalOrderCount(abnormalOrders.size());
-        vo.setTotalLossAmount(abnormalOrders.stream()
-                .filter(o -> o.getProfit().compareTo(BigDecimal.ZERO) < 0)
-                .map(o -> o.getProfit().abs())
-                .reduce(BigDecimal.ZERO, BigDecimal::add));
+        // 4. 装配返回 DTO (严格对齐前端 data 结构)
+        Map<String, Object> result = new HashMap<>();
+        result.put("abnormalOrderCount", abnormalOrderCount);
+        result.put("totalLossAmount", totalLossAmount);
+        result.put("totalManualDiscount", totalManualDiscount);
+        result.put("totalRefundCount", totalRefundCount);
+        result.put("cashierRiskList", cashierRiskList);
+        result.put("recentAbnormalOrders", recentAbnormalOrders);
 
-        vo.setTotalManualDiscount(cashierList.stream()
-                .map(CashierRiskVO::getManualDiscountAmount)
-                .reduce(BigDecimal.ZERO, BigDecimal::add));
+        return result;
+    }
 
-        vo.setTotalRefundCount(cashierList.stream()
-                .mapToInt(CashierRiskVO::getRefundCount)
-                .sum());
+    private LocalDateTime parseStartTime(String dateStr) {
+        if (StrUtil.isBlank(dateStr)) return LocalDate.now().minusDays(6).atStartOfDay();
+        return LocalDate.parse(dateStr).atStartOfDay();
+    }
 
-        return vo;
+    private LocalDateTime parseEndTime(String dateStr) {
+        if (StrUtil.isBlank(dateStr)) return LocalDate.now().atTime(LocalTime.MAX);
+        return LocalDate.parse(dateStr).atTime(LocalTime.MAX);
     }
 }

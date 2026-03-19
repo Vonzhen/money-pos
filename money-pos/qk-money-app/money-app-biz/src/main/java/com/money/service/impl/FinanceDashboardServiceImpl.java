@@ -7,8 +7,9 @@ import com.money.constant.OrderStatusEnum;
 import com.money.constant.PayMethodEnum;
 import com.money.dto.Finance.FinanceDataVO.*;
 import com.money.entity.*;
+import com.money.mapper.FinanceReportMapper; // 🌟 8.1新增导入：资产报表Mapper
 import com.money.mapper.GmsInventoryDocMapper;
-import com.money.mapper.OmsOrderMapper; // 🌟 引入底层的 Mapper
+import com.money.mapper.OmsOrderMapper;
 import com.money.mapper.OmsOrderPayMapper;
 import com.money.mapper.UmsMemberLogMapper;
 import com.money.service.FinanceDashboardService;
@@ -17,6 +18,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -28,11 +30,14 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class FinanceDashboardServiceImpl implements FinanceDashboardService {
 
-    private final OmsOrderMapper omsOrderMapper; // 🌟 替换掉老 Service
+    private final OmsOrderMapper omsOrderMapper;
     private final OmsOrderPayMapper omsOrderPayMapper;
     private final UmsMemberService umsMemberService;
     private final UmsMemberLogMapper umsMemberLogMapper;
     private final GmsInventoryDocMapper gmsInventoryDocMapper;
+
+    // 🌟 8.1新增注入：专门查资产溯源底座的 Mapper
+    private final FinanceReportMapper financeReportMapper;
 
     private BigDecimal null2Zero(BigDecimal value) {
         return value == null ? BigDecimal.ZERO : value;
@@ -43,6 +48,47 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
         try { return new BigDecimal(String.valueOf(val)); } catch (Exception e) { return BigDecimal.ZERO; }
     }
 
+    // ==========================================
+    // 🌟 8.1 核心新增实现：资产驾驶舱 (修复空指针防弹版)
+    // ==========================================
+    @Override
+    public AssetDashboardVO getAssetDashboard() {
+        // 1. 获取今日汇总
+        AssetDashboardVO dashboard = financeReportMapper.getTodayAssetSummary();
+        if (dashboard == null) {
+            dashboard = new AssetDashboardVO();
+            dashboard.setTodayRealCash(BigDecimal.ZERO);
+            dashboard.setTodayWaivedAmount(BigDecimal.ZERO);
+            dashboard.setTodayAssetDeduct(BigDecimal.ZERO);
+        }
+
+        // 2. 计算资产存量占比（穿透分析）
+        Map<String, Object> composition = financeReportMapper.getAssetComposition();
+        if (composition != null) {
+            // 🌟 抢修点：使用 parseAmt 完美拦截数据库的 NULL 值，防止空指针崩溃！
+            BigDecimal principal = parseAmt(composition.get("totalPrincipal"));
+            BigDecimal gift = parseAmt(composition.get("totalGift"));
+            BigDecimal total = principal.add(gift);
+
+            // 严谨的算数处理
+            if (total.compareTo(BigDecimal.ZERO) > 0) {
+                dashboard.setPrincipalRatio(principal.multiply(new BigDecimal(100)).divide(total, 2, RoundingMode.HALF_UP));
+                dashboard.setGiftRatio(gift.multiply(new BigDecimal(100)).divide(total, 2, RoundingMode.HALF_UP));
+            } else {
+                dashboard.setPrincipalRatio(BigDecimal.ZERO);
+                dashboard.setGiftRatio(BigDecimal.ZERO);
+            }
+        } else {
+            dashboard.setPrincipalRatio(BigDecimal.ZERO);
+            dashboard.setGiftRatio(BigDecimal.ZERO);
+        }
+
+        return dashboard;
+    }
+
+    // ==========================================
+    // 下方为您原有的代码，原封不动保留
+    // ==========================================
     @Override
     public FinanceDashboardVO getDashboardData(String date) {
         LocalDate targetDate = (date != null && !date.isEmpty()) ? LocalDate.parse(date) : LocalDate.now();
@@ -52,7 +98,6 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
 
         FinanceDashboardVO vo = new FinanceDashboardVO();
 
-        // 🌟 修复：直接用 Mapper 的 selectList 进行原生的查表
         List<OmsOrder> dailyOrders = omsOrderMapper.selectList(new LambdaQueryWrapper<OmsOrder>()
                 .ge(OmsOrder::getCreateTime, startOfDay).le(OmsOrder::getCreateTime, endOfDay)
                 .in(OmsOrder::getStatus, OrderStatusEnum.getValidFinancialStatus()));
@@ -193,7 +238,6 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
 
         List<Map<String, Object>> paySummary = omsOrderPayMapper.getDailyPaySummary(startTime, endTime);
 
-        // 🌟 修复：直接用 Mapper 的 selectMaps
         List<Map<String, Object>> orderSummary = omsOrderMapper.selectMaps(new QueryWrapper<OmsOrder>()
                 .select("DATE_FORMAT(create_time, '%Y-%m-%d') AS dateStr", "SUM(coupon_amount) AS totalCoupon", "SUM(use_voucher_amount) AS totalVoucher")
                 .ge("create_time", startTime).le("create_time", endTime)

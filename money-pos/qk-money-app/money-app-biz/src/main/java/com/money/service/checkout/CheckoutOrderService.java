@@ -3,7 +3,8 @@ package com.money.service.checkout;
 import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.money.constant.OrderStatusEnum;
-import com.money.dto.pos.SettleTrialResVO;
+import com.money.dto.pos.PricingItemResult; // 🌟 引入新契约
+import com.money.dto.pos.PricingResult; // 🌟 引入新契约
 import com.money.entity.GmsGoods;
 import com.money.entity.OmsOrder;
 import com.money.entity.OmsOrderDetail;
@@ -38,8 +39,6 @@ public class CheckoutOrderService {
     private final OmsOrderMapper omsOrderMapper;
     private final OmsOrderDetailMapper omsOrderDetailMapper;
     private final GmsGoodsCategoryService gmsGoodsCategoryService;
-
-    // 🌟 引入日志服务，找回开单日记本
     private final OmsOrderLogService omsOrderLogService;
 
     public boolean loadExistingOrder(CheckoutContext context) {
@@ -54,20 +53,32 @@ public class CheckoutOrderService {
     }
 
     public void createOrder(CheckoutContext context) {
-        SettleTrialResVO trialRes = context.getPricingResult();
+        PricingResult trialRes = context.getPricingResult(); // 🌟 接收真理结果
         UmsMember verifiedMember = context.getMember();
         Map<Long, GmsGoods> goodsMap = context.getGoodsMap();
         String orderNo = context.getRequest().getReqId();
 
         OmsOrder order = new OmsOrder();
         order.setOrderNo(orderNo);
-        order.setTotalAmount(trialRes.getTotalAmount());
-        order.setCouponAmount(trialRes.getMemberCouponDeduct());
+
+        // 🌟 核心：双轨计价字段全面落库
+        order.setRetailAmount(trialRes.getRetailAmount());
+        order.setMemberAmount(trialRes.getMemberAmount());
+        order.setPrivilegeAmount(trialRes.getPrivilegeAmount());
+        order.setActualCouponDeduct(trialRes.getActualCouponDeduct());
+        order.setWaivedCouponAmount(trialRes.getWaivedCouponAmount());
+
+        // 兼容老版本展示字段
+        order.setTotalAmount(trialRes.getRetailAmount());
+        order.setCouponAmount(trialRes.getActualCouponDeduct());
+
+        // 营销与实付轨落库
         order.setUseVoucherAmount(trialRes.getVoucherDeduct());
         order.setManualDiscountAmount(trialRes.getManualDeduct());
         order.setCostAmount(trialRes.getCostAmount());
         order.setPayAmount(trialRes.getFinalPayAmount());
         order.setFinalSalesAmount(trialRes.getFinalPayAmount());
+
         order.setStatus(OrderStatusEnum.PAID.name());
         order.setPaymentTime(LocalDateTime.now());
 
@@ -87,7 +98,7 @@ public class CheckoutOrderService {
         }
 
         List<OmsOrderDetail> details = new ArrayList<>();
-        for (SettleTrialResVO.ItemRes itemRes : trialRes.getItems()) {
+        for (PricingItemResult itemRes : trialRes.getItems()) { // 🌟 遍历新的明细快照
             GmsGoods goods = goodsMap.get(itemRes.getGoodsId());
             OmsOrderDetail detail = new OmsOrderDetail();
             detail.setOrderNo(orderNo);
@@ -96,12 +107,12 @@ public class CheckoutOrderService {
             detail.setBrandId(goods.getBrandId());
             detail.setGoodsBarcode(goods.getBarcode());
             detail.setGoodsName(goods.getName());
-            detail.setSalePrice(itemRes.getOriginalPrice());
+            detail.setSalePrice(itemRes.getUnitOriginalPrice()); // 记录单品原价
             detail.setPurchasePrice(itemRes.getCostPrice() != null ? itemRes.getCostPrice() : BigDecimal.ZERO);
             detail.setVipPrice(goods.getVipPrice());
             detail.setQuantity(itemRes.getQuantity());
-            detail.setGoodsPrice(itemRes.getRealPrice());
-            detail.setCoupon(itemRes.getCouponDeduct() != null ? itemRes.getCouponDeduct() : BigDecimal.ZERO);
+            detail.setGoodsPrice(itemRes.getUnitRealPrice());    // 🌟 记录成交底价(会员价)
+            detail.setCoupon(itemRes.getSubTotalPrivilege());    // 记录明细级特权差额
 
             if (goods.getCategoryId() != null) {
                 detail.setCategoryId(goods.getCategoryId());
@@ -114,12 +125,10 @@ public class CheckoutOrderService {
         }
         omsOrderDetailService.saveBatch(details);
 
-        // 🌟 核心：原汁原味地写回前端能够解析的 JSON 格式结算日志
         Map<String, Object> logInfo = new HashMap<>();
         logInfo.put("action", "SETTLE_SUCCESS");
-        logInfo.put("totalPaid", order.getTotalAmount());
+        logInfo.put("totalPaid", order.getRetailAmount()); // 日志中写原价供参考
         logInfo.put("finalPay", order.getPayAmount());
-        // 提取前端需要的支付组合字符串
         StringBuilder payMethodsStr = new StringBuilder();
         context.getRequest().getPayments().forEach(p -> {
             if ("AGGREGATE".equals(p.getPayMethodCode()) && p.getPayTag() != null) {

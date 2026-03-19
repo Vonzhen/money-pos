@@ -2,6 +2,7 @@ package com.money.service.impl;
 
 import com.money.constant.FinancialMetric;
 import com.money.dto.Finance.FinanceDataVO.*;
+import com.money.mapper.OmsOrderAnalysisMapper;
 import com.money.mapper.OmsOrderDetailMapper;
 import com.money.mapper.OmsOrderMapper;
 import com.money.service.FinanceProfitService;
@@ -25,6 +26,7 @@ public class FinanceProfitServiceImpl implements FinanceProfitService {
 
     private final OmsOrderDetailMapper omsOrderDetailMapper;
     private final OmsOrderMapper omsOrderMapper;
+    private final OmsOrderAnalysisMapper omsOrderAnalysisMapper;
 
     @Override
     public List<ProfitRankVO> getProfitRanking() {
@@ -40,7 +42,7 @@ public class FinanceProfitServiceImpl implements FinanceProfitService {
 
         // 直接获取 SQL 聚合后的 ROI 数据
         List<com.money.dto.OmsOrder.OmsSalesDataVO.MarketingRoiVO> roiData =
-                omsOrderMapper.getMarketingRoiStats(startTime, endTime);
+                omsOrderAnalysisMapper.getMarketingRoiStats(startTime, endTime);
 
         return roiData.stream().map(roi -> {
                     BigDecimal revenue = roi.getTotalRevenueBrought() != null ? roi.getTotalRevenueBrought() : BigDecimal.ZERO;

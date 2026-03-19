@@ -65,7 +65,7 @@ public interface UmsMemberService extends IService<UmsMember> {
     /**
      * 老会员 Excel 批量导入
      */
-    void importMembers(org.springframework.web.multipart.MultipartFile file);
+    String importMembers(org.springframework.web.multipart.MultipartFile file);
 
     // ==========================================
     // 营销画像辅助接口
@@ -73,7 +73,7 @@ public interface UmsMemberService extends IService<UmsMember> {
     /**
      * 获取会员最爱购买的 Top 20 商品
      */
-    java.util.List<UmsMemberServiceImpl.MemberGoodsRankVO> getTop10Goods(Long memberId);
+    java.util.List<UmsMemberServiceImpl.MemberGoodsRankVO> getTop20Goods(Long memberId);
 
     /**
      * 沉睡雷达：按天数筛选流失会员

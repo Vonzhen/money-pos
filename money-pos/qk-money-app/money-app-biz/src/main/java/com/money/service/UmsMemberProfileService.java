@@ -1,0 +1,183 @@
+package com.money.service;
+
+import cn.hutool.core.bean.BeanUtil;
+import cn.hutool.core.util.RandomUtil;
+import cn.hutool.core.util.StrUtil;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.money.constant.BizErrorStatus;
+import com.money.dto.UmsMember.UmsMemberDTO;
+import com.money.dto.UmsMember.UmsMemberQueryDTO;
+import com.money.dto.UmsMember.UmsMemberVO;
+import com.money.entity.PosMemberCoupon;
+import com.money.entity.UmsMember;
+import com.money.entity.UmsMemberBrandLevel;
+import com.money.mapper.PosMemberCouponMapper;
+import com.money.mapper.UmsMemberBrandLevelMapper;
+import com.money.mapper.UmsMemberMapper;
+import com.money.service.impl.UmsMemberServiceImpl.MemberGoodsRankVO;
+import com.money.util.PageUtil;
+import com.money.web.exception.BaseException;
+import com.money.web.vo.PageVO;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.*;
+import java.util.stream.Collectors;
+
+/**
+ * 领域服务：会员档案与查询子域
+ * 职责：负责会员的基础资料增删改查、多品牌等级挂载、排行榜及沉睡分析
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class UmsMemberProfileService {
+
+    private final UmsMemberMapper umsMemberMapper;
+    private final PosMemberCouponMapper posMemberCouponMapper;
+    private final UmsMemberBrandLevelMapper umsMemberBrandLevelMapper;
+
+    private static final String STATUS_UNUSED = "UNUSED";
+
+    public PageVO<UmsMemberVO> list(UmsMemberQueryDTO queryDTO) {
+        LambdaQueryWrapper<UmsMember> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(StrUtil.isNotBlank(queryDTO.getCode()), UmsMember::getCode, queryDTO.getCode())
+                .like(StrUtil.isNotBlank(queryDTO.getName()), UmsMember::getName, queryDTO.getName())
+                .like(StrUtil.isNotBlank(queryDTO.getPhone()), UmsMember::getPhone, queryDTO.getPhone())
+                .eq(StrUtil.isNotBlank(queryDTO.getType()), UmsMember::getType, queryDTO.getType())
+                .eq(UmsMember::getDeleted, false);
+
+        if (StrUtil.isNotBlank(queryDTO.getOrderBy())) {
+            wrapper.last(queryDTO.getOrderBySql());
+        } else {
+            wrapper.orderByDesc(UmsMember::getUpdateTime);
+        }
+
+        Page<UmsMember> page = umsMemberMapper.selectPage(PageUtil.toPage(queryDTO), wrapper);
+        PageVO<UmsMemberVO> pageVO = PageUtil.toPageVO(page, UmsMemberVO::new);
+
+        if (pageVO.getRecords() != null && !pageVO.getRecords().isEmpty()) {
+            List<Long> memberIds = pageVO.getRecords().stream().map(UmsMemberVO::getId).collect(Collectors.toList());
+
+            QueryWrapper<PosMemberCoupon> countQw = new QueryWrapper<>();
+            countQw.select("member_id", "COUNT(id) as count")
+                    .in("member_id", memberIds)
+                    .eq("status", STATUS_UNUSED)
+                    .groupBy("member_id");
+            List<Map<String, Object>> counts = posMemberCouponMapper.selectMaps(countQw);
+            Map<Long, Integer> voucherCountMap = counts.stream().collect(Collectors.toMap(
+                    m -> ((Number) m.get("member_id")).longValue(),
+                    m -> ((Number) m.get("count")).intValue()
+            ));
+
+            List<UmsMemberBrandLevel> allBrandLevels = umsMemberBrandLevelMapper.selectList(
+                    new LambdaQueryWrapper<UmsMemberBrandLevel>().in(UmsMemberBrandLevel::getMemberId, memberIds)
+            );
+            Map<Long, List<UmsMemberBrandLevel>> blMap = allBrandLevels.stream().collect(Collectors.groupingBy(UmsMemberBrandLevel::getMemberId));
+
+            for (UmsMemberVO vo : pageVO.getRecords()) {
+                vo.setVoucherCount(voucherCountMap.getOrDefault(vo.getId(), 0));
+                List<UmsMemberBrandLevel> levels = blMap.get(vo.getId());
+                Map<String, String> levelMap = new HashMap<>();
+                if (levels != null) {
+                    for (UmsMemberBrandLevel bl : levels) {
+                        levelMap.put(bl.getBrand(), bl.getLevelCode());
+                    }
+                }
+                vo.setBrandLevels(levelMap);
+            }
+        }
+        return pageVO;
+    }
+
+    public void add(UmsMemberDTO addDTO) {
+        boolean exists = umsMemberMapper.exists(new LambdaQueryWrapper<UmsMember>().eq(UmsMember::getPhone, addDTO.getPhone()));
+        if (exists) {
+            throw new BaseException("手机号码已存在");
+        }
+
+        UmsMember umsMember = new UmsMember();
+        BeanUtil.copyProperties(addDTO, umsMember);
+        String newCode;
+        do {
+            newCode = RandomUtil.randomNumbers(8);
+        } while (umsMemberMapper.exists(new LambdaQueryWrapper<UmsMember>().eq(UmsMember::getCode, newCode)));
+
+        umsMember.setCode(newCode);
+        umsMember.setBalance(BigDecimal.ZERO);
+        umsMember.setCoupon(BigDecimal.ZERO);
+        umsMemberMapper.insert(umsMember);
+
+        saveBrandLevels(umsMember.getId(), addDTO.getBrandLevels());
+    }
+
+    public void update(UmsMemberDTO updateDTO) {
+        UmsMember umsMember = umsMemberMapper.selectById(updateDTO.getId());
+        if (umsMember == null) {
+            throw new BaseException(BizErrorStatus.MEMBER_NOT_FOUND, "会员不存在或已被删除");
+        }
+
+        boolean exists = umsMemberMapper.exists(new LambdaQueryWrapper<UmsMember>()
+                .ne(UmsMember::getId, updateDTO.getId())
+                .eq(UmsMember::getPhone, updateDTO.getPhone()));
+        if (exists) {
+            throw new BaseException("手机号码已与他人冲突");
+        }
+
+        BeanUtil.copyProperties(updateDTO, umsMember);
+        umsMemberMapper.updateById(umsMember);
+
+        saveBrandLevels(umsMember.getId(), updateDTO.getBrandLevels());
+    }
+
+    public List<MemberGoodsRankVO> getTop20Goods(Long memberId) {
+        List<Map<String, Object>> rankData = umsMemberMapper.getTop20Goods(memberId);
+        if (rankData == null || rankData.isEmpty()) {
+            return new ArrayList<>();
+        }
+        return rankData.stream()
+                .map(map -> new MemberGoodsRankVO(
+                        (String) map.get("goodsName"),
+                        ((Number) map.get("buyCount")).intValue()))
+                .collect(Collectors.toList());
+    }
+
+    public List<UmsMemberVO> getDormantMembers(Integer days) {
+        if (days == null || days <= 0) throw new BaseException("天数参数异常");
+        LocalDateTime threshold = LocalDateTime.now().minusDays(days);
+        List<UmsMember> list = umsMemberMapper.selectList(new LambdaQueryWrapper<UmsMember>()
+                .eq(UmsMember::getDeleted, false)
+                .isNotNull(UmsMember::getLastVisitTime)
+                .le(UmsMember::getLastVisitTime, threshold)
+                .orderByDesc(UmsMember::getConsumeAmount)
+                .last("LIMIT 100"));
+        return BeanUtil.copyToList(list, UmsMemberVO.class);
+    }
+
+    public void delete(Set<Long> ids) {
+        if (ids == null || ids.isEmpty()) return;
+        UmsMember updateEntity = new UmsMember();
+        updateEntity.setDeleted(true);
+        umsMemberMapper.update(updateEntity, new LambdaQueryWrapper<UmsMember>().in(UmsMember::getId, ids));
+    }
+
+    public void saveBrandLevels(Long memberId, Map<String, String> brandLevels) {
+        umsMemberBrandLevelMapper.delete(new LambdaQueryWrapper<UmsMemberBrandLevel>().eq(UmsMemberBrandLevel::getMemberId, memberId));
+        if (brandLevels != null) {
+            brandLevels.forEach((b, level) -> {
+                if (StrUtil.isNotBlank(level)) {
+                    UmsMemberBrandLevel bl = new UmsMemberBrandLevel();
+                    bl.setMemberId(memberId);
+                    bl.setBrand(b);
+                    bl.setLevelCode(level);
+                    umsMemberBrandLevelMapper.insert(bl);
+                }
+            });
+        }
+    }
+}

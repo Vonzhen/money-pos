@@ -28,7 +28,10 @@
                                     <span>💳 会员余额:</span> <span class="font-bold text-gray-800">￥{{ (memberInfo.balance || 0).toFixed(2) }}</span>
                                 </div>
                                 <div class="flex justify-between">
-                                    <span>🎫 剩余满减券:</span> <span class="font-bold text-orange-500">{{ memberInfo.voucherCount || 0 }} 张</span>
+                                    <span>🎫 会员券:</span> <span class="font-bold text-orange-500">￥{{ (memberInfo.coupon || 0).toFixed(2) }}</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span>🎟️ 剩余满减券:</span> <span class="font-bold text-red-500">{{ memberInfo.voucherCount || 0 }} 张</span>
                                 </div>
 
                                 <div class="flex justify-between mt-2 pt-2 border-t border-blue-100/50 items-start">
@@ -51,9 +54,9 @@
 
                         <div>
                             <h3 class="font-bold text-gray-800 mb-3 flex items-center gap-2 text-base">
-                                <el-icon class="text-orange-500"><Histogram /></el-icon> 最爱买的商品 Top 10
+                                <el-icon class="text-orange-500"><Histogram /></el-icon> 核心购物偏好 Top 20
                             </h3>
-                            <el-table :data="top10List" size="small" stripe border class="w-full shadow-sm rounded-lg overflow-hidden">
+                            <el-table :data="topList" size="small" height="250" stripe border class="w-full shadow-sm rounded-lg overflow-hidden">
                                 <el-table-column type="index" label="排" width="45" align="center">
                                     <template #default="scope">
                                         <span :class="{'text-red-500 font-black': scope.$index === 0, 'text-orange-500 font-bold': scope.$index === 1, 'text-yellow-500 font-bold': scope.$index === 2, 'text-gray-400': scope.$index > 2}">
@@ -62,7 +65,7 @@
                                     </template>
                                 </el-table-column>
                                 <el-table-column prop="goodsName" label="商品名称" show-overflow-tooltip />
-                                <el-table-column prop="buyCount" label="件数" width="70" align="center">
+                                <el-table-column prop="buyCount" label="累计购买(件)" width="90" align="center">
                                     <template #default="{row}"><span class="font-black text-blue-600">{{ row.buyCount }}</span></template>
                                 </el-table-column>
                             </el-table>
@@ -77,10 +80,10 @@
                     <div class="mt-2">
                         <el-table :data="logList" size="small" height="420px" border stripe v-loading="logLoading">
                             <el-table-column prop="createTime" label="变动时间" width="140" align="center" />
-                            <el-table-column prop="type" label="资产" width="70" align="center">
+                            <el-table-column prop="type" label="资产" width="90" align="center">
                                 <template #default="{row}">
-                                    <el-tag size="small" :type="row.type === 'BALANCE' ? '' : 'warning'">
-                                        {{ row.type === 'BALANCE' ? '余额' : '券额' }}
+                                    <el-tag size="small" :type="getAssetTagType(row.type)">
+                                        {{ getAssetTypeName(row.type) }}
                                     </el-tag>
                                 </template>
                             </el-table-column>
@@ -106,16 +109,8 @@
             </el-tabs>
         </div>
 
-        <RechargeOrderDetail
-            v-model="rechargeDetailVisible"
-            :order-no="currentOrderNo"
-            @refresh="refreshAfterVoid"
-        />
-
-        <OrderDetailModal
-            v-model="salesDetailVisible"
-            :order-no="currentOrderNo"
-        />
+        <RechargeOrderDetail v-model="rechargeDetailVisible" :order-no="currentOrderNo" @refresh="refreshAfterVoid" />
+        <OrderDetailModal v-model="salesDetailVisible" :order-no="currentOrderNo" />
     </el-dialog>
 </template>
 
@@ -124,7 +119,7 @@ import { ref, watch } from 'vue'
 import { Trophy, User, List, Histogram } from '@element-plus/icons-vue'
 import { req } from "@/api/index.js"
 import RechargeOrderDetail from "@/views/ums/member/components/RechargeOrderDetail.vue"
-import OrderDetailModal from "@/components/OrderDetailModal.vue" // 🌟 引入现有的重型审计组件
+import OrderDetailModal from "@/components/OrderDetailModal.vue"
 
 const props = defineProps({
     modelValue: { type: Boolean, default: false },
@@ -139,15 +134,29 @@ const visible = ref(props.modelValue)
 const loading = ref(false)
 const logLoading = ref(false)
 const activeTab = ref('profile')
-const top10List = ref([])
+const topList = ref([])
 const logList = ref([])
 
-// 🌟 详情弹窗分流控制
 const rechargeDetailVisible = ref(false)
 const salesDetailVisible = ref(false)
 const currentOrderNo = ref('')
 
-// 监听弹窗显示状态
+// 🌟 新增：资产流水名称映射器
+const getAssetTypeName = (type) => {
+    if (type === 'BALANCE') return '会员余额';
+    if (type === 'COUPON') return '会员券';
+    if (type === 'VOUCHER') return '满减券';
+    return type || '未知';
+}
+
+// 🌟 新增：资产流水颜色映射器
+const getAssetTagType = (type) => {
+    if (type === 'BALANCE') return '';         // 默认蓝色
+    if (type === 'COUPON') return 'warning';   // 橙色
+    if (type === 'VOUCHER') return 'danger';   // 红色
+    return 'info';                             // 灰色兜底
+}
+
 watch(() => props.modelValue, (newVal) => {
     visible.value = newVal
     if (newVal && props.memberInfo.id) {
@@ -156,7 +165,6 @@ watch(() => props.modelValue, (newVal) => {
     }
 })
 
-// 监听 Tab 切换
 watch(activeTab, (val) => {
     if (val === 'logs') fetchLogs()
 })
@@ -165,18 +173,16 @@ watch(visible, (newVal) => {
     emit('update:modelValue', newVal)
 })
 
-// 拉取偏好数据
 const fetchTopGoods = async (memberId) => {
     loading.value = true
     try {
         const res = await req({ url: '/ums/member/top10Goods', method: 'GET', params: { memberId } })
-        top10List.value = res.data || res || []
+        topList.value = res.data || res || []
     } finally {
         loading.value = false
     }
 }
 
-// 拉取资产流水
 const fetchLogs = async () => {
     if (!props.memberInfo.id) return
     logLoading.value = true
@@ -188,35 +194,22 @@ const fetchLogs = async () => {
     }
 }
 
-// 🌟 智能打开详情单据
 const showOrderDetail = (orderNo) => {
     if (!orderNo) return
     currentOrderNo.value = orderNo
-
     if (orderNo.startsWith('RC')) {
-        // 充值单 -> 弹出撤销详情
         rechargeDetailVisible.value = true
     } else if (orderNo.startsWith('RE')) {
-        // 销售单 -> 弹出商品明细快照
         salesDetailVisible.value = true
     }
 }
 
-// 红冲成功后的刷新
-const refreshAfterVoid = () => {
-    fetchLogs()
-}
-
+const refreshAfterVoid = () => { fetchLogs() }
 const getBrandName = (brandId) => props.brandsDict[brandId] || '未知品牌'
 const getLevelName = (levelCode) => props.levelsDict[levelCode] || levelCode
-
 </script>
 
 <style scoped>
-.member-profile-dialog :deep(.el-dialog__body) {
-    padding-top: 10px;
-}
-.custom-tabs :deep(.el-tabs__nav-wrap::after) {
-    height: 1px;
-}
+.member-profile-dialog :deep(.el-dialog__body) { padding-top: 10px; }
+.custom-tabs :deep(.el-tabs__nav-wrap::after) { height: 1px; }
 </style>

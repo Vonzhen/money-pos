@@ -2,8 +2,9 @@ package com.money.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.money.constant.BizErrorStatus;
+import com.money.dto.pos.PricingItemResult;
+import com.money.dto.pos.PricingResult;
 import com.money.dto.pos.SettleTrialReqDTO;
-import com.money.dto.pos.SettleTrialResVO;
 import com.money.entity.GmsGoods;
 import com.money.entity.PosCouponRule;
 import com.money.entity.PosSkuLevelPrice;
@@ -34,147 +35,176 @@ public class PosCalculationEngine {
     private final PosSkuLevelPriceMapper skuLevelPriceMapper;
     private final PosCouponRuleMapper couponRuleMapper;
 
-    public SettleTrialResVO calculate(SettleTrialReqDTO req) {
-        SettleTrialResVO res = new SettleTrialResVO();
-        res.setTotalAmount(BigDecimal.ZERO);
-        res.setFinalPayAmount(BigDecimal.ZERO);
-        res.setParticipatingAmount(BigDecimal.ZERO);
-        res.setCostAmount(BigDecimal.ZERO);
-        res.setMemberCouponDeduct(BigDecimal.ZERO);
-        res.setVoucherDeduct(BigDecimal.ZERO);
-        res.setManualDeduct(req.getManualDiscountAmount() != null ? req.getManualDiscountAmount() : BigDecimal.ZERO);
-
-        if (req.getItems() == null || req.getItems().isEmpty()) return res;
-
-        List<Long> goodsIds = req.getItems().stream().map(SettleTrialReqDTO.TrialItem::getGoodsId).collect(Collectors.toList());
-        Map<Long, GmsGoods> goodsMap = gmsGoodsService.listByIds(goodsIds).stream().collect(Collectors.toMap(GmsGoods::getId, g -> g));
-
+    /**
+     * 🌟 内部计算上下文：避免私有方法之间传参混乱
+     */
+    private static class CalcContext {
+        SettleTrialReqDTO req;
+        PricingResult result;
+        Map<Long, GmsGoods> goodsMap;
         Map<String, String> memberBrandLevels = new HashMap<>();
         Map<Long, List<PosSkuLevelPrice>> skuPriceMap = new HashMap<>();
+    }
+
+    /**
+     * 🌟 唯一计价入口：管道流处理模式
+     */
+    public PricingResult calculate(SettleTrialReqDTO req) {
+        if (req.getItems() == null || req.getItems().isEmpty()) {
+            return new PricingResult();
+        }
+
+        // 1. 初始化上下文 (查库准备数据)
+        CalcContext ctx = initContext(req);
+
+        // 2. 价格轨计算：确定零售价与会员价
+        calculateBasePrices(ctx);
+
+        // 3. 核销轨计算：分流特权差额 (真实核销 vs 店铺承担)
+        dispatchSettlementTrack(ctx);
+
+        // 4. 营销轨计算：叠加外挂促销 (满减/手工)
+        calculateMarketingDeduct(ctx);
+
+        // 5. 格式化并返回
+        return formatScale(ctx.result);
+    }
+
+    // ================= 私有流水线步骤 =================
+
+    private CalcContext initContext(SettleTrialReqDTO req) {
+        CalcContext ctx = new CalcContext();
+        ctx.req = req;
+        ctx.result = new PricingResult();
+        ctx.result.setManualDeduct(req.getManualDiscountAmount() != null ? req.getManualDiscountAmount() : BigDecimal.ZERO);
+
+        List<Long> goodsIds = req.getItems().stream().map(SettleTrialReqDTO.TrialItem::getGoodsId).collect(Collectors.toList());
+        ctx.goodsMap = gmsGoodsService.listByIds(goodsIds).stream().collect(Collectors.toMap(GmsGoods::getId, g -> g));
 
         if (req.getMember() != null) {
             List<UmsMemberBrandLevel> levels = brandLevelMapper.selectList(new LambdaQueryWrapper<UmsMemberBrandLevel>().eq(UmsMemberBrandLevel::getMemberId, req.getMember()));
             levels.forEach(l -> {
-                if (l.getBrand() != null) {
-                    memberBrandLevels.put(l.getBrand().trim(), l.getLevelCode());
-                }
+                if (l.getBrand() != null) ctx.memberBrandLevels.put(l.getBrand().trim(), l.getLevelCode());
             });
-
-            skuPriceMap = skuLevelPriceMapper.selectList(new LambdaQueryWrapper<PosSkuLevelPrice>().in(PosSkuLevelPrice::getSkuId, goodsIds))
+            ctx.skuPriceMap = skuLevelPriceMapper.selectList(new LambdaQueryWrapper<PosSkuLevelPrice>().in(PosSkuLevelPrice::getSkuId, goodsIds))
                     .stream().collect(Collectors.groupingBy(PosSkuLevelPrice::getSkuId));
         }
+        return ctx;
+    }
 
-        for (SettleTrialReqDTO.TrialItem reqItem : req.getItems()) {
-            GmsGoods goods = goodsMap.get(reqItem.getGoodsId());
-            if (goods == null) {
-                throw new BaseException("【试算拦截】发现不存在或已下架的商品ID: " + reqItem.getGoodsId());
-            }
+    private void calculateBasePrices(CalcContext ctx) {
+        for (SettleTrialReqDTO.TrialItem reqItem : ctx.req.getItems()) {
+            GmsGoods goods = ctx.goodsMap.get(reqItem.getGoodsId());
+            if (goods == null) throw new BaseException("【试算拦截】发现不存在或已下架的商品ID: " + reqItem.getGoodsId());
 
-            // 🌟🌟🌟 修复版：带有 {0} 和 {1} 的库存前置拦截 🌟🌟🌟
+            // 库存前置拦截
             long currentStock = goods.getStock() != null ? goods.getStock() : 0L;
             if (reqItem.getQuantity() > currentStock) {
-                log.warn("【计价引擎拦截】商品 {} 缺货。请求数量: {}, 实际库存: {}", goods.getName(), reqItem.getQuantity(), currentStock);
-
-                throw new BaseException(BizErrorStatus.STOCK_NOT_ENOUGH,
-                        "结算中断！商品【{0}】库存不足，当前仅剩 {1} 件，请修改购物车数量后再结账。",
-                        goods.getName(), currentStock).withData(currentStock);
+                log.warn("【计价引擎拦截】商品 {} 缺货。请求: {}, 实际: {}", goods.getName(), reqItem.getQuantity(), currentStock);
+                throw new BaseException(BizErrorStatus.STOCK_NOT_ENOUGH, "结算中断！商品【{0}】库存不足，当前仅剩 {1} 件。", goods.getName(), currentStock).withData(currentStock);
             }
-            // 🌟🌟🌟 ==================================== 🌟🌟🌟
 
             BigDecimal qty = new BigDecimal(reqItem.getQuantity());
-
             BigDecimal unitOriginalPrice = goods.getSalePrice() != null ? goods.getSalePrice() : BigDecimal.ZERO;
-            BigDecimal unitRealPrice = unitOriginalPrice;
-            BigDecimal unitCoupon = BigDecimal.ZERO;
-            BigDecimal unitCost = goods.getAvgCostPrice() != null ? goods.getAvgCostPrice() :
-                    (goods.getPurchasePrice() != null ? goods.getPurchasePrice() : BigDecimal.ZERO);
+            BigDecimal unitRealPrice = unitOriginalPrice; // 默认零售价
+            BigDecimal unitCost = goods.getAvgCostPrice() != null ? goods.getAvgCostPrice() : (goods.getPurchasePrice() != null ? goods.getPurchasePrice() : BigDecimal.ZERO);
 
+            // 匹配会员价
             String brandKey = goods.getBrandId() != null ? String.valueOf(goods.getBrandId()) : "";
-            String levelCode = memberBrandLevels.get(brandKey);
+            String levelCode = ctx.memberBrandLevels.get(brandKey);
 
-            if (levelCode != null && skuPriceMap.containsKey(goods.getId())) {
-                for (PosSkuLevelPrice sp : skuPriceMap.get(goods.getId())) {
+            if (levelCode != null && ctx.skuPriceMap.containsKey(goods.getId())) {
+                for (PosSkuLevelPrice sp : ctx.skuPriceMap.get(goods.getId())) {
                     if (levelCode.equals(sp.getLevelId())) {
                         if (sp.getMemberPrice() == null || sp.getMemberPrice().compareTo(BigDecimal.ZERO) < 0) {
-                            throw new BaseException("商品「" + goods.getName() + "」的会员价配置异常，请联系管理员核实");
+                            throw new BaseException("商品「" + goods.getName() + "」的会员价配置异常");
                         }
-                        unitRealPrice = sp.getMemberPrice();
-                        if (!Boolean.TRUE.equals(req.getWaiveCoupon()) && sp.getMemberCoupon() != null) {
-                            unitCoupon = sp.getMemberCoupon();
-                        }
+                        unitRealPrice = sp.getMemberPrice(); // 🌟 锁定会员价
                         break;
                     }
                 }
             }
 
-            BigDecimal itemTotalReal = unitRealPrice.multiply(qty);
-            BigDecimal itemTotalCoupon = unitCoupon.multiply(qty);
+            // 行汇总
+            BigDecimal subTotalRetail = unitOriginalPrice.multiply(qty);
+            BigDecimal subTotalMember = unitRealPrice.multiply(qty);
+            BigDecimal subTotalPrivilege = subTotalRetail.subtract(subTotalMember);
             BigDecimal itemTotalCost = unitCost.multiply(qty);
 
-            SettleTrialResVO.ItemRes itemRes = new SettleTrialResVO.ItemRes();
+            // 封装明细
+            PricingItemResult itemRes = new PricingItemResult();
             itemRes.setGoodsId(goods.getId());
-            itemRes.setOriginalPrice(unitOriginalPrice);
-            itemRes.setRealPrice(unitRealPrice);
-            itemRes.setCouponDeduct(itemTotalCoupon);
             itemRes.setQuantity(reqItem.getQuantity());
-            itemRes.setSubTotal(itemTotalReal);
+            itemRes.setUnitOriginalPrice(unitOriginalPrice);
+            itemRes.setUnitRealPrice(unitRealPrice);
             itemRes.setCostPrice(unitCost);
-            res.getItems().add(itemRes);
+            itemRes.setSubTotalRetail(subTotalRetail);
+            itemRes.setSubTotalMember(subTotalMember);
+            itemRes.setSubTotalPrivilege(subTotalPrivilege);
+            ctx.result.getItems().add(itemRes);
 
-            res.setTotalAmount(res.getTotalAmount().add(itemTotalReal));
-            res.setCostAmount(res.getCostAmount().add(itemTotalCost));
-            res.setMemberCouponDeduct(res.getMemberCouponDeduct().add(itemTotalCoupon));
+            // 累加总计
+            ctx.result.setRetailAmount(ctx.result.getRetailAmount().add(subTotalRetail));
+            ctx.result.setMemberAmount(ctx.result.getMemberAmount().add(subTotalMember));
+            ctx.result.setPrivilegeAmount(ctx.result.getPrivilegeAmount().add(subTotalPrivilege));
+            ctx.result.setCostAmount(ctx.result.getCostAmount().add(itemTotalCost));
 
+            // 计算满减参与额 (基于会员价累加)
             if (goods.getIsDiscountParticipable() != null && goods.getIsDiscountParticipable() == 1) {
-                res.setParticipatingAmount(res.getParticipatingAmount().add(itemTotalReal));
+                ctx.result.setParticipatingAmount(ctx.result.getParticipatingAmount().add(subTotalMember));
             }
         }
+    }
 
-        if (req.getUsedCouponRuleId() != null && req.getUsedCouponCount() != null && req.getUsedCouponCount() > 0) {
-            PosCouponRule rule = couponRuleMapper.selectById(req.getUsedCouponRuleId());
-            if (rule == null) {
-                throw new BaseException("【试算拦截】选用的满减券规则不存在");
+    private void dispatchSettlementTrack(CalcContext ctx) {
+        // 🌟 核心：核销与免收的精准分流
+        boolean isWaive = Boolean.TRUE.equals(ctx.req.getWaiveCoupon());
+
+        if (isWaive) {
+            ctx.result.setActualCouponDeduct(BigDecimal.ZERO); // 免收：真实核销为 0
+            ctx.result.setWaivedCouponAmount(ctx.result.getPrivilegeAmount()); // 店铺全额承担
+        } else {
+            ctx.result.setActualCouponDeduct(ctx.result.getPrivilegeAmount()); // 正常：全额核销会员资产
+            ctx.result.setWaivedCouponAmount(BigDecimal.ZERO);
+        }
+    }
+
+    private void calculateMarketingDeduct(CalcContext ctx) {
+        // 满减券计算
+        if (ctx.req.getUsedCouponRuleId() != null && ctx.req.getUsedCouponCount() != null && ctx.req.getUsedCouponCount() > 0) {
+            PosCouponRule rule = couponRuleMapper.selectById(ctx.req.getUsedCouponRuleId());
+            if (rule == null) throw new BaseException("【试算拦截】选用的满减券规则不存在");
+
+            BigDecimal requiredAmount = rule.getThresholdAmount().multiply(new BigDecimal(ctx.req.getUsedCouponCount()));
+            if (ctx.result.getParticipatingAmount().compareTo(requiredAmount) < 0) {
+                throw new BaseException(BizErrorStatus.COUPON_NOT_ENOUGH, "【风控】参与满减活动商品总额(会员价计)未达到 {0} 张券门槛！", ctx.req.getUsedCouponCount());
             }
-
-            BigDecimal requiredAmount = rule.getThresholdAmount().multiply(new BigDecimal(req.getUsedCouponCount()));
-            if (res.getParticipatingAmount().compareTo(requiredAmount) < 0) {
-                // 🌟🌟🌟 修复版：带有 {0} 的满减券风控拦截
-                throw new BaseException(BizErrorStatus.COUPON_NOT_ENOUGH,
-                        "【券风控拦截】参与满减活动商品总额未达到使用 {0} 张券的门槛！",
-                        req.getUsedCouponCount());
-            }
-
-            BigDecimal voucherDeduct = rule.getDiscountAmount().multiply(new BigDecimal(req.getUsedCouponCount()));
-            res.setVoucherDeduct(voucherDeduct);
+            ctx.result.setVoucherDeduct(rule.getDiscountAmount().multiply(new BigDecimal(ctx.req.getUsedCouponCount())));
         }
 
-        BigDecimal maxAllowedManual = res.getTotalAmount().subtract(res.getVoucherDeduct());
-        if (res.getManualDeduct().compareTo(maxAllowedManual) > 0) {
+        // 手工折扣风控校验
+        BigDecimal maxAllowedManual = ctx.result.getMemberAmount().subtract(ctx.result.getVoucherDeduct());
+        if (ctx.result.getManualDeduct().compareTo(maxAllowedManual) > 0) {
             throw new BaseException(BizErrorStatus.POS_MANUAL_DISCOUNT_EXCEED, "【风控拦截】手工优惠额超过了本单可优惠上限");
         }
 
-        BigDecimal finalPay = res.getTotalAmount()
-                .subtract(res.getVoucherDeduct())
-                .subtract(res.getManualDeduct());
+        // 🌟 最终应收 = 会员价总计 - 满减 - 手工
+        BigDecimal finalPay = ctx.result.getMemberAmount()
+                .subtract(ctx.result.getVoucherDeduct())
+                .subtract(ctx.result.getManualDeduct());
 
-        res.setFinalPayAmount(finalPay.compareTo(BigDecimal.ZERO) > 0 ? finalPay : BigDecimal.ZERO);
+        ctx.result.setFinalPayAmount(finalPay.compareTo(BigDecimal.ZERO) > 0 ? finalPay : BigDecimal.ZERO);
+    }
 
-        // 精度封印
-        res.setTotalAmount(res.getTotalAmount().setScale(2, RoundingMode.HALF_UP));
-        res.setFinalPayAmount(res.getFinalPayAmount().setScale(2, RoundingMode.HALF_UP));
-        res.setParticipatingAmount(res.getParticipatingAmount().setScale(2, RoundingMode.HALF_UP));
-        res.setCostAmount(res.getCostAmount().setScale(2, RoundingMode.HALF_UP));
-        res.setMemberCouponDeduct(res.getMemberCouponDeduct().setScale(2, RoundingMode.HALF_UP));
+    private PricingResult formatScale(PricingResult res) {
+        res.setRetailAmount(res.getRetailAmount().setScale(2, RoundingMode.HALF_UP));
+        res.setMemberAmount(res.getMemberAmount().setScale(2, RoundingMode.HALF_UP));
+        res.setPrivilegeAmount(res.getPrivilegeAmount().setScale(2, RoundingMode.HALF_UP));
+        res.setActualCouponDeduct(res.getActualCouponDeduct().setScale(2, RoundingMode.HALF_UP));
+        res.setWaivedCouponAmount(res.getWaivedCouponAmount().setScale(2, RoundingMode.HALF_UP));
         res.setVoucherDeduct(res.getVoucherDeduct().setScale(2, RoundingMode.HALF_UP));
         res.setManualDeduct(res.getManualDeduct().setScale(2, RoundingMode.HALF_UP));
-
-        for (SettleTrialResVO.ItemRes item : res.getItems()) {
-            item.setOriginalPrice(item.getOriginalPrice().setScale(2, RoundingMode.HALF_UP));
-            item.setRealPrice(item.getRealPrice().setScale(2, RoundingMode.HALF_UP));
-            item.setCouponDeduct(item.getCouponDeduct().setScale(2, RoundingMode.HALF_UP));
-            item.setSubTotal(item.getSubTotal().setScale(2, RoundingMode.HALF_UP));
-        }
-
+        res.setFinalPayAmount(res.getFinalPayAmount().setScale(2, RoundingMode.HALF_UP));
         return res;
     }
 }

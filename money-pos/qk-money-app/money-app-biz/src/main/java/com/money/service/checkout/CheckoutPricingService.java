@@ -2,9 +2,9 @@ package com.money.service.checkout;
 
 import com.money.constant.PayMethodEnum;
 import com.money.dto.pos.NormalizedPaymentResult;
+import com.money.dto.pos.PricingResult; // 🌟 引入新契约
 import com.money.dto.pos.SettleAccountsDTO;
 import com.money.dto.pos.SettleTrialReqDTO;
-import com.money.dto.pos.SettleTrialResVO;
 import com.money.service.impl.PosCalculationEngine;
 import com.money.web.exception.BaseException;
 import lombok.RequiredArgsConstructor;
@@ -17,7 +17,6 @@ import java.util.stream.Collectors;
 
 /**
  * 🌟 结算流水线第二关：精算师
- * 负责调用计价引擎算出最终要收多少钱，并对前台传来的杂乱支付金额进行“脱水清洗”。
  */
 @Service
 @RequiredArgsConstructor
@@ -28,7 +27,7 @@ public class CheckoutPricingService {
     public void calculate(CheckoutContext context) {
         SettleAccountsDTO dto = context.getRequest();
 
-        // ================= 1. 委托计价引擎算账 =================
+        // 1. 委托计价引擎算账
         SettleTrialReqDTO trialReq = new SettleTrialReqDTO();
         trialReq.setMember(dto.getMember());
         trialReq.setUsedCouponRuleId(dto.getUsedCouponRuleId());
@@ -36,7 +35,6 @@ public class CheckoutPricingService {
         trialReq.setWaiveCoupon(dto.getWaiveCoupon());
         trialReq.setManualDiscountAmount(dto.getManualDiscountAmount());
 
-        // 把前端传来的明细转给计价引擎
         trialReq.setItems(dto.getOrderDetail().stream().map(d -> {
             SettleTrialReqDTO.TrialItem item = new SettleTrialReqDTO.TrialItem();
             item.setGoodsId(d.getGoodsId());
@@ -44,24 +42,18 @@ public class CheckoutPricingService {
             return item;
         }).collect(Collectors.toList()));
 
-        // 拿到权威的“试算裁决书”
-        SettleTrialResVO trialRes = posCalculationEngine.calculate(trialReq);
+        // 🌟 核心替换：拿到权威的“真理裁决书”
+        PricingResult trialRes = posCalculationEngine.calculate(trialReq);
         BigDecimal finalPayAmount = trialRes.getFinalPayAmount().setScale(2, RoundingMode.HALF_UP);
 
         // 👉 将计价结果装入公文包
         context.setPricingResult(trialRes);
 
-
-        // ================= 2. 支付金额清洗 (财务脱水) =================
+        // 2. 支付金额清洗 (基于真理引擎输出的最终应付)
         NormalizedPaymentResult payResult = normalizePayments(dto.getPayments(), finalPayAmount);
-
-        // 👉 将清洗后的标准支付明细装入公文包
         context.setPaymentResult(payResult);
     }
 
-    /**
-     * 内部方法：把顾客给的乱七八糟的钱，洗成财务需要的标准账单（含找零）
-     */
     private NormalizedPaymentResult normalizePayments(List<SettleAccountsDTO.PaymentItem> rawPayments, BigDecimal finalPayAmount) {
         NormalizedPaymentResult result = new NormalizedPaymentResult();
 
@@ -70,7 +62,7 @@ public class CheckoutPricingService {
 
             BigDecimal itemPay = p.getPayAmount().setScale(2, RoundingMode.HALF_UP);
             PayMethodEnum methodEnum = PayMethodEnum.fromCode(p.getPayMethodCode());
-            boolean isCash = methodEnum.isAllowChange(); // 只有现金允许找零
+            boolean isCash = methodEnum.isAllowChange();
 
             NormalizedPaymentResult.StandardPayItem sItem = new NormalizedPaymentResult.StandardPayItem();
             sItem.setMethodCode(p.getPayMethodCode());
@@ -89,7 +81,6 @@ public class CheckoutPricingService {
             }
         }
 
-        // 防御：钱不够，或者用微信/支付宝（不能找零的渠道）套现
         if (result.getTotalPaid().compareTo(finalPayAmount) < 0) {
             throw new BaseException(String.format("实付金额不足。本单应收: %s，实收: %s", finalPayAmount, result.getTotalPaid()));
         }
@@ -97,11 +88,9 @@ public class CheckoutPricingService {
             throw new BaseException("【风控拦截】非现金支付总额超过了应付总额，严禁套现！");
         }
 
-        // 计算找零和净收入
         result.setChangeAmount(result.getTotalPaid().subtract(finalPayAmount));
         result.setNetReceived(result.getTotalPaid().subtract(result.getChangeAmount()));
 
-        // 如果有多付的现金，优先从现金里扣除“找零”部分，算出真正入账的现金
         BigDecimal remainChange = result.getChangeAmount();
         for (NormalizedPaymentResult.StandardPayItem item : result.getValidItems()) {
             if (item.isCash() && remainChange.compareTo(BigDecimal.ZERO) > 0) {
@@ -117,7 +106,6 @@ public class CheckoutPricingService {
             item.setOriginalAmount(item.getOriginalAmount().setScale(2, RoundingMode.HALF_UP));
         }
 
-        // 财务精度终极封印
         result.setTotalPaid(result.getTotalPaid().setScale(2, RoundingMode.HALF_UP));
         result.setCashPaid(result.getCashPaid().setScale(2, RoundingMode.HALF_UP));
         result.setNonCashPaid(result.getNonCashPaid().setScale(2, RoundingMode.HALF_UP));

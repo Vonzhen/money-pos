@@ -1,23 +1,19 @@
 package com.money.service;
 
-import com.money.entity.GmsGoods;
 import com.baomidou.mybatisplus.extension.service.IService;
-import com.money.web.vo.PageVO;
 import com.money.dto.GmsGoods.GmsGoodsDTO;
 import com.money.dto.GmsGoods.GmsGoodsQueryDTO;
 import com.money.dto.GmsGoods.GmsGoodsVO;
+import com.money.entity.GmsGoods;
+import com.money.web.vo.PageVO;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
 import java.util.Set;
 
 /**
- * <p>
- * 商品表 服务类
- * </p>
- *
- * @author money
- * @since 2023-02-27
+ * 商品核心服务接口 (已纯净瘦身版)
+ * 职责：专注商品及库存的基础管理
  */
 public interface GmsGoodsService extends IService<GmsGoods> {
 
@@ -29,29 +25,11 @@ public interface GmsGoodsService extends IService<GmsGoods> {
 
     void delete(Set<Long> ids);
 
-    /**
-     * 出售
-     *
-     * @param goodsId 商品id
-     * @param qty     数量
-     */
     void sell(Long goodsId, Integer qty);
 
-    /**
-     * 更新库存
-     *
-     * @param goodsId 商品id
-     * @param qty     数量
-     */
     void updateStock(Long goodsId, Integer qty);
 
-    /**
-     * 获得当前股票价值
-     *
-     * @return {@link BigDecimal}
-     */
     BigDecimal getCurrentStockValue();
 
-    // 处理 Excel 导入
-    Boolean importGoods(org.springframework.web.multipart.MultipartFile file);
+    // 🌟 瘦身成功：importGoods 接口定义已被彻底移除！
 }

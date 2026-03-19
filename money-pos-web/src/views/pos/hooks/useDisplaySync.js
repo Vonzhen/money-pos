@@ -2,35 +2,35 @@ import { watch, onUnmounted } from 'vue'
 import { usePosStore } from './usePosStore'
 
 /**
- * 🌟 架构规范：客显实时同步通讯引擎 (Hook) - 极致瘦身版 (纯搬运工)
+ * 🌟 架构规范：客显实时同步通讯引擎 (Hook) - 修复版
  */
 export function useDisplaySync(checkoutVisible) {
-    // 🌟 直接从中央引擎拿取成品数据！
-    const { cartList, currentMember, participatingAmount, paymentStats, getCartItemPrices } = usePosStore();
+    // 🌟 引入 totalCount 作为最稳健的雷达触发器
+    const { cartList, currentMember, participatingAmount, paymentStats, getCartItemPrices, totalCount } = usePosStore();
     let displayWs = null;
 
     // 1. 组装商品快照
     const formatCartForDisplay = () => {
         return cartList.value.map(item => {
-            const { unitPrice } = getCartItemPrices(item, currentMember.value);
+            // 🌟 使用新的双轨制价格函数
+            const { unitOriginalPrice, unitRealPrice } = getCartItemPrices(item, currentMember.value);
             const qty = Number(item.qty) || 1;
             return {
                 name: item.name,
                 qty: qty,
-                originalPrice: item.salePrice || 0,
-                price: unitPrice,
-                subtotal: Number((unitPrice * qty).toFixed(2))
+                originalPrice: unitOriginalPrice,
+                price: unitRealPrice,
+                subtotal: Number((unitRealPrice * qty).toFixed(2))
             };
         });
     }
 
-    // 2. 组装支付状态快照 (自带防状态遗留闸门)
+    // 2. 组装支付状态快照
     const getPaymentState = () => {
         const isCheckout = checkoutVisible.value;
-        const stats = paymentStats.value; // 直接读取 Store 算好的四大金刚
+        const stats = paymentStats.value;
 
         if (!isCheckout) {
-            // 🌟 终极闸门：不在结算界面时，清空一切已收和扫码金额，只传目标应收
             return { targetPay: stats.targetPay, tendered: 0, aggregate: 0, change: 0 };
         }
 
@@ -61,30 +61,35 @@ export function useDisplaySync(checkoutVisible) {
                 displayWs.send(JSON.stringify({ state }));
                 return;
             }
-            // 发射标准化 Payload
             displayWs.send(JSON.stringify({
                 state,
                 cart: formatCartForDisplay(),
-                pAmount: participatingAmount.value, // 直接用
+                pAmount: participatingAmount.value,
                 member: currentMember.value,
-                payment: getPaymentState()          // 直接用
+                payment: getPaymentState()
             }));
         }
     }
 
-    // 5. 联合雷达阵列
+    // 5. 🌟 修复版：联合雷达阵列 (使用 totalCount 代替 cartList 监听，杜绝 Proxy 浅拷贝 Bug)
     watch([
-        () => cartList.value,
+        () => totalCount.value,
         () => currentMember.value,
-        () => paymentStats.value // 🌟 监听 Store 里聚合出的支付状态变更
-    ], ([newCart]) => {
-        if (newCart.length === 0 && !checkoutVisible.value) broadcastToDisplay('IDLE');
-        else broadcastToDisplay('CASHIER_UPDATE');
+        () => paymentStats.value
+    ], ([newCount]) => {
+        // 只要件数为 0 且不在结账页面，就是 IDLE (播广告)
+        if (newCount === 0 && !checkoutVisible.value) {
+            broadcastToDisplay('IDLE');
+        } else {
+            // 只要有件数，或者在结账页面，就切回明细
+            broadcastToDisplay('CASHIER_UPDATE');
+        }
+
     }, { deep: true });
 
     watch(checkoutVisible, (isVisible) => {
         if (isVisible) broadcastToDisplay('CHECKOUT_OPEN');
-        else if (cartList.value.length === 0) broadcastToDisplay('IDLE');
+        else if (totalCount.value === 0) broadcastToDisplay('IDLE');
         else broadcastToDisplay('CASHIER_UPDATE');
     });
 

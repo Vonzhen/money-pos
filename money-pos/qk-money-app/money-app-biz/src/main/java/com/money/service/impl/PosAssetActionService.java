@@ -5,8 +5,8 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.money.constant.CouponStatusEnum;
 import com.money.constant.PayMethodEnum;
 import com.money.dto.pos.NormalizedPaymentResult;
+import com.money.dto.pos.PricingResult; // 🌟 引入新契约
 import com.money.dto.pos.SettleAccountsDTO;
-import com.money.dto.pos.SettleTrialResVO;
 import com.money.entity.PosMemberCoupon;
 import com.money.entity.UmsMember;
 import com.money.entity.UmsMemberLog;
@@ -23,7 +23,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
 
-@Slf4j // 🌟 引入日志门面
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class PosAssetActionService {
@@ -34,16 +34,17 @@ public class PosAssetActionService {
     private final PosMemberCouponMapper posMemberCouponMapper;
     private final UmsMemberLogMapper umsMemberLogMapper;
 
-    public void consume(Long memberId, SettleAccountsDTO dto, SettleTrialResVO trialRes, NormalizedPaymentResult payResult, String orderNo) {
+    public void consume(Long memberId, SettleAccountsDTO dto, PricingResult trialRes, NormalizedPaymentResult payResult, String orderNo) {
         LocalDateTime now = LocalDateTime.now();
-        // 1. 单品券
-        umsMemberService.consume(memberId, trialRes.getFinalPayAmount(), trialRes.getMemberCouponDeduct(), orderNo);
+
+        // 🌟🌟🌟 终极绝杀：免收单逻辑物理隔离 🌟🌟🌟
+        // 传递给底层的只有 actualCouponDeduct。如果开启了免收，该值为0，底层服务自然不会扣减。
+        umsMemberService.consume(memberId, trialRes.getFinalPayAmount(), trialRes.getActualCouponDeduct(), orderNo);
 
         // 2. 满减券
         if (dto.getUsedCouponRuleId() != null && dto.getUsedCouponCount() != null && dto.getUsedCouponCount() > 0) {
             int count = dto.getUsedCouponCount();
 
-            // 🌟 任务 10：在进行 SQL 尾拼接前，加一道死锁防御，杜绝语法错误或恶意取数
             if (count > 500) {
                 throw new BaseException("【风控拦截】单次核销满减券数量超出安全阈值");
             }
@@ -87,7 +88,6 @@ public class PosAssetActionService {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         if (balanceCost.compareTo(BigDecimal.ZERO) > 0) {
-            // 🌟 任务 11：扣减前的终极防线，确保余额花费不能大于本单财务净入账
             if (balanceCost.compareTo(payResult.getNetReceived()) > 0) {
                 log.error("【资产安全拦截】尝试扣减的余额({})大于订单净入账({})，单号: {}", balanceCost, payResult.getNetReceived(), orderNo);
                 throw new BaseException("【风控拦截】余额支付金额异常，超出了本单应收底线！");
@@ -95,7 +95,7 @@ public class PosAssetActionService {
             umsMemberService.deductBalance(memberId, balanceCost, orderNo, "收银台支付扣除");
         }
 
-        // 🌟 任务 12：更新到店时间，弱依赖不阻断主流程，仅做监控告警
+        // 4. 更新到店时间
         boolean updateSuccess = umsMemberService.lambdaUpdate()
                 .set(UmsMember::getLastVisitTime, now)
                 .eq(UmsMember::getId, memberId)

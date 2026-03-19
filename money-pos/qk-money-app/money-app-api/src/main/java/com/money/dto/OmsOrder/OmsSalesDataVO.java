@@ -66,4 +66,23 @@ public class OmsSalesDataVO {
         private BigDecimal roiMultiplier;
         private BigDecimal avgOrderValue;
     }
+
+    // ==========================================
+    // 🌟 8.2 核心新增：办事罗盘（24小时客流分析）数据体
+    // ==========================================
+    @Data
+    public static class HourlyTrafficVO {
+        private Integer hour;               // 几点 (0-23)
+        private java.math.BigDecimal avgOrderCount;   // 历史平均单量
+        private java.math.BigDecimal avgSalesAmount;  // 历史平均产出
+        private String suggestion;          // 建议："OUT" (可外出), "STAY" (需留守)
+    }
+
+    // 🌟 宏观潮汐罗盘数据体 (按周/按月通用)
+    @Data
+    public static class TimeTrafficVO {
+        private Integer timeKey; // 星期几(1-7) 或 月份几号(1-31)
+        private java.math.BigDecimal avgOrderCount;
+        private java.math.BigDecimal avgSalesAmount;
+    }
 }

@@ -134,4 +134,17 @@ public class FinanceDataVO {
         private BigDecimal profit;
         private String riskType;
     }
+
+    // ==========================================
+    // 🌟 8.1 核心新增：资产驾驶舱数据结构
+    // ==========================================
+    @Data
+    public static class AssetDashboardVO {
+        private BigDecimal todayRealCash;      // 今日实收现金 (final_pay_amount)
+        private BigDecimal todayWaivedAmount;  // 今日店铺免收 (waived_coupon_amount)
+        private BigDecimal todayAssetDeduct;   // 今日会员核销 (actual_coupon_deduct)
+
+        private BigDecimal principalRatio;     // 本金消耗占比 (%)
+        private BigDecimal giftRatio;          // 赠送金消耗占比 (%)
+    }
 }

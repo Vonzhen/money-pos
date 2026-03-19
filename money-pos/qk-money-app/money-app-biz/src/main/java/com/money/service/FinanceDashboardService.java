@@ -1,21 +1,17 @@
 package com.money.service;
 
-import com.money.dto.Finance.FinanceDataVO.*;
+import com.money.dto.Finance.FinanceDataVO; // 🌟 修复：明确引入主类，不用 .*
 
-/**
- * 🌟 财务大屏首页与宏观分析核心服务
- * (已重构：剥离了利润、交班、风控等垂直业务，回归大盘指标统计本职)
- */
 public interface FinanceDashboardService {
 
-    /**
-     * 6.1 财务瀑布流全口径日结大屏
-     */
-    FinanceDashboardVO getDashboardData(String date);
+    // 原有：获取财务大盘数据 (带上前缀 FinanceDataVO.)
+    FinanceDataVO.FinanceDashboardVO getDashboardData(String date);
 
-    /**
-     * 6.2 支付渠道及虚拟抵扣占比分析
-     */
-    ChannelMixAnalysisVO getChannelMixAnalysis(String startDate, String endDate);
+    // 原有：获取渠道混合分析 (带上前缀 FinanceDataVO.)
+    FinanceDataVO.ChannelMixAnalysisVO getChannelMixAnalysis(String startDate, String endDate);
 
+    // ==========================================
+    // 🌟 8.1 核心新增：获取首页资产驾驶舱数据
+    // ==========================================
+    FinanceDataVO.AssetDashboardVO getAssetDashboard();
 }

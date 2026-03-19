@@ -106,8 +106,8 @@
 
                 <div class="flex-1 w-full flex justify-end items-center overflow-hidden">
                     <div class="text-red-500 font-black leading-none tracking-tight whitespace-nowrap text-right"
-                         :style="{ fontSize: getResponsiveFontSize(totalAmount) + 'px' }">
-                        ￥{{ formatMoney(totalAmount) }}
+                         :style="{ fontSize: getResponsiveFontSize(finalPayAmount) + 'px' }">
+                        ￥{{ formatMoney(finalPayAmount) }}
                     </div>
                 </div>
 
@@ -173,7 +173,8 @@ const emit = defineEmits(['open-checkout', 'open-drawer', 'clear-cart', 'suspend
 const {
     currentMember,
     totalCount,
-    totalAmount,
+    totalAmount,          // 这个是原价，您可以保留它用来做划线价，或者删掉
+    finalPayAmount,       // 🌟 把它加进来！这是后端的权威应收金额！
     participatingAmount,
     actualCouponUsed,
     addToCart,

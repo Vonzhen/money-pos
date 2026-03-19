@@ -3,9 +3,10 @@ package com.money.dto.OmsOrder;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 
 @Data
-@Schema(description = "真实损益毛利审计快照")
+@Schema(description = "财务毛利审计视图对象")
 public class ProfitAuditVO {
 
     @Schema(description = "关联单号")
@@ -14,27 +15,24 @@ public class ProfitAuditVO {
     @Schema(description = "商品名称")
     private String goodsName;
 
-    @Schema(description = "销售原价 (吊牌价)")
+    @Schema(description = "交易时间")
+    private LocalDateTime createTime;
+
+    @Schema(description = "吊牌价")
     private BigDecimal salePrice;
 
-    @Schema(description = "实际成交单价 (均摊各项优惠后)")
+    @Schema(description = "实际成交价")
     private BigDecimal goodsPrice;
 
-    @Schema(description = "交易时刻进价快照 (成本)")
+    @Schema(description = "进价快照")
     private BigDecimal purchasePrice;
 
-    @Schema(description = "单件净利 (实际成交价 - 进价)")
+    @Schema(description = "单件净利")
     private BigDecimal unitProfit;
 
-    @Schema(description = "毛利率 (单件净利 / 实际成交价)")
+    @Schema(description = "毛利率")
     private BigDecimal profitMargin;
 
-    @Schema(description = "异常探针：是否缺失成本快照 (1:缺失, 0:正常)")
+    @Schema(description = "是否缺失成本 (1:是 0:否)")
     private Integer isMissingCost;
-
-    @Schema(description = "异常探针：是否负毛利倒挂 (1:倒挂, 0:正常)")
-    private Integer isNegativeMargin;
-
-    @Schema(description = "交易时间")
-    private java.time.LocalDateTime createTime;
 }
