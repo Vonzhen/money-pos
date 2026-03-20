@@ -93,3 +93,8 @@ spring:
     init:
       mode: never
       continue-on-error: true
+
+  servlet:
+    multipart:
+      max-file-size: 1024MB       # 单个文件最大限制
+      max-request-size: 1024MB    # 整个请求最大限制

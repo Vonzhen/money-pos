@@ -1,5 +1,6 @@
 package com.money.dto.Finance;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import java.math.BigDecimal;
 
@@ -13,4 +14,7 @@ public class FinanceWaterfallVO {
     private BigDecimal payAmount; // 实付总额
     private BigDecimal refundAmount; // 退款总额
     private BigDecimal netIncome; // 净收总额
+    // 在 FinanceWaterfallVO 中新增
+    @Schema(description = "采购支出总额")
+    private BigDecimal procurementAmount;
 }

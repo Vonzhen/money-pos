@@ -1,4 +1,4 @@
-package com.money.dto.Pos;
+package com.money.dto.pos;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;

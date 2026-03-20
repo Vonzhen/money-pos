@@ -2,32 +2,71 @@ package com.money.mapper;
 
 import com.money.entity.OmsOrderDetail;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
+
+import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * <p>
- * 订单明细表 Mapper 接口 (大盘净值纯化版)
+ * 订单明细表 Mapper 接口 (大一统原子操作版 - V3.0 动态沙盘版)
  * </p>
  */
 public interface OmsOrderDetailMapper extends BaseMapper<OmsOrderDetail> {
 
-    // 1. 近7日走势图 (🌟 直接查询主订单表 oms_order，与财务大屏 100% 对齐)
-    @org.apache.ibatis.annotations.Select("SELECT DATE_FORMAT(create_time, '%m-%d') AS date, " +
+    @Update("UPDATE oms_order_detail " +
+            "SET return_quantity = IFNULL(return_quantity, 0) + #{returnQty}, " +
+            "    status = CASE " +
+            "               WHEN quantity <= IFNULL(return_quantity, 0) + #{returnQty} THEN 'REFUNDED' " +
+            "               ELSE status " +
+            "             END " +
+            "WHERE id = #{detailId} " +
+            "  AND (quantity - IFNULL(return_quantity, 0) >= #{returnQty})")
+    int refundGoodsAtomically(@Param("detailId") Long detailId, @Param("returnQty") int returnQty);
+
+    // 1. 动态走势图 (🌟 升级为动态时间段)
+    @Select("<script>" +
+            "SELECT DATE_FORMAT(create_time, '%m-%d') AS date, " +
             "SUM(IFNULL(final_sales_amount, pay_amount)) AS sales, " +
             "SUM(IFNULL(final_sales_amount, pay_amount) - IFNULL(cost_amount, 0)) AS profit " +
             "FROM oms_order " +
-            "WHERE status IN ('PAID', 'DONE') AND create_time >= #{startTime} " +
+            "WHERE status IN ('PAID', 'PARTIAL_REFUNDED', 'REFUNDED') " +
+            "<if test='startTime != null'> AND create_time &gt;= #{startTime} </if> " +
+            "<if test='endTime != null'> AND create_time &lt; #{endTime} </if> " +
             "GROUP BY DATE(create_time), DATE_FORMAT(create_time, '%m-%d') " +
-            "ORDER BY DATE(create_time) ASC")
-    java.util.List<com.money.dto.Home.TrendChartVO> getTrendData(@org.apache.ibatis.annotations.Param("startTime") java.time.LocalDateTime startTime);
+            "ORDER BY DATE(create_time) ASC" +
+            "</script>")
+    List<com.money.dto.Home.TrendChartVO> getTrendData(@Param("startTime") LocalDateTime startTime, @Param("endTime") LocalDateTime endTime);
 
-    // 2. 品牌营收饼图 (保持不变，因为品牌维度的贡献度通常采用商品原始售价进行比例切分最合理)
-    @org.apache.ibatis.annotations.Select("SELECT IFNULL(gb.name, '无品牌/未知') AS name, " +
+    // 2. 品牌营收饼图 (🌟 升级为连表查时间)
+    @Select("<script>" +
+            "SELECT IFNULL(gb.name, '无品牌/未知') AS name, " +
             "SUM((ood.quantity - IFNULL(ood.return_quantity, 0)) * IFNULL(ood.goods_price, 0)) AS value " +
             "FROM oms_order_detail ood " +
             "LEFT JOIN gms_brand gb ON ood.brand_id = gb.id " +
-            "WHERE ood.status = 'PAID' " +
-            "AND ood.order_no NOT IN (SELECT order_no FROM oms_order WHERE status = 'RETURN' OR IFNULL(final_sales_amount, pay_amount) <= 0) " +
-            "GROUP BY gb.id, gb.name")
-    java.util.List<com.money.dto.Home.BrandPieVO> getBrandPieData();
+            "JOIN oms_order o ON ood.order_no = o.order_no " +
+            "WHERE ood.status IN ('PAID', 'PARTIAL_REFUNDED', 'REFUNDED') " +
+            "<if test='startTime != null'> AND o.create_time &gt;= #{startTime} </if> " +
+            "<if test='endTime != null'> AND o.create_time &lt; #{endTime} </if> " +
+            "GROUP BY gb.id, gb.name " +
+            "HAVING value > 0" +
+            "</script>")
+    List<com.money.dto.Home.BrandPieVO> getBrandPieData(@Param("startTime") LocalDateTime startTime, @Param("endTime") LocalDateTime endTime);
 
+    // 3. 高性能利润排行榜
+    @Select("SELECT d.goods_name AS goodsName, " +
+            "SUM(d.quantity - IFNULL(d.return_quantity, 0)) AS totalQuantity, " +
+            "SUM(d.goods_price * (d.quantity - IFNULL(d.return_quantity, 0))) AS totalSales, " +
+            "SUM((d.goods_price - IFNULL(d.purchase_price, 0)) * (d.quantity - IFNULL(d.return_quantity, 0))) AS totalProfit " +
+            "FROM oms_order_detail d " +
+            "JOIN oms_order o ON o.order_no = d.order_no " +
+            "WHERE o.status IN ('PAID', 'PARTIAL_REFUNDED', 'REFUNDED') " +
+            "AND o.create_time >= #{startTime} " +
+            "GROUP BY d.goods_id, d.goods_name " +
+            "HAVING totalQuantity > 0 " +
+            "ORDER BY totalProfit DESC " +
+            "LIMIT 50")
+    List<com.money.dto.Finance.FinanceDataVO.ProfitRankVO> getProfitRankingData(@Param("startTime") LocalDateTime startTime);
 }

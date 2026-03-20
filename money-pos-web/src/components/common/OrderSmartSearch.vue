@@ -138,7 +138,7 @@ const querySearch = async (query) => {
     loading.value = true
     try {
         const res = await req({
-            url: '/oms/order',
+            url: '/oms-order/page',
             method: 'GET',
             params: params
         })

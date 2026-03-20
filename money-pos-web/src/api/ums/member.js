@@ -6,6 +6,13 @@ export default {
   edit: (data) => req({ url: '/ums/member', method: 'PUT', data }),
   del: (ids) => req({ url: '/ums/member', method: 'DELETE', data: ids }),
   recharge: (data) => req({ url: '/ums/member/recharge', method: 'post', data }),
+  // 🌟 新增：获取充值单详情
+  getRechargeOrderDetail: (orderNo) => req({ url: `/ums/member/recharge/order/${orderNo}`, method: 'GET' }),
+  // 🌟 新增：红冲撤销
+  voidRecharge: (data) => req({ url: '/ums/member/recharge/void', method: 'POST', data }),
+  // 🌟 新增：获取会员资产变更流水 (用于在画像里展示)
+  getMemberLogs: (query) => req({ url: '/ums/member/logs', method: 'GET', params: query }),
+
   importMembers: (file) => {
     const formData = new FormData()
     formData.append('file', file)
@@ -21,12 +28,10 @@ export default {
     method: 'GET',
     responseType: 'blob'
   }),
-  // 🌟 核心：POS 专属搜会员 (路径必须是 ums)
   posSearch: (keyword) => req({
     url: '/ums/member/pos-search',
     method: 'GET',
     params: { keyword }
   }),
-  // 🌟 获取满减券规则下拉列表
   getCouponRules: () => req({ url: '/ums/member/coupon-rules', method: 'GET' })
 }

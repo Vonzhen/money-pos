@@ -16,5 +16,11 @@ export default {
     // 4. 获取满减营销复盘分析
     getCampaignReview() {
         return req({ url: '/finance/campaign-review', method: 'get' })
+    },
+    // ==========================================
+    // 5. 🌟 8.1新增：获取首页资产驾驶舱数据
+    // ==========================================
+    getAssetDashboard() {
+        return req({ url: '/finance/dashboard/asset', method: 'get' })
     }
 }

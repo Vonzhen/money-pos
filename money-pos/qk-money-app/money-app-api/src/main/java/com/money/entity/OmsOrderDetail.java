@@ -45,7 +45,9 @@ public class OmsOrderDetail extends BaseEntity {
     @Schema(description="售价")
     private BigDecimal salePrice;
 
-    @Schema(description="进价")
+    // 🌟 语义重塑：这个字段不再是“随便的一个进价”，而是该笔交易发生瞬间的【成本快照】
+    // 报表系统的所有利润，均由 goodsPrice - purchasePrice(成本快照) 得出！
+    @Schema(description="成本快照 (交易发生时的 avgCostPrice，落库后永不篡改)")
     private BigDecimal purchasePrice;
 
     @Schema(description="会员价")
@@ -64,4 +66,14 @@ public class OmsOrderDetail extends BaseEntity {
      * 品牌ID (数据冗余，专为报表提速)
      */
     private Long brandId;
+
+    /**
+     * 分类ID快照 (防止商品修改分类导致历史报表错乱)
+     */
+    private Long categoryId;
+
+    /**
+     * 分类名称快照
+     */
+    private String categoryName;
 }

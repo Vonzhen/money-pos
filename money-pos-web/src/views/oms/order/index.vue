@@ -36,15 +36,15 @@
                 {{ NP.minus(scope.row.payAmount, scope.row.costAmount) }}
             </template>
             <template #status="{scope}">
-                <el-tag :type="statusColor[scope.row.status] || 'primary'">
-                    {{ dict.orderStatusKv[scope.row.status] }}
+                <el-tag :type="statusColor[scope.row.status] || 'primary'" effect="dark" class="font-bold">
+                    {{ dict.orderStatusKv[scope.row.status] || scope.row.status }}
                 </el-tag>
             </template>
             <template #opt="{scope}">
                 <el-button plain size="small" @click="showOrderDetail(scope.row.orderNo)" class="mr-2">详情</el-button>
 
                 <el-popconfirm title="确定要退单吗？" @confirm="returnOrder(scope.row)"
-                               v-if="scope.row.status !== 'RETURN'">
+                               v-if="scope.row.status !== 'RETURN' && scope.row.status !== 'REFUNDED'">
                     <template #reference>
                         <el-button plain type="danger" size="small">退单</el-button>
                     </template>
@@ -72,11 +72,11 @@ import MoneyCUD from "@/components/crud/MoneyCUD.vue";
 import MoneyForm from "@/components/crud/MoneyForm.vue";
 
 import OrderSmartSearch from "@/components/common/OrderSmartSearch.vue";
-// 🌟 引入弹窗组件
 import OrderDetailModal from "@/components/OrderDetailModal.vue";
 
 import {ref} from "vue";
 import {useUserStore} from "@/store/index.js";
+import { ElMessage } from 'element-plus'
 import NP from "number-precision";
 import dayjs from "dayjs";
 import orderApi from "@/api/oms/order.js";
@@ -124,7 +124,6 @@ const handleOrderClear = () => {
     moneyCrud.value.doQuery();
 }
 
-// 🌟 弹窗控制逻辑
 const detailVisible = ref(false)
 const currentSearchOrderNo = ref('')
 
@@ -133,39 +132,22 @@ const showOrderDetail = (orderNo) => {
     detailVisible.value = true;
 }
 
-const dict = ref({})
+const dict = ref({ orderStatusKv: {} })
+// 🌟 完善着色矩阵：PARTIAL 映射到 warning (黄/橙)
 const statusColor = {
     'RETURN': 'info',
+    'REFUNDED': 'info',
     'PAID': 'success',
-    'DONE': 'success'
+    'DONE': 'success',
+    'PARTIAL': 'warning'
 }
 const datePicker = ref([dayjs().startOf('M').format('YYYY-MM-DD HH:mm:ss'), dayjs().endOf('M').format('YYYY-MM-DD HH:mm:ss')])
 const defaultTime = [dayjs().startOf('d').toDate(), dayjs().endOf('d').toDate()]
 const shortcuts = [
-    {
-        text: '今天',
-        value() {
-            return [dayjs().startOf('d').toDate(), dayjs().endOf('d').toDate()]
-        }
-    },
-    {
-        text: '本月',
-        value() {
-            return [dayjs().startOf('M').toDate(), dayjs().endOf('M').toDate()]
-        }
-    },
-    {
-        text: '最近7天',
-        value() {
-            return [dayjs().subtract(6, 'd').startOf('d').toDate(), dayjs().endOf('d').toDate()]
-        }
-    },
-    {
-        text: '最近30天',
-        value() {
-            return [dayjs().subtract(29, 'd').startOf('d').toDate(), dayjs().endOf('d').toDate()]
-        }
-    }
+    { text: '今天', value() { return [dayjs().startOf('d').toDate(), dayjs().endOf('d').toDate()] } },
+    { text: '本月', value() { return [dayjs().startOf('M').toDate(), dayjs().endOf('M').toDate()] } },
+    { text: '最近7天', value() { return [dayjs().subtract(6, 'd').startOf('d').toDate(), dayjs().endOf('d').toDate()] } },
+    { text: '最近30天', value() { return [dayjs().subtract(29, 'd').startOf('d').toDate(), dayjs().endOf('d').toDate()] } }
 ]
 moneyCrud.value.init(moneyCrud, async () => {
     dict.value = await dictApi.loadDict(["orderStatus"])
@@ -173,11 +155,7 @@ moneyCrud.value.init(moneyCrud, async () => {
     moneyCrud.value.query.endTime = datePicker.value[1]
 })
 
-const orderCount = ref({
-    saleCount: 0,
-    costCount: 0,
-    profit: 0
-})
+const orderCount = ref({ saleCount: 0, costCount: 0, profit: 0 })
 moneyCrud.value.Hook.afterDoQuery = () => {
     orderApi.getCount(moneyCrud.value.query)
         .then(res => {
@@ -195,10 +173,14 @@ function handleDatePick(value) {
 }
 
 function returnOrder(row) {
-    orderApi.returnOrder([row.id])
-        .then(() => {
-            moneyCrud.value.messageOk()
-            moneyCrud.value.doQuery()
-        })
+    orderApi.returnOrder({
+        orderNo: row.orderNo,
+        reqId: 'RET' + Date.now()
+    }).then(() => {
+        moneyCrud.value.messageOk()
+        moneyCrud.value.doQuery()
+    }).catch((e) => {
+        ElMessage.error(e.msg || e.message || '退款失败');
+    })
 }
 </script>

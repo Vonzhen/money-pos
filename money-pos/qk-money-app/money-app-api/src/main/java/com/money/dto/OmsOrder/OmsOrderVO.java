@@ -83,4 +83,9 @@ public class OmsOrderVO {
 
     private LocalDateTime createTime;
 
+    /**
+     * 抹零金额 (结账时免去的零头)
+     */
+    private java.math.BigDecimal waivedCouponAmount;
+
 }

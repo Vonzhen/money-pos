@@ -1,27 +1,25 @@
 package com.money.dto.OmsOrder;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
-import javax.validation.constraints.NotNull;
+import java.math.BigDecimal;
 
 /**
- * @author : money
- * @version : 1.0.0
- * @description : 返回商品dto
- * @createTime : 2022-04-25 21:07:27
+ * 🌟 部分退货请求对象
  */
 @Data
+@Schema(description = "部分退货请求")
 public class ReturnGoodsDTO {
 
-    /**
-     * 订单详情id
-     */
-    @NotNull
-    private Long id;
+    @Schema(description = "订单号")
+    private String orderNo;
 
-    /**
-     * 数量
-     */
-    @NotNull
-    private Integer quantity;
+    @Schema(description = "订单明细ID")
+    private Long detailId;
+
+    @Schema(description = "退货数量")
+    private Integer returnQty;
+
+    // 如果您的原始业务里还有其他字段，请告诉我
 }

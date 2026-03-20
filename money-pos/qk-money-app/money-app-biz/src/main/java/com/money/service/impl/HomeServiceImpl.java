@@ -1,6 +1,7 @@
 package com.money.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.money.constant.OrderStatusEnum;
 import com.money.dto.Home.HomeCountVO;
 import com.money.dto.OmsOrder.OrderCountVO;
 import com.money.entity.OmsOrder;
@@ -25,7 +26,7 @@ import java.util.Map;
 public class HomeServiceImpl implements HomeService {
 
     private final GmsGoodsService gmsGoodsService;
-    private final OmsOrderMapper omsOrderMapper; // 🌟 新增：直接召唤主订单表 Mapper
+    private final OmsOrderMapper omsOrderMapper;
     private final OmsOrderDetailMapper omsOrderDetailMapper;
     private final UmsMemberBrandLevelMapper umsMemberBrandLevelMapper;
 
@@ -52,23 +53,15 @@ public class HomeServiceImpl implements HomeService {
     }
 
     private OrderCountVO executeAggregateQuery(LocalDateTime startTime, LocalDateTime endTime) {
-        // 🌟 核心升级：不再去明细表里算缝合怪数据，直接拿主订单表的真金白银！
         QueryWrapper<OmsOrder> wrapper = new QueryWrapper<>();
-
         wrapper.select(
                 "COUNT(id) AS orderCount",
-                "IFNULL(SUM(IFNULL(final_sales_amount, pay_amount)), 0) AS saleCount", // 实际净收入
-                "IFNULL(SUM(cost_amount), 0) AS costCount" // 实际总成本
+                "IFNULL(SUM(IFNULL(final_sales_amount, pay_amount)), 0) AS saleCount",
+                "IFNULL(SUM(cost_amount), 0) AS costCount"
         );
-
-        wrapper.in("status", "PAID", "DONE"); // 排除已全额退款废弃的订单
-
-        if (startTime != null) {
-            wrapper.ge("create_time", startTime);
-        }
-        if (endTime != null) {
-            wrapper.lt("create_time", endTime);
-        }
+        wrapper.in("status", OrderStatusEnum.getValidFinancialStatus());
+        if (startTime != null) wrapper.ge("create_time", startTime);
+        if (endTime != null) wrapper.lt("create_time", endTime);
 
         OrderCountVO vo = new OrderCountVO();
         vo.setOrderCount(0L);
@@ -76,11 +69,9 @@ public class HomeServiceImpl implements HomeService {
         vo.setCostCount(BigDecimal.ZERO);
         vo.setProfit(BigDecimal.ZERO);
 
-        // 🌟 改用 omsOrderMapper 执行查询
         List<Map<String, Object>> maps = omsOrderMapper.selectMaps(wrapper);
         if (maps != null && !maps.isEmpty() && maps.get(0) != null) {
             Map<String, Object> map = maps.get(0);
-
             long count = map.get("orderCount") != null ? Long.parseLong(map.get("orderCount").toString()) : 0L;
             BigDecimal sales = map.get("saleCount") != null ? new BigDecimal(map.get("saleCount").toString()) : BigDecimal.ZERO;
             BigDecimal costs = map.get("costCount") != null ? new BigDecimal(map.get("costCount").toString()) : BigDecimal.ZERO;
@@ -88,19 +79,42 @@ public class HomeServiceImpl implements HomeService {
             vo.setOrderCount(count);
             vo.setSaleCount(sales);
             vo.setCostCount(costs);
-            // 毛利 = 最终实付净收款 - 实际出库成本 (与财务大屏 100% 严丝合缝)
             vo.setProfit(sales.subtract(costs));
         }
         return vo;
     }
 
+    // 🌟 图表引擎：动态计算时间范围
     @Override
-    public com.money.dto.Home.HomeChartsVO getChartsData() {
-        com.money.dto.Home.HomeChartsVO chartsVO = new com.money.dto.Home.HomeChartsVO();
-        LocalDateTime sevenDaysAgo = LocalDateTime.now().minusDays(6).withHour(0).withMinute(0).withSecond(0).withNano(0);
+    public com.money.dto.Home.HomeChartsVO getChartsData(String timeRange) {
+        LocalDateTime startTime = null;
+        LocalDateTime endTime = null;
 
-        chartsVO.setTrendData(omsOrderDetailMapper.getTrendData(sevenDaysAgo));
-        chartsVO.setPieData(omsOrderDetailMapper.getBrandPieData());
+        if ("today".equals(timeRange)) {
+            startTime = LocalDate.now().atStartOfDay();
+            endTime = startTime.plusDays(1);
+        } else if ("month".equals(timeRange)) {
+            startTime = YearMonth.now().atDay(1).atStartOfDay();
+            endTime = startTime.plusMonths(1);
+        } else if ("year".equals(timeRange)) {
+            startTime = Year.now().atDay(1).atStartOfDay();
+            endTime = startTime.plusYears(1);
+        }
+
+        com.money.dto.Home.HomeChartsVO chartsVO = new com.money.dto.Home.HomeChartsVO();
+
+        // 🌟 走势图智能处理：如果是今天，强行降级展示近7天（因为只展示当天的1个点没有意义）
+        LocalDateTime trendStartTime = startTime;
+        if ("today".equals(timeRange)) {
+            trendStartTime = LocalDateTime.now().minusDays(6).withHour(0).withMinute(0).withSecond(0).withNano(0);
+            endTime = null; // 查到最新
+        }
+
+        // 动态穿透 SQL
+        chartsVO.setTrendData(omsOrderDetailMapper.getTrendData(trendStartTime, endTime));
+        chartsVO.setPieData(omsOrderDetailMapper.getBrandPieData(startTime, endTime));
+
+        // 会员等级是即时状态（总资产），不跟时间联动
         chartsVO.setBarData(umsMemberBrandLevelMapper.getMemberBarData());
 
         return chartsVO;

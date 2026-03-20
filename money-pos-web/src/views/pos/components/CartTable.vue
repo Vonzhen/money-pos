@@ -1,6 +1,6 @@
 <template>
     <el-table
-        :data="cartList"
+        :data="enrichedCartList"
         height="100%"
         stripe
         border
@@ -24,27 +24,48 @@
 
         <el-table-column label="会员价" width="120" align="right">
             <template #default="{ row }">
-                <span v-if="getMemberPrice(row) !== null" class="text-blue-600 font-bold">￥{{ getMemberPrice(row)?.toFixed(2) }}</span>
+                <span v-if="getLevelCode(row.brandId)" class="text-blue-600 font-bold">
+                    ￥{{ row.displayPrice?.toFixed(2) }}
+                </span>
                 <span v-else class="text-gray-400">-</span>
             </template>
         </el-table-column>
 
-        <el-table-column label="会员券" width="100" align="right">
+        <el-table-column label="会员券" width="120" align="right">
             <template #default="{ row }">
-                <span v-if="getMemberCoupon(row) > 0" class="text-green-600">￥{{ getMemberCoupon(row)?.toFixed(2) }}</span>
+                <span v-if="getLevelCode(row.brandId) && row.displayCouponDeduct > 0" class="text-green-600 font-bold">
+                    ￥{{ (row.displayCouponDeduct / row.qty).toFixed(2) }}
+                </span>
                 <span v-else class="text-gray-400">-</span>
             </template>
         </el-table-column>
 
         <el-table-column label="数量" width="160" align="center">
-            <template #default="{ row }">
-                <el-input-number v-model="row.qty" :min="1" :max="9999" size="small" class="!w-28" />
+            <template #default="{ row, $index }">
+                <el-input-number
+                    :model-value="row.qty"
+                    :min="1" :max="9999" size="small" class="!w-28"
+                    @change="(val) => handleQtyChange($index, val)"
+                />
             </template>
         </el-table-column>
 
         <el-table-column label="小计" width="160" align="right">
             <template #default="{ row }">
-                <span class="text-red-600 font-bold text-lg">￥{{ getSubtotal(row)?.toFixed(2) }}</span>
+                <span
+                    class="text-red-600 font-bold text-lg transition-opacity duration-300"
+                    :class="{ 'opacity-40': row.isPending }"
+                >
+                    ￥{{ row.displaySubtotal?.toFixed(2) }}
+                </span>
+            </template>
+        </el-table-column>
+
+        <el-table-column label="库存" width="100" align="center">
+            <template #default="{ row }">
+                <span :class="{'text-red-600 font-bold': row.qty > (row.stock || 0), 'text-gray-600': row.qty <= (row.stock || 0)}">
+                    {{ row.stock !== undefined ? row.stock : '-' }}
+                </span>
             </template>
         </el-table-column>
 
@@ -59,28 +80,17 @@
 <script setup>
 import { usePosStore } from '../hooks/usePosStore'
 
-const { cartList, currentMember, removeItem } = usePosStore()
+const { cartList, enrichedCartList, currentMember, removeItem, runTrial } = usePosStore()
 
-// 🌟 纯渲染逻辑：根据会员绑定的品牌等级，从商品矩阵中提取对应价格
+// 🌟 原汁原味恢复：保留判断是否有会员特权的逻辑
 const getLevelCode = (brandId) => {
     if (!currentMember.value?.id || !brandId) return null;
     return currentMember.value.brandLevels?.[String(brandId)] || null;
 }
 
-const getMemberPrice = (row) => {
-    const code = getLevelCode(row.brandId);
-    if (code && row.levelPrices && row.levelPrices[code] != null) return row.levelPrices[code];
-    return null; // 没命中特权
-}
-
-const getMemberCoupon = (row) => {
-    const code = getLevelCode(row.brandId);
-    if (code && row.levelCoupons && row.levelCoupons[code] != null) return row.levelCoupons[code];
-    return 0;
-}
-
-const getSubtotal = (row) => {
-    const activePrice = getMemberPrice(row) !== null ? getMemberPrice(row) : (row.salePrice || 0);
-    return activePrice * (row.qty || 1);
+// 🌟 极速响应枢纽：控制数据流向，立即触发前端计算并防抖请求后端
+const handleQtyChange = (index, newVal) => {
+    cartList.value[index].qty = newVal;
+    runTrial();
 }
 </script>

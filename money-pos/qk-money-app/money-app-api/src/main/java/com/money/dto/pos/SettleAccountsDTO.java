@@ -1,4 +1,4 @@
-package com.money.dto.Pos;
+package com.money.dto.pos;
 
 import com.money.dto.OmsOrderDetail.OmsOrderDetailDTO;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -8,37 +8,56 @@ import javax.validation.constraints.NotEmpty;
 import java.math.BigDecimal;
 import java.util.List;
 
+/**
+ * 🌟 POS 结算请求数据传输对象
+ * 已经过金融级重构：支持幂等键、强制免券开关、以及支付子标签
+ */
 @Data
+@Schema(description = "POS结算请求参数")
 public class SettleAccountsDTO {
 
-    @Schema(description = "会员ID")
+    @Schema(description = "交易唯一请求号(幂等键)，由前端生成，用于防止网络抖动导致重复下单")
+    private String reqId;
+
+    @Schema(description = "关联会员ID，匿名购买可为空")
     private Long member;
 
-    @Schema(description = "使用的满减券规则ID")
+    @Schema(description = "使用的满减券规则ID (Voucher)")
     private Long usedCouponRuleId;
 
     @Schema(description = "使用的满减券张数")
     private Integer usedCouponCount;
 
-    @NotEmpty
-    @Schema(description = "订单详情")
+    @NotEmpty(message = "订单明细不能为空")
+    @Schema(description = "订单商品明细列表")
     private List<OmsOrderDetailDTO> orderDetail;
 
-    @Schema(description = "强制免收会员券开关(如果为true，则该单所有商品应扣券强制归零)")
+    @Schema(description = "强制免收会员券开关：如果为true，则该单所有商品应扣除的会员券强制归零")
     private Boolean waiveCoupon;
 
-    @Schema(description = "整单优惠金额")
+    @Schema(description = "手工整单优惠金额")
     private BigDecimal manualDiscountAmount;
 
-    @Schema(description = "组合支付明细流水")
+    @Schema(description = "组合支付明细流水列表")
     private List<PaymentItem> payments;
 
+    /**
+     * 支付项明细
+     */
     @Data
+    @Schema(description = "支付项明细")
     public static class PaymentItem {
+
+        @Schema(description = "支付方式编码，如 CASH, WECHAT, ALIPAY, BALANCE")
         private String payMethodCode;
+
+        @Schema(description = "支付方式展示名称")
         private String payMethodName;
+
+        @Schema(description = "该项支付的具体金额")
         private BigDecimal payAmount;
-        // 🌟 新增：接收前端传来的支付子标签（如 WECHAT）
+
+        @Schema(description = "支付子标签或第三方流水号 (如支付渠道返回的交易号)")
         private String payTag;
     }
 }

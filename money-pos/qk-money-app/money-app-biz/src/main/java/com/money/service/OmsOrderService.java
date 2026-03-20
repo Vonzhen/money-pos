@@ -1,57 +1,31 @@
 package com.money.service;
 
 import com.baomidou.mybatisplus.extension.service.IService;
-import com.money.web.vo.PageVO;
-import com.money.dto.OmsOrder.*;
+import com.money.dto.OmsOrder.OmsOrderQueryDTO;
+import com.money.dto.OmsOrder.OmsOrderVO;
+import com.money.dto.OmsOrder.OrderDetailVO;
 import com.money.entity.OmsOrder;
-
-import java.time.LocalDateTime;
-import java.util.Set;
+import com.money.web.vo.PageVO;
 
 /**
- * <p>
- * 订单表 服务类
- * </p>
- *
- * @author money
- * @since 2023-02-27
+ * 🌟 订单大总管 (V8.0 轻拆分版)
+ * 职责：基础CRUD、订单列表分页、详情组装、找零计算。
+ * 注意：退款请调用 OmsOrderRefundService；报表请调用 OmsSalesAnalysisService。
  */
 public interface OmsOrderService extends IService<OmsOrder> {
 
+    /**
+     * 订单分页列表
+     */
     PageVO<OmsOrderVO> list(OmsOrderQueryDTO queryDTO);
 
     /**
-     * 订单统计
-     *
-     * @param startTime 开始时间
-     * @param endTime   结束时间
-     * @return {@link OrderCountVO}
-     */
-    OrderCountVO countOrderAndSales(LocalDateTime startTime, LocalDateTime endTime);
-
-    /**
-     * 获取订单详情
-     *
-     * @param id id
-     * @return {@link OrderDetailVO}
+     * 根据 ID 获取订单详情
      */
     OrderDetailVO getOrderDetail(Long id);
 
     /**
-     * 退单
-     *
-     * @param ids id
+     * 根据单号获取订单详情
      */
-    void returnOrder(Set<Long> ids);
-
-    /**
-     * 退货
-     *
-     * @param returnGoodsDTO 返回商品dto
-     */
-    void returnGoods(ReturnGoodsDTO returnGoodsDTO);
-
-    // 🌟 6.6 真实损益毛利审计
-    com.money.web.vo.PageVO<com.money.dto.OmsOrder.ProfitAuditVO> getProfitAuditPage(com.money.dto.OmsOrder.OmsOrderQueryDTO queryDTO);
-
+    OrderDetailVO getOrderDetailByNo(String orderNo);
 }

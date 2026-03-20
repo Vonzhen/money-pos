@@ -7,11 +7,12 @@ export default {
             method: 'GET'
         })
     },
-    // 🌟 核心新增：拉取大屏图表数据的接口
-    getChartsData() {
+    // 🌟 核心修改：支持接收 params 参数 (包含 timeRange)
+    getChartsData(params) {
         return req({
             url: '/home/charts',
-            method: 'GET'
+            method: 'GET',
+            params // 将前端点选的时间范围传给后端
         })
     }
 }

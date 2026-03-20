@@ -12,9 +12,6 @@ import lombok.Setter;
  * <p>
  * 订单表
  * </p>
- *
- * @author money
- * @since 2023-02-27
  */
 @Getter
 @Setter
@@ -55,14 +52,33 @@ public class OmsOrder extends BaseEntity {
     @Schema(description="总成本")
     private BigDecimal costAmount;
 
-    @Schema(description="总价")
+    // ==========================================
+    // 🌟 V8.1 双轨制计价新增核心字段
+    // ==========================================
+    @Schema(description="零售价总额(吊牌价)")
+    private BigDecimal retailAmount;
+
+    @Schema(description="会员价基准总额(成交底价)")
+    private BigDecimal memberAmount;
+
+    @Schema(description="会员特权原值(零售价-会员价)")
+    private BigDecimal privilegeAmount;
+
+    @Schema(description="真实会员券核销额(免收为0)")
+    private BigDecimal actualCouponDeduct;
+
+    @Schema(description="店铺承担免收额(免收为特权原值)")
+    private BigDecimal waivedCouponAmount;
+    // ==========================================
+
+    @Schema(description="总价(为兼容老版本，统一等同于 retailAmount)")
     private BigDecimal totalAmount;
+
+    @Schema(description="抵用券(为兼容老版本，统一等同于 actualCouponDeduct)")
+    private BigDecimal couponAmount;
 
     @Schema(description="实付款")
     private BigDecimal payAmount;
-
-    @Schema(description="抵用券")
-    private BigDecimal couponAmount;
 
     @Schema(description="最终销售金额")
     private BigDecimal finalSalesAmount;
@@ -82,8 +98,6 @@ public class OmsOrder extends BaseEntity {
     @Schema(description="满减券抵扣金额")
     private BigDecimal useVoucherAmount;
 
-    /**
-     * 整单优惠
-     */
+    @Schema(description="整单优惠")
     private BigDecimal manualDiscountAmount;
 }
