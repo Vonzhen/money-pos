@@ -3,12 +3,14 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "main": "main.js",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "build:demo": "vite build --mode demo",
     "preview": "vite preview",
-    "tailwind": "npx tailwindcss -i ./src/style/tailwind.css --watch"
+    "tailwind": "npx tailwindcss -i ./src/style/tailwind.css --watch",
+    "electron:build": "electron-builder"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",
@@ -38,6 +40,42 @@
     "unplugin-auto-import": "^19.3.0",
     "unplugin-vue-components": "^28.8.0",
     "vite": "^6.4.1",
-    "vite-plugin-svg-icons": "^2.0.1"
+    "vite-plugin-svg-icons": "^2.0.1",
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.1"
+  },
+  "build": {
+    "appId": "com.money.pos",
+    "productName": "MoneyPOS",
+    "directories": {
+      "output": "release"
+    },
+    "extraFiles": [
+      {
+        "from": "../build-env/mariadb",
+        "to": "mariadb"
+      },
+      {
+        "from": "../build-env/jre",
+        "to": "jre"
+      }
+    ],
+    "extraResources": [
+      {
+        "from": "../money-pos/qk-money-app/money-app-biz/target/money-pos.jar",
+        "to": "backend/money-pos.jar"
+      }
+    ],
+    "win": {
+      "target": ["nsis"],
+      "icon": "public/favicon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "MoneyPOS 收银系统"
+    }
   }
 }

@@ -1,0 +1,83 @@
+name: Build MoneyPOS EXE Installer
+
+# 手动触发机制：方便我们在 dev 分支随时点击测试打包
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    # 强制分配一台 Windows 服务器进行原生打包
+    runs-on: windows-latest
+
+    steps:
+      # 1. 下载您的源码库
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      # 2. 搭建 Java 17 环境并缓存 Maven
+      - name: Setup Java 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      # 3. 🌟 进入后端目录编译 JAR 包
+      - name: Build Backend (Maven)
+        working-directory: ./money-pos
+        run: mvn clean package -DskipTests
+
+      # 4. 搭建 Node.js 18 环境并缓存依赖
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: './money-pos-web/package-lock.json'
+
+      # 5. 🌟 进入前端目录编译 Vue 页面
+      - name: Build Frontend (Vue)
+        working-directory: ./money-pos-web
+        run: |
+          npm install
+          npm run build
+
+      # 6. 下载便携运行环境 (JRE 和 MariaDB)
+      - name: Prepare External Environments (JRE & MariaDB)
+        shell: powershell
+        run: |
+          # 在根目录建立临时环境变量文件夹
+          mkdir build-env
+          cd build-env
+          
+          # 下载官方 OpenJDK 17 JRE (解压后约 40MB)
+          echo "Downloading JRE..."
+          Invoke-WebRequest -Uri "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.9%2B9/OpenJDK17U-jre_x64_windows_hotspot_17.0.9_9.zip" -OutFile "jre.zip"
+          Expand-Archive -Path "jre.zip" -DestinationPath "."
+          Rename-Item -Path "jdk-17.0.9+9-jre" -NewName "jre"
+          Remove-Item "jre.zip"
+          
+          # 下载官方 MariaDB 10.11 便携版
+          echo "Downloading MariaDB..."
+          Invoke-WebRequest -Uri "https://archive.mariadb.org/mariadb-10.11.6/winx64-packages/mariadb-10.11.6-winx64.zip" -OutFile "mariadb.zip"
+          Expand-Archive -Path "mariadb.zip" -DestinationPath "."
+          Rename-Item -Path "mariadb-10.11.6-winx64" -NewName "mariadb"
+          Remove-Item "mariadb.zip"
+          
+          # 极致瘦身：删掉数据库里几百兆的无用测试数据
+          Remove-Item -Recurse -Force "mariadb/mysql-test" -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force "mariadb/sql-bench" -ErrorAction SilentlyContinue
+
+      # 7. 开始封包：执行 Electron-Builder
+      - name: Build Electron EXE
+        working-directory: ./money-pos-web
+        run: |
+          npm install
+          npm run electron:build
+
+      # 8. 将打包生成的 EXE 上传，供您直接下载！
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: MoneyPOS-Installer
+          path: money-pos-web/release/*.exe
