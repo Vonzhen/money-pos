@@ -2,3 +2,30 @@
 /src/main/resources/oss-prod.properties
 /src/main/resources/application-demo.yml
 /src/main/resources/oss-demo.properties
+# ==========================================
+# MoneyPOS 专属 Git 忽略清单
+# ==========================================
+
+# 1. 绝对不能上传的客户运行数据和密码锁！
+# 🌟 彻底忽略整个 mariadb 文件夹（不传数据库引擎，不传数据，不传密码锁）
+mariadb/
+
+# 但允许提交一个说明文件（如果有的话），教别人怎么下载
+!mariadb/README.md
+
+# ... (下面的 target, .idea, node_modules 等保持不变)
+
+# 2. Java 编译生成的产物 (只传源码，不传编译结果)
+target/
+*.jar
+*.war
+*.class
+
+# 3. IDEA 编辑器缓存 (因人而异，不要干扰别人)
+.idea/
+*.iml
+
+# 4. 前端依赖与构建产物 (如果您的 Vue 代码也放在同一个大仓库里)
+node_modules/
+dist/
+.DS_Store
