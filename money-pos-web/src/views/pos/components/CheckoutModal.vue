@@ -139,6 +139,7 @@ import { ref, computed, watch } from 'vue'
 import { UserFilled, Ticket, PriceTag } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { usePosStore } from '../hooks/usePosStore'
+import { req } from "@/api/index.js" // 🌟 引入请求工具用于静默打印
 
 const props = defineProps({
     modelValue: Boolean,
@@ -155,7 +156,6 @@ const visible = computed({
 
 const submitLoading = ref(false)
 
-// 🌟 核心：从 Store 全量引入真正的后端真理！删掉组件自己算的逻辑！
 const {
     cartList, currentMember, isWaiveCoupon, manualDiscount, selectedCouponRule, usedCouponCount, paymentList,
     totalAmount, actualCouponUsed, finalPayAmount, theoreticalCouponUsed, participatingAmount,
@@ -180,7 +180,6 @@ const unpaidAmount = computed(() => {
     return Math.max(0, pay - paid);
 })
 
-// 🌟 财务合规的金融级找零：只允许现金溢出产生找零！
 const changeAmount = computed(() => {
     const cashItem = paymentList.value.find(p => p.code.includes('CASH'));
     const cashPaid = cashItem ? (Number(cashItem.amount) || 0) : 0;
@@ -206,10 +205,8 @@ watch(visible, (newVal) => {
     }
 })
 
-// 🌟 每次改动折扣或券，都要呼叫后端重新试算，然后重新分摊钱！
 const handleDiscountChange = () => {
     runTrial();
-    // 加一点点延迟等后端结果，体验更好
     setTimeout(() => { recalculatePayments(); }, 350);
 }
 
@@ -223,21 +220,17 @@ const recalculatePayments = () => {
     const aggIndex = paymentList.value.findIndex(p => p.code.includes('AGGREGATE'));
     const targetIndex = aggIndex >= 0 ? aggIndex : 0;
     paymentList.value.forEach((p, i) => { if (i !== targetIndex) p.amount = 0; });
-
     const safePayAmount = Number(finalPayAmount.value) || 0;
     paymentList.value[targetIndex].amount = Number(safePayAmount.toFixed(2));
 }
 
 const handlePaymentChange = (index, val) => {
     let newVal = Number((val || 0).toFixed(2));
-
     if (paymentList.value[index].code.includes('BALANCE')) {
         const maxBal = currentMember.value.balance || 0;
         if (newVal > maxBal) { newVal = maxBal; ElMessage.warning('已限制为最大可用会员余额！'); }
     }
-
     paymentList.value[index].amount = newVal;
-
     const aggIndex = paymentList.value.findIndex(p => p.code.includes('AGGREGATE'));
     if (aggIndex !== -1 && aggIndex !== index) {
         let otherSum = paymentList.value.reduce((sum, p, i) => i !== aggIndex ? sum + p.amount : sum, 0);
@@ -267,7 +260,6 @@ const submitOrderAction = async () => {
             payTag: p.activeTag || null
         }));
 
-    // 🌟 纯净版 DTO：把价格字段摘除，后端绝对集权
     const orderDetails = cartList.value.map(item => ({
         goodsId: item.id,
         quantity: Number(item.qty) || 1
@@ -276,7 +268,7 @@ const submitOrderAction = async () => {
     submitLoading.value = true
     try {
         const payload = {
-            reqId: reqId.value, // 🌟 补齐幂等神键
+            reqId: reqId.value,
             member: currentMember.value.id || null,
             usedCouponRuleId: selectedCouponRule.value?.ruleId || null,
             usedCouponCount: selectedCouponRule.value ? usedCouponCount.value : 0,
@@ -286,8 +278,19 @@ const submitOrderAction = async () => {
             payments: validPayments
         };
 
-        await submitOrder(payload)
+        // 提交订单并获取后端返回结果
+        const res = await submitOrder(payload)
         ElMessage.success('收款成功！订单已真实入库！')
+
+        // 🌟 核心：结账成功后，尝试唤醒硬件打印小票并弹开钱箱 (静默执行，不阻塞 UI)
+        try {
+            // 获取后端返回的订单号 (兼容各种返回格式)
+            const orderNoToPrint = (res && res.data && res.data.orderNo) || (res && res.orderNo) || (typeof res === 'string' ? res : null);
+            if (orderNoToPrint) {
+                // 向后台发送物理打印请求 (异常在控制台静默处理，不打扰收银员)
+                req({ url: '/oms-order/hardware/print', method: 'GET', params: { orderNo: orderNoToPrint } }).catch(e=>console.log("硬件打印静默失败:", e));
+            }
+        } catch(e) { console.log(e) }
 
         emit('checkout-success', {
             total: totalAmount.value,
@@ -295,7 +298,6 @@ const submitOrderAction = async () => {
             couponUsed: actualCouponUsed.value
         })
         visible.value = false;
-        // 注意：清空交由上层，或在 closed 钩子，不在这里调 clearAll 避免动画闪烁
     } catch (error) {
         console.error("结账异常", error);
         ElMessage.error(error.msg || error.message || '结账失败，后端风控拦截');

@@ -325,7 +325,26 @@ const handleSelectOrder = async (row) => {
     } catch (e) { ElMessage.error('获取明细失败') } finally { detailLoading.value = false }
 }
 
-const reprintOrder = () => ElMessage.success(`指令已发送！正在补打单号：${currentOrderDetail.value.orderNo}`)
+// 🌟 核心：补打小票真实调用硬件！
+const reprintOrder = async () => {
+    if (!currentOrderDetail.value || !currentOrderDetail.value.orderNo) {
+        return ElMessage.warning("请先在左侧选择一笔要补打的订单！");
+    }
+
+    try {
+        ElMessage.info("正在唤醒硬件打印机...");
+        // 🌟 向后台发送真实的物理打印请求
+        await req({
+            url: '/oms-order/hardware/print',
+            method: 'GET',
+            params: { orderNo: currentOrderDetail.value.orderNo }
+        });
+        ElMessage.success(`🖨️ 指令已发送！正在补打单号：${currentOrderDetail.value.orderNo}`);
+    } catch (e) {
+        ElMessage.error("打印机未响应，请检查 USB 连接或后台配置！");
+        console.error("硬件打印失败:", e);
+    }
+}
 
 const handleFullReturn = async () => {
     try {
