@@ -19,7 +19,6 @@ import java.util.stream.Collectors;
 
 /**
  * 🌟 结算大总管 (Orchestrator)
- * 核心升级：增加幂等拦截闸口。
  */
 @Slf4j
 @Component
@@ -43,10 +42,10 @@ public class CheckoutOrchestrator {
 
         // ================= 🌟 1. 幂等拦截闸口 =================
         if (orderService.loadExistingOrder(context)) {
-            log.info("【幂等拦截生效】检测到重复请求，直接返回已成功结果，跳过所有资产扣减！单号: {}", request.getReqId());
-            // 找回支付流水拼装小票
+            // P1-2 修复：找回包含【真实找零与实收快照】的支付流水
             paymentService.loadExistingPayments(context);
-            // 拦截放行，直接返回小票
+
+            log.info("【幂等拦截生效】订单 {} 已成功处理过，已100%无损还原原始结账快照并放行。", context.getOrder().getOrderNo());
             return buildFinalResult(context);
         }
 
@@ -64,7 +63,6 @@ public class CheckoutOrchestrator {
     }
 
     private void saveAuditLog(CheckoutContext context) {
-        // ... 原有逻辑不变 ...
         OmsOrder order = context.getOrder();
         NormalizedPaymentResult payResult = context.getPaymentResult();
 
@@ -101,9 +99,12 @@ public class CheckoutOrchestrator {
         vo.setOrderNo(order.getOrderNo());
         vo.setTotalAmount(order.getTotalAmount());
         vo.setFinalPayAmount(order.getPayAmount());
+
+        // 🌟 此时这里拿到的 TotalPaid 和 ChangeAmount 将是历史真实的快照数据！
         vo.setTotalPaid(payResult.getTotalPaid());
         vo.setChangeAmount(payResult.getChangeAmount());
         vo.setNetReceived(payResult.getNetReceived());
+
         vo.setPaymentTime(order.getPaymentTime());
         vo.setMemberName(order.getMember());
         vo.setCouponDeduct(order.getCouponAmount());

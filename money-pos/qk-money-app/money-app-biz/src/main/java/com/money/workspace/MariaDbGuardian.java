@@ -2,15 +2,19 @@ package com.money.workspace;
 
 import cn.hutool.core.io.FileUtil;
 import cn.hutool.core.util.RandomUtil;
+import cn.hutool.core.util.StrUtil;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.concurrent.TimeUnit;
 
@@ -38,7 +42,6 @@ public class MariaDbGuardian {
             dbPassword = FileUtil.readString(pwdFile, StandardCharsets.UTF_8).trim();
             isFirstRun = false;
         } else {
-            // 🌟 只用安全字符集生成密码，防止 SQL 注入或特殊字符报错
             dbPassword = "Mp_" + RandomUtil.randomString("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", 12);
             isFirstRun = true;
         }
@@ -50,23 +53,35 @@ public class MariaDbGuardian {
         File installDbExe = new File(mariadbPath + "/bin/mysql_install_db.exe");
         File dataDir = new File(mariadbPath + "/data");
 
+        // 🌟 核心：路径标准化，用于后续“主权校验”比对
+        String expectedDataDir = FileUtil.normalize(dataDir.getAbsolutePath());
+
         if (!mysqldExe.exists()) {
             throw new RuntimeException("❌ [Guardian] 致命错误：缺失数据库引擎文件!");
         }
 
+        // 🌟 1. 启动前“主权探测”
+        if (isPortInUse(DB_PORT)) {
+            log.warn("⚠️ [Guardian] 检测到端口 {} 已被占用，启动血缘鉴定...", DB_PORT);
+            if (verifyInstanceIdentity(expectedDataDir)) {
+                log.info("✅ [Guardian] 鉴定成功：该实例为本程序关联实例，直接复用。");
+                return; // 已在运行，直接复用
+            } else {
+                throw new RuntimeException("❌ [Guardian] 端口 " + DB_PORT + " 被非关联数据库占用！为保护数据安全，程序已拦截启动。请关闭其他 MySQL/MariaDB 实例。");
+            }
+        }
+
         try {
-            // 1. 内核初始化检测
             if (isFirstRun && (!dataDir.exists() || FileUtil.isEmpty(dataDir))) {
-                log.info("⏳ [Guardian] 检测到全新安装，正在初始化数据库内核...");
+                log.info("⏳ [Guardian] 正在初始化数据库内核...");
                 FileUtil.mkdir(dataDir);
                 Process initProcess = new ProcessBuilder(installDbExe.getAbsolutePath(), "--datadir=" + dataDir.getAbsolutePath())
                         .redirectErrorStream(true).start();
-                drainStream(initProcess.getInputStream()); // 🌟 必须消费日志流，防止阻塞死锁
+                drainStream(initProcess.getInputStream());
                 initProcess.waitFor();
             }
 
-            // 2. 拉起数据库进程
-            log.info("⚙️ [Guardian] 正在拉起 MariaDB 服务 (端口: {})...", DB_PORT);
+            log.info("⚙️ [Guardian] 正在拉起私有 MariaDB 服务...");
             dbProcess = new ProcessBuilder(
                     mysqldExe.getAbsolutePath(),
                     "--port=" + DB_PORT,
@@ -74,77 +89,102 @@ public class MariaDbGuardian {
                     "--character-set-server=utf8mb4"
             ).directory(new File(mariadbPath)).redirectErrorStream(true).start();
 
-            // 🌟 核心：持续消费运行日志，防止缓冲区堆满导致进程假死
             drainStream(dbProcess.getInputStream());
-
-            // 注册优雅停机钩子
             Runtime.getRuntime().addShutdownHook(new Thread(MariaDbGuardian::gracefulShutdown));
 
-            // 3. 🌟 双层 JDBC 医疗级探活
-            if (!waitForDatabaseReady()) {
-                throw new RuntimeException("❌ [Guardian] 数据库启动超时或被异常占用！");
+            if (!waitForDatabaseReady(expectedDataDir)) {
+                throw new RuntimeException("❌ [Guardian] 数据库就绪校验失败！");
             }
 
         } catch (Exception e) {
             log.error("❌ [Guardian] 守护进程启动失败: ", e);
-            System.exit(1); // 启动失败必须立即终止，绝不带病运行
+            System.exit(1);
         }
     }
 
-    private static boolean waitForDatabaseReady() {
-        System.out.print("📡 [Guardian] 正在建立 JDBC 底层心跳检测 ");
+    /**
+     * 🌟 核心：血缘鉴定 (身份核验)
+     * 通过 SQL 查询验证当前端口后的数据库是否指向我们的安装目录
+     */
+    private static boolean verifyInstanceIdentity(String expectedDir) {
+        String currentPwd = isFirstRun ? "" : dbPassword;
+        String url = "jdbc:mysql://127.0.0.1:" + DB_PORT + "/mysql?useSSL=false";
+        try (Connection conn = DriverManager.getConnection(url, "root", currentPwd);
+             Statement stmt = conn.createStatement()) {
+
+            // 1. 校验数据目录 (@@datadir)
+            ResultSet rs = stmt.executeQuery("SELECT @@datadir");
+            if (rs.next()) {
+                String actualDir = FileUtil.normalize(rs.getString(1));
+                // 数据库路径最后通常带 / 或 \，需要去除后比对
+                if (!StrUtil.removeSuffix(actualDir, "/").equalsIgnoreCase(StrUtil.removeSuffix(expectedDir, "/")) &&
+                        !StrUtil.removeSuffix(actualDir, "\\").equalsIgnoreCase(StrUtil.removeSuffix(expectedDir, "\\"))) {
+                    log.error("❌ [Guardian] 数据目录不匹配! 期望: {}, 实际: {}", expectedDir, actualDir);
+                    return false;
+                }
+            }
+            return true;
+        } catch (Exception e) {
+            log.error("❌ [Guardian] 无法连接到正在运行的实例进行身份核验: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    private static boolean isPortInUse(int port) {
+        try (Socket socket = new Socket()) {
+            socket.connect(new InetSocketAddress("127.0.0.1", port), 500);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static boolean waitForDatabaseReady(String expectedDir) {
+        log.info("📡 [Guardian] 正在验证实例就绪状态...");
         String currentPwd = isFirstRun ? "" : dbPassword;
         String sysUrl = "jdbc:mysql://127.0.0.1:" + DB_PORT + "/mysql?useSSL=false&serverTimezone=GMT%2B8";
 
-        // 第一层：尝试连接 MySQL 系统库 (最多等 15 秒)
-        boolean connected = false;
         for (int i = 0; i < 15; i++) {
             try (Connection conn = DriverManager.getConnection(sysUrl, "root", currentPwd)) {
-                connected = true;
+                // 再次执行身份核验
+                if (!verifyInstanceIdentity(expectedDir)) return false;
 
-                // 🌟 第二层：如果是首次运行，执行改密并创建业务库！闭环验证！
                 if (isFirstRun) {
                     try (Statement stmt = conn.createStatement()) {
                         stmt.execute("ALTER USER 'root'@'localhost' IDENTIFIED BY '" + dbPassword + "'");
-                        stmt.execute("CREATE DATABASE IF NOT EXISTS `" + DB_NAME + "` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci");
+                        stmt.execute("CREATE DATABASE IF NOT EXISTS `" + DB_NAME + "` CHARACTER SET utf8mb4");
+                        // 🌟 注入主权签名表，防止未来误连其他同路径库（如拷贝安装目录后）
+                        stmt.execute("CREATE TABLE IF NOT EXISTS `" + DB_NAME + "`.`sys_app_signature` (`id` INT PRIMARY KEY, `sign` VARCHAR(50))");
+                        stmt.execute("INSERT IGNORE INTO `" + DB_NAME + "`.`sys_app_signature` VALUES (1, 'MoneyPOS')");
+
                         FileUtil.writeString(dbPassword, new File(PWD_FILE), StandardCharsets.UTF_8);
-                        log.info("\n🛡️ [Guardian] 首次安全加固完成！业务库已就绪。");
+                        log.info("🛡️ [Guardian] 安全加固与签名注入完成。");
                     }
                 }
-                break;
+                return true;
             } catch (Exception e) {
-                System.out.print(".");
                 try { Thread.sleep(1000); } catch (InterruptedException ignored) {}
             }
         }
-        System.out.println();
-        return connected;
+        return false;
     }
 
     private static void gracefulShutdown() {
-        log.info("\n🛑 [Guardian] 接收到系统关闭信号，正在安全落盘...");
-        String url = "jdbc:mysql://127.0.0.1:" + DB_PORT + "/mysql?useSSL=false&serverTimezone=GMT%2B8";
+        log.info("\n🛑 [Guardian] 正在执行优雅停机...");
+        String url = "jdbc:mysql://127.0.0.1:" + DB_PORT + "/mysql?useSSL=false";
         try (Connection conn = DriverManager.getConnection(url, "root", dbPassword);
              Statement stmt = conn.createStatement()) {
-            stmt.execute("SHUTDOWN"); // 发送优雅停机指令
-
-            // 🌟 宽容等待进程自行退出 (最多等 5 秒)
-            if (dbProcess != null) {
-                boolean exited = dbProcess.waitFor(5, TimeUnit.SECONDS);
-                if (exited) log.info("✅ [Guardian] 数据库已安全关闭。");
-                else throw new RuntimeException("Timeout");
-            }
+            stmt.execute("SHUTDOWN");
+            if (dbProcess != null) dbProcess.waitFor(5, TimeUnit.SECONDS);
         } catch (Exception e) {
-            log.warn("⚠️ [Guardian] 优雅停机超时，执行进程强制销毁...");
             if (dbProcess != null) dbProcess.destroyForcibly();
         }
     }
 
-    // 持续消费进程日志流
     private static void drainStream(InputStream is) {
         new Thread(() -> {
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(is))) {
-                while (reader.readLine() != null) { /* 持续抛弃日志，防止系统管道阻塞 */ }
+                while (reader.readLine() != null) {}
             } catch (Exception ignored) {}
         }).start();
     }

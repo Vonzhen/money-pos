@@ -127,7 +127,12 @@
                 </div>
                 <div class="flex gap-3 flex-1 justify-end ml-4">
                     <el-button size="large" class="w-28 font-bold text-base" @click="visible = false">取消(Esc)</el-button>
-                    <el-button type="danger" size="large" class="!text-2xl font-black tracking-widest shadow-md px-8" @click="submitOrderAction" :loading="submitLoading" :disabled="unpaidAmount > 0 || (!isWaiveCoupon && currentMember.id && currentMember.coupon < theoreticalCouponUsed)">确认收款</el-button>
+                    <el-button type="danger" size="large" class="!text-2xl font-black tracking-widest shadow-md px-8"
+                        @click="submitOrderAction"
+                        :loading="submitLoading"
+                        :disabled="isTrialing || unpaidAmount > 0 || (!isWaiveCoupon && currentMember.id && currentMember.coupon < theoreticalCouponUsed)">
+                        {{ isTrialing ? '计价中...' : '确认收款' }}
+                    </el-button>
                 </div>
             </div>
         </template>
@@ -139,7 +144,8 @@ import { ref, computed, watch } from 'vue'
 import { UserFilled, Ticket, PriceTag } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { usePosStore } from '../hooks/usePosStore'
-import { req } from "@/api/index.js" // 🌟 引入请求工具用于静默打印
+import { req } from "@/api/index.js"
+import Big from 'big.js'
 
 const props = defineProps({
     modelValue: Boolean,
@@ -159,7 +165,7 @@ const submitLoading = ref(false)
 const {
     cartList, currentMember, isWaiveCoupon, manualDiscount, selectedCouponRule, usedCouponCount, paymentList,
     totalAmount, actualCouponUsed, finalPayAmount, theoreticalCouponUsed, participatingAmount,
-    reqId, prepareCheckout, clearAll, submitOrder, runTrial
+    reqId, prepareCheckout, clearAll, submitOrder, runTrial, isTrialing
 } = usePosStore();
 
 const availableCoupons = computed(() => {
@@ -173,20 +179,25 @@ const maxUsableCoupons = computed(() => {
     return Math.min(maxByAmount, selectedCouponRule.value.availableCount || 0);
 })
 
-const totalPaid = computed(() => paymentList.value.reduce((sum, item) => sum + (item.amount || 0), 0))
+// 🌟 使用 Big.js 修复精度计算
+const totalPaid = computed(() => paymentList.value.reduce((sum, item) => sum.plus(item.amount || 0), new Big(0)).toNumber())
 const unpaidAmount = computed(() => {
-    const pay = Number(finalPayAmount.value) || 0;
-    const paid = Number(totalPaid.value) || 0;
-    return Math.max(0, pay - paid);
+    const pay = new Big(finalPayAmount.value || 0);
+    const paid = new Big(totalPaid.value || 0);
+    const diff = pay.minus(paid);
+    return diff.gt(0) ? diff.toNumber() : 0;
 })
-
 const changeAmount = computed(() => {
     const cashItem = paymentList.value.find(p => p.code.includes('CASH'));
-    const cashPaid = cashItem ? (Number(cashItem.amount) || 0) : 0;
-    const nonCashPaid = totalPaid.value - cashPaid;
-    const pay = Number(finalPayAmount.value) || 0;
-    const remainToPay = Math.max(0, pay - nonCashPaid);
-    return cashPaid > remainToPay ? Number((cashPaid - remainToPay).toFixed(2)) : 0;
+    const cashPaid = new Big(cashItem ? (cashItem.amount || 0) : 0);
+    const nonCashPaid = new Big(totalPaid.value).minus(cashPaid);
+    const pay = new Big(finalPayAmount.value || 0);
+
+    const remainToPay = pay.minus(nonCashPaid);
+    const effectiveRemainToPay = remainToPay.gt(0) ? remainToPay : new Big(0);
+    const diff = cashPaid.minus(effectiveRemainToPay);
+
+    return diff.gt(0) ? diff.toNumber() : 0;
 })
 
 watch(visible, (newVal) => {
@@ -205,14 +216,15 @@ watch(visible, (newVal) => {
     }
 })
 
-const handleDiscountChange = () => {
-    runTrial();
-    setTimeout(() => { recalculatePayments(); }, 350);
+// 🌟 P1-1: 废弃 setTimeout 延时猜测，严格 await 等待后端响应
+const handleDiscountChange = async () => {
+    await runTrial();
+    recalculatePayments();
 }
 
-const handleCouponRuleChange = () => {
+const handleCouponRuleChange = async () => {
     usedCouponCount.value = selectedCouponRule.value ? maxUsableCoupons.value : 0;
-    handleDiscountChange();
+    await handleDiscountChange();
 }
 
 const recalculatePayments = () => {
@@ -220,22 +232,23 @@ const recalculatePayments = () => {
     const aggIndex = paymentList.value.findIndex(p => p.code.includes('AGGREGATE'));
     const targetIndex = aggIndex >= 0 ? aggIndex : 0;
     paymentList.value.forEach((p, i) => { if (i !== targetIndex) p.amount = 0; });
-    const safePayAmount = Number(finalPayAmount.value) || 0;
-    paymentList.value[targetIndex].amount = Number(safePayAmount.toFixed(2));
+    paymentList.value[targetIndex].amount = finalPayAmount.value;
 }
 
 const handlePaymentChange = (index, val) => {
-    let newVal = Number((val || 0).toFixed(2));
+    let newVal = new Big(val || 0);
     if (paymentList.value[index].code.includes('BALANCE')) {
-        const maxBal = currentMember.value.balance || 0;
-        if (newVal > maxBal) { newVal = maxBal; ElMessage.warning('已限制为最大可用会员余额！'); }
+        const maxBal = new Big(currentMember.value.balance || 0);
+        if (newVal.gt(maxBal)) { newVal = maxBal; ElMessage.warning('已限制为最大可用会员余额！'); }
     }
-    paymentList.value[index].amount = newVal;
+    paymentList.value[index].amount = newVal.toNumber();
+
     const aggIndex = paymentList.value.findIndex(p => p.code.includes('AGGREGATE'));
     if (aggIndex !== -1 && aggIndex !== index) {
-        let otherSum = paymentList.value.reduce((sum, p, i) => i !== aggIndex ? sum + p.amount : sum, 0);
-        const safePayAmount = Number(finalPayAmount.value) || 0;
-        paymentList.value[aggIndex].amount = Number(Math.max(0, safePayAmount - otherSum).toFixed(2));
+        const otherSum = paymentList.value.reduce((sum, p, i) => i !== aggIndex ? sum.plus(p.amount || 0) : sum, new Big(0));
+        const target = new Big(finalPayAmount.value || 0);
+        const remain = target.minus(otherSum);
+        paymentList.value[aggIndex].amount = remain.gt(0) ? remain.toNumber() : 0;
     }
 }
 
@@ -251,14 +264,32 @@ const handleClosed = () => {
 const submitOrderAction = async () => {
     if (unpaidAmount.value > 0) return ElMessage.error(`实付不足 ￥${unpaidAmount.value.toFixed(2)}`);
 
+    // 🌟 P1-2: 将原始收款和找零信息打包传给后端
     const validPayments = paymentList.value
         .filter(p => p.amount > 0)
-        .map(p => ({
-            payMethodCode: p.code,
-            payMethodName: p.name,
-            payAmount: p.amount,
-            payTag: p.activeTag || null
-        }));
+        .map(p => {
+            const original = new Big(p.amount);
+            let net = original;
+            let changeAlloc = new Big(0);
+
+            if (p.code.includes('CASH')) {
+                const totalChange = new Big(changeAmount.value);
+                if (totalChange.gt(0)) {
+                    changeAlloc = totalChange;
+                    net = original.minus(changeAlloc);
+                }
+            }
+
+            return {
+                payMethodCode: p.code,
+                payMethodName: p.name,
+                payAmount: net.toNumber(), // 兼容字段
+                originalAmount: original.toNumber(),
+                netAmount: net.toNumber(),
+                changeAmount: changeAlloc.toNumber(),
+                payTag: p.activeTag || null
+            };
+        });
 
     const orderDetails = cartList.value.map(item => ({
         goodsId: item.id,
@@ -278,20 +309,17 @@ const submitOrderAction = async () => {
             payments: validPayments
         };
 
-        // 提交订单并获取后端返回结果
         const res = await submitOrder(payload)
         ElMessage.success('收款成功！订单已真实入库！')
 
-        // 🌟 核心：结账成功后，尝试唤醒硬件打印小票并弹开钱箱 (静默执行，不阻塞 UI)
         try {
-            // 获取后端返回的订单号 (兼容各种返回格式)
             const orderNoToPrint = (res && res.data && res.data.orderNo) || (res && res.orderNo) || (typeof res === 'string' ? res : null);
             if (orderNoToPrint) {
-                // 向后台发送物理打印请求 (异常在控制台静默处理，不打扰收银员)
                 req({ url: '/oms-order/hardware/print', method: 'GET', params: { orderNo: orderNoToPrint } }).catch(e=>console.log("硬件打印静默失败:", e));
             }
         } catch(e) { console.log(e) }
 
+        // 🌟 保留原版的传参
         emit('checkout-success', {
             total: totalAmount.value,
             paid: totalPaid.value,
