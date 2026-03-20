@@ -13,8 +13,6 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
 /**
- *
- *
  * @author : money
  * @since : 1.0.0
  */
@@ -37,7 +35,10 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity httpSecurity) throws Exception {
         httpSecurity.authorizeRequests(authorize -> {
-                    // 放行忽略的url
+                    // 🌟 核心修复：最高优先级放行灾备大屏的 SSE 日志通道 (因为原生的 EventSource 无法携带 Token)
+                    authorize.antMatchers(HttpMethod.GET, "/sys/backup/stream").permitAll();
+
+                    // 放行忽略的url (读取配置文件的白名单)
                     this.ignore(authorize);
                     // 其他请求都需要认证
                     authorize.anyRequest().authenticated();
@@ -91,5 +92,4 @@ public class SecurityConfig {
         // 忽略 TRACE
         ignoreUrlConfig.getTrace().forEach(url -> registry.antMatchers(HttpMethod.TRACE, url).permitAll());
     }
-
 }
