@@ -16,7 +16,6 @@ import java.time.LocalDateTime;
 
 /**
  * 领域服务：会员资产子域
- * 职责：专注处理会员的纯资产变动 (消费扣款、余额抵扣、退货返还及对应的流水审计)
  */
 @Slf4j
 @Service
@@ -28,6 +27,7 @@ public class UmsMemberAssetService {
 
     private static final String TYPE_BALANCE = "BALANCE";
     private static final String TYPE_COUPON = "COUPON";
+    private static final String TYPE_VOUCHER = "VOUCHER";
 
     public void consume(Long id, BigDecimal amount, BigDecimal couponAmount, String orderNo) {
         if (amount != null && amount.compareTo(BigDecimal.ZERO) < 0) throw new BaseException("扣款金额不能为负数");
@@ -78,6 +78,30 @@ public class UmsMemberAssetService {
         umsMemberLogMapper.insert(createLog(member, TYPE_BALANCE, "CONSUME", amount.negate(), BigDecimal.ZERO, beforeBalance.subtract(amount), orderNo, remark));
     }
 
+    public void addBalance(Long memberId, BigDecimal amount, String orderNo, String remark) {
+        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) return;
+
+        UmsMember member = umsMemberMapper.selectById(memberId);
+        if (member == null) throw new BaseException(BizErrorStatus.MEMBER_NOT_FOUND, "找不到会员信息");
+
+        BigDecimal beforeBalance = member.getBalance() != null ? member.getBalance() : BigDecimal.ZERO;
+
+        umsMemberMapper.update(null, new LambdaUpdateWrapper<UmsMember>()
+                .setSql("balance = balance + " + amount)
+                .eq(UmsMember::getId, memberId));
+
+        umsMemberLogMapper.insert(createLog(member, TYPE_BALANCE, "REFUND", amount, BigDecimal.ZERO, beforeBalance.add(amount), orderNo, remark));
+    }
+
+    // 🌟 核心修复：接收变动后的真实张数 (afterAmount)
+    public void logVoucherRefund(Long memberId, BigDecimal amount, BigDecimal afterAmount, String orderNo) {
+        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) return;
+        UmsMember member = umsMemberMapper.selectById(memberId);
+        if (member != null) {
+            umsMemberLogMapper.insert(createLog(member, TYPE_VOUCHER, "REFUND", amount, BigDecimal.ZERO, afterAmount, orderNo, "整单退款:满减券退回"));
+        }
+    }
+
     public void processReturn(Long id, BigDecimal amount, BigDecimal coupon, boolean increaseCancelTimes, String orderNo) {
         UmsMember member = umsMemberMapper.selectById(id);
         if (member == null) throw new BaseException("退货时会员不存在");
@@ -98,7 +122,6 @@ public class UmsMemberAssetService {
         if (rows == 0) throw new BaseException("资产退回失败");
     }
 
-    // 独立闭环的私有流水生成器
     private UmsMemberLog createLog(UmsMember m, String type, String opType, BigDecimal amt, BigDecimal realAmt, BigDecimal afterAmt, String orderNo, String remark) {
         UmsMemberLog l = new UmsMemberLog();
         l.setMemberId(m.getId());

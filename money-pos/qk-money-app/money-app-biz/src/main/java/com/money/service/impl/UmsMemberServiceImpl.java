@@ -43,45 +43,45 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
     }
 
     // 🌟 注入刚拆分完毕的 4 大核心子域
-    private final UmsMemberProfileService memberProfileService;
-    private final UmsMemberAssetService memberAssetService;
-    private final UmsMemberRechargeService memberRechargeService;
-    private final UmsMemberImportService memberImportService;
+    private final UmsMemberProfileService UmsMemberProfileService;
+    private final UmsMemberAssetService UmsMemberAssetService;
+    private final UmsMemberRechargeService UmsMemberRechargeService;
+    private final UmsMemberImportService UmsMemberImportService;
 
     // ==========================================
     // 1. 会员档案与查询域
     // ==========================================
     @Override
     public PageVO<UmsMemberVO> list(UmsMemberQueryDTO queryDTO) {
-        return memberProfileService.list(queryDTO);
+        return UmsMemberProfileService.list(queryDTO);
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void add(UmsMemberDTO addDTO) {
-        memberProfileService.add(addDTO);
+        UmsMemberProfileService.add(addDTO);
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void update(UmsMemberDTO updateDTO) {
-        memberProfileService.update(updateDTO);
+        UmsMemberProfileService.update(updateDTO);
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void delete(Set<Long> ids) {
-        memberProfileService.delete(ids);
+        UmsMemberProfileService.delete(ids);
     }
 
     @Override
     public List<MemberGoodsRankVO> getTop20Goods(Long memberId) {
-        return memberProfileService.getTop20Goods(memberId);
+        return UmsMemberProfileService.getTop20Goods(memberId);
     }
 
     @Override
     public List<UmsMemberVO> getDormantMembers(Integer days) {
-        return memberProfileService.getDormantMembers(days);
+        return UmsMemberProfileService.getDormantMembers(days);
     }
 
     // ==========================================
@@ -90,19 +90,19 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void consume(Long id, BigDecimal amount, BigDecimal couponAmount, String orderNo) {
-        memberAssetService.consume(id, amount, couponAmount, orderNo);
+        UmsMemberAssetService.consume(id, amount, couponAmount, orderNo);
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void deductBalance(Long memberId, BigDecimal amount, String orderNo, String remark) {
-        memberAssetService.deductBalance(memberId, amount, orderNo, remark);
+        UmsMemberAssetService.deductBalance(memberId, amount, orderNo, remark);
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void processReturn(Long id, BigDecimal amount, BigDecimal coupon, boolean increaseCancelTimes, String orderNo) {
-        memberAssetService.processReturn(id, amount, coupon, increaseCancelTimes, orderNo);
+        UmsMemberAssetService.processReturn(id, amount, coupon, increaseCancelTimes, orderNo);
     }
 
     // ==========================================
@@ -111,13 +111,13 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void recharge(RechargeDTO dto) {
-        memberRechargeService.recharge(dto);
+        UmsMemberRechargeService.recharge(dto);
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void voidRecharge(String orderNo, String reason) {
-        memberRechargeService.voidRecharge(orderNo, reason);
+        UmsMemberRechargeService.voidRecharge(orderNo, reason);
     }
 
     // ==========================================
@@ -126,12 +126,12 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void batchIssueVoucher(List<Long> memberIds, Long ruleId, Integer quantity) {
-        memberImportService.batchIssueVoucher(memberIds, ruleId, quantity);
+        UmsMemberImportService.batchIssueVoucher(memberIds, ruleId, quantity);
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public String importMembers(MultipartFile file) {
-        return memberImportService.importMembers(file); // 🌟 加上 return
+        return UmsMemberImportService.importMembers(file); // 🌟 加上 return
     }
 }

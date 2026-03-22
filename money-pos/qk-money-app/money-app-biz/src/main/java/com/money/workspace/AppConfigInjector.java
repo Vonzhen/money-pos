@@ -24,19 +24,19 @@ public class AppConfigInjector {
         // ==========================================
 
         // 彻底禁用旧的 Spring SQL 初始化脚本机制
-        System.setProperty("spring.sql.init.mode", "never");
+        //System.setProperty("spring.sql.init.mode", "never");
 
         // 激活 Flyway
-        System.setProperty("spring.flyway.enabled", "true");
+        //System.setProperty("spring.flyway.enabled", "true");
         // 指定扫描的脚本目录 (刚好对应我们刚才建的文件夹)
-        System.setProperty("spring.flyway.locations", "classpath:db/migration");
+        //System.setProperty("spring.flyway.locations", "classpath:db/migration");
         // 核心：当遇到已经有数据的旧库时，自动以当前状态作为基准线 (防老库报错报错)
-        System.setProperty("spring.flyway.baseline-on-migrate", "true");
+        //System.setProperty("spring.flyway.baseline-on-migrate", "true");
         // 基准线版本设为 1.0.0 (如果原来有库，就默认它已经是 1.0.0 了)
-        System.setProperty("spring.flyway.baseline-version", "1.0.0");
+        //System.setProperty("spring.flyway.baseline-version", "0");
         // 开发环境容错：允许 SQL 脚本被修改或乱序执行 (正式发版可关)
-        System.setProperty("spring.flyway.out-of-order", "true");
+        //System.setProperty("spring.flyway.out-of-order", "true");
 
-        log.info("💉 [Injector] 运行时环境与 Flyway 版本控制策略注入完毕！将控制权移交 Spring Boot...");
+        //log.info("💉 [Injector] 运行时环境与 Flyway 版本控制策略注入完毕！将控制权移交 Spring Boot...");
     }
 }

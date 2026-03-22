@@ -22,10 +22,6 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
-/**
- * 领域服务：会员充值子域
- * 职责：专注处理会员的充值订单生成、资产发放、以及红冲撤销(防超发校验)
- */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -57,7 +53,12 @@ public class UmsMemberRechargeService {
         order.setType(dto.getType());
         order.setAmount(dto.getAmount() != null ? dto.getAmount() : BigDecimal.ZERO);
         order.setGiftCoupon(dto.getGiftCoupon() != null ? dto.getGiftCoupon() : BigDecimal.ZERO);
-        order.setRealAmount(dto.getRealAmount() != null ? dto.getRealAmount() : BigDecimal.ZERO);
+
+        // 🌟 核心修复 1：强行兜底 realAmount，绝不允许充值金额在财务台账上变成 0
+        BigDecimal fallbackRealAmount = (dto.getRealAmount() != null && dto.getRealAmount().compareTo(BigDecimal.ZERO) > 0)
+                ? dto.getRealAmount() : order.getAmount();
+        order.setRealAmount(fallbackRealAmount);
+
         order.setStatus(STATUS_PAID);
         order.setRemark(dto.getRemark());
         order.setCreateTime(now);
@@ -79,7 +80,7 @@ public class UmsMemberRechargeService {
         } else if (TYPE_COUPON.equals(dto.getType())) {
             umsMemberMapper.update(null, new LambdaUpdateWrapper<UmsMember>()
                     .setSql("coupon = coupon + " + order.getAmount()).eq(UmsMember::getId, member.getId()));
-            umsMemberLogMapper.insert(createLog(member, TYPE_COUPON, "RECHARGE", order.getAmount(), order.getRealAmount(), beforeCoupon.add(order.getAmount()), orderNo, dto.getRemark()));
+            umsMemberLogMapper.insert(createLog(member, TYPE_COUPON, "RECHARGE", order.getAmount(), order.getRealAmount(), beforeCoupon.add(order.getAmount()), orderNo, "购买会员券: " + dto.getRemark()));
         } else if (TYPE_VOUCHER.equals(dto.getType())) {
             for (int i = 0; i < dto.getQuantity(); i++) {
                 PosMemberCoupon pc = new PosMemberCoupon();
@@ -92,12 +93,14 @@ public class UmsMemberRechargeService {
             long total = posMemberCouponMapper.selectCount(new LambdaQueryWrapper<PosMemberCoupon>()
                     .eq(PosMemberCoupon::getMemberId, member.getId())
                     .eq(PosMemberCoupon::getStatus, STATUS_UNUSED));
-            umsMemberLogMapper.insert(createLog(member, TYPE_VOUCHER, "ISSUE", BigDecimal.valueOf(dto.getQuantity()), BigDecimal.ZERO, BigDecimal.valueOf(total), orderNo, dto.getRemark()));
+            // 🌟 修复：购买满减券也记作充值收款行为
+            umsMemberLogMapper.insert(createLog(member, TYPE_VOUCHER, "RECHARGE", BigDecimal.valueOf(dto.getQuantity()), order.getRealAmount(), BigDecimal.valueOf(total), orderNo, "购买满减券"));
         }
     }
 
     @Transactional(rollbackFor = Exception.class)
     public void voidRecharge(String orderNo, String reason) {
+        // ... (保持原有的撤销逻辑不变)
         UmsRechargeOrder order = umsRechargeOrderMapper.selectOne(new LambdaQueryWrapper<UmsRechargeOrder>().eq(UmsRechargeOrder::getOrderNo, orderNo));
         if (order == null || STATUS_VOID.equals(order.getStatus())) {
             throw new BaseException("单据无效或已撤销");
@@ -145,7 +148,6 @@ public class UmsMemberRechargeService {
         umsRechargeOrderMapper.updateById(order);
     }
 
-    // 私有流水生成器
     private UmsMemberLog createLog(UmsMember m, String type, String opType, BigDecimal amt, BigDecimal realAmt, BigDecimal afterAmt, String orderNo, String remark) {
         UmsMemberLog l = new UmsMemberLog();
         l.setMemberId(m.getId());

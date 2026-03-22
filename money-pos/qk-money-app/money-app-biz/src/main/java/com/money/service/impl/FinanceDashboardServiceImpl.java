@@ -7,7 +7,7 @@ import com.money.constant.OrderStatusEnum;
 import com.money.constant.PayMethodEnum;
 import com.money.dto.Finance.FinanceDataVO.*;
 import com.money.entity.*;
-import com.money.mapper.FinanceReportMapper; // 🌟 8.1新增导入：资产报表Mapper
+import com.money.mapper.FinanceReportMapper;
 import com.money.mapper.GmsInventoryDocMapper;
 import com.money.mapper.OmsOrderMapper;
 import com.money.mapper.OmsOrderPayMapper;
@@ -35,8 +35,6 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
     private final UmsMemberService umsMemberService;
     private final UmsMemberLogMapper umsMemberLogMapper;
     private final GmsInventoryDocMapper gmsInventoryDocMapper;
-
-    // 🌟 8.1新增注入：专门查资产溯源底座的 Mapper
     private final FinanceReportMapper financeReportMapper;
 
     private BigDecimal null2Zero(BigDecimal value) {
@@ -48,12 +46,8 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
         try { return new BigDecimal(String.valueOf(val)); } catch (Exception e) { return BigDecimal.ZERO; }
     }
 
-    // ==========================================
-    // 🌟 8.1 核心新增实现：资产驾驶舱 (修复空指针防弹版)
-    // ==========================================
     @Override
     public AssetDashboardVO getAssetDashboard() {
-        // 1. 获取今日汇总
         AssetDashboardVO dashboard = financeReportMapper.getTodayAssetSummary();
         if (dashboard == null) {
             dashboard = new AssetDashboardVO();
@@ -62,15 +56,11 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
             dashboard.setTodayAssetDeduct(BigDecimal.ZERO);
         }
 
-        // 2. 计算资产存量占比（穿透分析）
         Map<String, Object> composition = financeReportMapper.getAssetComposition();
         if (composition != null) {
-            // 🌟 抢修点：使用 parseAmt 完美拦截数据库的 NULL 值，防止空指针崩溃！
             BigDecimal principal = parseAmt(composition.get("totalPrincipal"));
             BigDecimal gift = parseAmt(composition.get("totalGift"));
             BigDecimal total = principal.add(gift);
-
-            // 严谨的算数处理
             if (total.compareTo(BigDecimal.ZERO) > 0) {
                 dashboard.setPrincipalRatio(principal.multiply(new BigDecimal(100)).divide(total, 2, RoundingMode.HALF_UP));
                 dashboard.setGiftRatio(gift.multiply(new BigDecimal(100)).divide(total, 2, RoundingMode.HALF_UP));
@@ -82,13 +72,9 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
             dashboard.setPrincipalRatio(BigDecimal.ZERO);
             dashboard.setGiftRatio(BigDecimal.ZERO);
         }
-
         return dashboard;
     }
 
-    // ==========================================
-    // 下方为您原有的代码，原封不动保留
-    // ==========================================
     @Override
     public FinanceDashboardVO getDashboardData(String date) {
         LocalDate targetDate = (date != null && !date.isEmpty()) ? LocalDate.parse(date) : LocalDate.now();
@@ -154,11 +140,20 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
         }
 
         BigDecimal rechargeAmount = dailyRecharges.stream().map(log -> null2Zero(log.getRealAmount())).reduce(BigDecimal.ZERO, BigDecimal::add);
-        vo.setExternalIncome(scanIncomeTotal.add(cashIncome).add(rechargeAmount));
+
+        // 🌟 顶部卡片：全店真金白银流水入账，这个依然保持“净额”，因为老板看总盘子需要准确的现金流
+        BigDecimal externalPayTotal = scanIncomeTotal.add(cashIncome);
+        BigDecimal externalRefund = BigDecimal.ZERO;
+        if (payAmount.compareTo(BigDecimal.ZERO) > 0) {
+            externalRefund = refundAmount.multiply(externalPayTotal).divide(payAmount, 2, RoundingMode.HALF_UP);
+        }
+        BigDecimal realExternalIncome = externalPayTotal.subtract(externalRefund).add(rechargeAmount);
+        vo.setExternalIncome(realExternalIncome);
 
         List<Object> balanceObjs = umsMemberService.listObjs(new LambdaQueryWrapper<UmsMember>().select(UmsMember::getBalance).isNotNull(UmsMember::getBalance));
         vo.setTotalDebt(balanceObjs.stream().map(obj -> (BigDecimal) obj).reduce(BigDecimal.ZERO, BigDecimal::add));
 
+        // 🌟 饼图：恢复展示绝对原始毛收入，不再进行压缩分摊！方便一比一对账
         List<PayPieData> pieDataList = new ArrayList<>();
         for (Map.Entry<String, BigDecimal> entry : scanTagMap.entrySet()) {
             if (entry.getValue().compareTo(BigDecimal.ZERO) > 0) pieDataList.add(new PayPieData("TAG:" + entry.getKey(), entry.getValue()));
@@ -166,14 +161,34 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
         if (scanTagMap.isEmpty() && scanIncomeTotal.compareTo(BigDecimal.ZERO) > 0) pieDataList.add(new PayPieData("聚合扫码流水", scanIncomeTotal));
         if (cashIncome.compareTo(BigDecimal.ZERO) > 0) pieDataList.add(new PayPieData("现金收银流水", cashIncome));
         if (balancePay.compareTo(BigDecimal.ZERO) > 0) pieDataList.add(new PayPieData("会员余额抵扣", balancePay));
-        if (rechargeAmount.compareTo(BigDecimal.ZERO) > 0) pieDataList.add(new PayPieData("会员充值入账", rechargeAmount));
+        if (rechargeAmount.compareTo(BigDecimal.ZERO) > 0) pieDataList.add(new PayPieData("充值/买券收款", rechargeAmount));
         vo.setPayBreakdown(pieDataList);
 
+        // ==================================================
+        // 🌟 7天趋势图重构：展示各项毛收入 + 新增“退款专线”
+        // ==================================================
         List<Map<String, Object>> paySummary = omsOrderPayMapper.getDailyPaySummary(startOf7DaysAgo, endOfDay);
         List<Map<String, Object>> rechargeSummary = umsMemberLogMapper.selectMaps(new QueryWrapper<UmsMemberLog>()
                 .select("DATE_FORMAT(create_time, '%Y-%m-%d') AS dateStr", "SUM(real_amount) AS totalAmt")
                 .ge("create_time", startOf7DaysAgo).le("create_time", endOfDay).eq("operate_type", "RECHARGE")
                 .groupBy("DATE(create_time)"));
+
+        // 获取过去7天每一天的原始支付与最终净收，相减即为“退款专线”的数据
+        List<Map<String, Object>> dailyOrderStats = omsOrderMapper.selectMaps(new QueryWrapper<OmsOrder>()
+                .select("DATE_FORMAT(create_time, '%Y-%m-%d') AS dateStr", "SUM(pay_amount) AS dailyGrossPay", "SUM(final_sales_amount) AS dailyNetPay")
+                .ge("create_time", startOf7DaysAgo).le("create_time", endOfDay)
+                .in("status", OrderStatusEnum.getValidFinancialStatus())
+                .groupBy("DATE(create_time)"));
+
+        Map<String, BigDecimal> historyRefundMap = new HashMap<>();
+        for (Map<String, Object> stat : dailyOrderStats) {
+            String dStr = String.valueOf(stat.get("dateStr"));
+            BigDecimal dGross = parseAmt(stat.get("dailyGrossPay"));
+            BigDecimal dNet = parseAmt(stat.get("dailyNetPay"));
+            BigDecimal dRefund = dGross.subtract(dNet);
+            if (dRefund.compareTo(BigDecimal.ZERO) < 0) dRefund = BigDecimal.ZERO;
+            historyRefundMap.put(dStr, dRefund);
+        }
 
         Set<String> allTags = paySummary.stream().filter(r -> {
             PayMethodEnum m = PayMethodEnum.fromCode((String) r.get("methodCode"));
@@ -188,12 +203,17 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
 
         List<String> trendDates = new ArrayList<>();
         List<BigDecimal> trendScan = new ArrayList<>(), trendCash = new ArrayList<>(), trendRecharge = new ArrayList<>(), trendTotal = new ArrayList<>();
+        List<BigDecimal> trendRefund = new ArrayList<>(); // 🌟 新增退款专线
+
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("MM-dd");
 
         for (int i = 6; i >= 0; i--) {
             LocalDate d = targetDate.minusDays(i);
             String matchDateStr = d.format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
             trendDates.add(d.format(formatter));
+
+            // 1. 填入当天的退款专线数据
+            trendRefund.add(historyRefundMap.getOrDefault(matchDateStr, BigDecimal.ZERO));
 
             BigDecimal dailyScan = BigDecimal.ZERO, dailyCash = BigDecimal.ZERO;
             Map<String, BigDecimal> dailyTagAmt = new HashMap<>();
@@ -213,7 +233,10 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
                     }
                 }
             }
-            for (String tag : allTags) dynamicTrendMap.get(tag).add(dailyTagAmt.getOrDefault(tag, BigDecimal.ZERO));
+
+            for (String tag : allTags) {
+                dynamicTrendMap.get(tag).add(dailyTagAmt.getOrDefault(tag, BigDecimal.ZERO));
+            }
 
             BigDecimal dailyRecharge = BigDecimal.ZERO;
             for(Map<String, Object> r : rechargeSummary){
@@ -223,7 +246,10 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
             trendScan.add(dailyScan); trendCash.add(dailyCash); trendRecharge.add(dailyRecharge);
             trendTotal.add(dailyScan.add(dailyCash).add(dailyRecharge));
         }
-        vo.setTrendDates(trendDates); vo.setTrendScan(trendScan); vo.setTrendCash(trendCash); vo.setTrendRecharge(trendRecharge); vo.setTrendTotal(trendTotal);
+
+        vo.setTrendDates(trendDates); vo.setTrendScan(trendScan); vo.setTrendCash(trendCash);
+        vo.setTrendRecharge(trendRecharge); vo.setTrendTotal(trendTotal);
+        vo.setTrendRefund(trendRefund); // 🌟 塞入退款专线
         vo.setDynamicTrendMap(dynamicTrendMap);
 
         return vo;
@@ -236,8 +262,10 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
         LocalDateTime startTime = LocalDateTime.of(start, LocalTime.MIN);
         LocalDateTime endTime = LocalDateTime.of(end, LocalTime.MAX);
 
+        // 1. 查每日支付流水 (毛收入)
         List<Map<String, Object>> paySummary = omsOrderPayMapper.getDailyPaySummary(startTime, endTime);
 
+        // 2. 查每日让利流水 (优惠券与满减)
         List<Map<String, Object>> orderSummary = omsOrderMapper.selectMaps(new QueryWrapper<OmsOrder>()
                 .select("DATE_FORMAT(create_time, '%Y-%m-%d') AS dateStr", "SUM(coupon_amount) AS totalCoupon", "SUM(use_voucher_amount) AS totalVoucher")
                 .ge("create_time", startTime).le("create_time", endTime)
@@ -248,6 +276,7 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
         List<String> dates = new ArrayList<>();
         List<BigDecimal> scanList = new ArrayList<>(), cashList = new ArrayList<>(), balanceList = new ArrayList<>();
         List<BigDecimal> couponList = new ArrayList<>(), voucherList = new ArrayList<>();
+
         BigDecimal totalScan = BigDecimal.ZERO, totalCash = BigDecimal.ZERO, totalBalance = BigDecimal.ZERO;
         BigDecimal totalCoupon = BigDecimal.ZERO, totalVoucher = BigDecimal.ZERO;
         Map<String, BigDecimal> scanTagMap = new HashMap<>();
@@ -288,10 +317,12 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
             voucherList.add(dVoucher); totalVoucher = totalVoucher.add(dVoucher);
         }
 
+        // 装载折线图数据
         vo.setTrendDates(dates);
         vo.setScanList(scanList); vo.setCashList(cashList); vo.setBalanceList(balanceList);
         vo.setCouponList(couponList); vo.setVoucherList(voucherList);
 
+        // 装载饼图数据 (绝对毛值，方便直接对账)
         List<PayPieData> pieDataList = new ArrayList<>();
         for (Map.Entry<String, BigDecimal> entry : scanTagMap.entrySet()) {
             if (entry.getValue().compareTo(BigDecimal.ZERO) > 0) pieDataList.add(new PayPieData("TAG:" + entry.getKey(), entry.getValue()));

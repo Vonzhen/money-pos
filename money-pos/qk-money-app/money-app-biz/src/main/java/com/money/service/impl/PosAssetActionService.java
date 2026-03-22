@@ -5,7 +5,7 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.money.constant.CouponStatusEnum;
 import com.money.constant.PayMethodEnum;
 import com.money.dto.pos.NormalizedPaymentResult;
-import com.money.dto.pos.PricingResult; // 🌟 引入新契约
+import com.money.dto.pos.PricingResult;
 import com.money.dto.pos.SettleAccountsDTO;
 import com.money.entity.PosMemberCoupon;
 import com.money.entity.UmsMember;
@@ -37,11 +37,10 @@ public class PosAssetActionService {
     public void consume(Long memberId, SettleAccountsDTO dto, PricingResult trialRes, NormalizedPaymentResult payResult, String orderNo) {
         LocalDateTime now = LocalDateTime.now();
 
-        // 🌟🌟🌟 终极绝杀：免收单逻辑物理隔离 🌟🌟🌟
-        // 传递给底层的只有 actualCouponDeduct。如果开启了免收，该值为0，底层服务自然不会扣减。
+        // 1. 扣除会员券金额与消费统计
         umsMemberService.consume(memberId, trialRes.getFinalPayAmount(), trialRes.getActualCouponDeduct(), orderNo);
 
-        // 2. 满减券
+        // 2. 满减券物理核销与流水记录
         if (dto.getUsedCouponRuleId() != null && dto.getUsedCouponCount() != null && dto.getUsedCouponCount() > 0) {
             int count = dto.getUsedCouponCount();
 
@@ -68,9 +67,20 @@ public class PosAssetActionService {
                     .in(PosMemberCoupon::getId, couponIds).eq(PosMemberCoupon::getStatus, CouponStatusEnum.UNUSED.name()));
             if (rows != count) throw new BaseException("【并发拦截】优惠券已被抢占，操作回滚。");
 
-            long remainVouchers = posMemberCouponMapper.selectCount(new LambdaQueryWrapper<PosMemberCoupon>().eq(PosMemberCoupon::getMemberId, memberId).eq(PosMemberCoupon::getStatus, CouponStatusEnum.UNUSED.name()));
+            long remainVouchers = posMemberCouponMapper.selectCount(new LambdaQueryWrapper<PosMemberCoupon>()
+                    .eq(PosMemberCoupon::getMemberId, memberId)
+                    .eq(PosMemberCoupon::getStatus, CouponStatusEnum.UNUSED.name()));
+
+            // 🌟 核心修复：查明正身，补全姓名和手机号
+            UmsMember member = umsMemberService.getById(memberId);
+
             UmsMemberLog voucherLog = new UmsMemberLog();
             voucherLog.setMemberId(memberId);
+            // 🌟 缝合上下文断层
+            if (member != null) {
+                voucherLog.setMemberName(member.getName());
+                voucherLog.setMemberPhone(member.getPhone());
+            }
             voucherLog.setType(LOG_TYPE_VOUCHER);
             voucherLog.setOperateType(OPERATE_CONSUME);
             voucherLog.setAmount(BigDecimal.valueOf(-count));

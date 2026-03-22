@@ -1,5 +1,6 @@
 package com.money.dto.Finance;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import java.math.BigDecimal;
 import java.util.HashSet;
@@ -29,6 +30,8 @@ public class FinanceDataVO {
 
         // 🌟 修复：把这个字段挪到了 FinanceDashboardVO 内部！
         private Map<String, List<BigDecimal>> dynamicTrendMap;
+        @Schema(description = "近7天售后退款专线")
+        private List<BigDecimal> trendRefund;
     }
 
     @Data

@@ -98,3 +98,13 @@ spring:
     multipart:
       max-file-size: 1024MB       # 单个文件最大限制
       max-request-size: 1024MB    # 整个请求最大限制
+
+  # 🌟 直接在这里强势插入 Flyway 铁律！
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    validate-on-migrate: false  # 容忍换行符差异（单机版保留此项确实能减少很多不必要的麻烦）
+    out-of-order: true
+    # 👇 这两行“创可贴”可以彻底删除了！
+    # baseline-on-migrate: true
+    # baseline-version: 0

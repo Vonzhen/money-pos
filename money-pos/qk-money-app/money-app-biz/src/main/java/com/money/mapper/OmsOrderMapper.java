@@ -11,11 +11,11 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 🌟 交易核心 Mapper (OLTP)
- * 职责：仅处理订单主表读写及退款状态机，保障极速响应
+ * 🌟 交易核心 Mapper
  */
 public interface OmsOrderMapper extends BaseMapper<OmsOrder> {
 
+    // 🌟 反操作：恢复为最简单的退款口径，不再扣减满减和手工优惠
     @Update("UPDATE oms_order SET " +
             "final_sales_amount = IFNULL(final_sales_amount, 0) - #{refundSales}, " +
             "cost_amount = IFNULL(cost_amount, 0) - #{refundCost}, " +
@@ -28,8 +28,9 @@ public interface OmsOrderMapper extends BaseMapper<OmsOrder> {
                            @Param("refundCoupon") BigDecimal refundCoupon,
                            @Param("status") String status);
 
+    // 🌟 整单退款时，依然清空所有记录
     @Update("UPDATE oms_order SET " +
-            "final_sales_amount = 0, cost_amount = 0, coupon_amount = 0, use_voucher_amount = 0, status = #{status} " +
+            "final_sales_amount = 0, cost_amount = 0, coupon_amount = 0, use_voucher_amount = 0, manual_discount_amount = 0, status = #{status} " +
             "WHERE order_no = #{orderNo}")
     int updateRefundStatusToFull(@Param("orderNo") String orderNo, @Param("status") String status);
 

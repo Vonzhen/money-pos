@@ -123,7 +123,7 @@ const payTagDict = ref([])
 const data = ref({
     totalAmount: 0, totalDiscount: 0, payAmount: 0, refundAmount: 0, netIncome: 0, grossProfit: 0, externalIncome: 0, totalDebt: 0,
     payBreakdown: [], trendDates: [],
-    trendScan: [], trendCash: [], trendRecharge: [], trendTotal: [],
+    trendScan: [], trendCash: [], trendRecharge: [], trendTotal: [], trendRefund: [], // 🌟 增加 trendRefund 坑位
     dynamicTrendMap: {}
 })
 
@@ -132,7 +132,6 @@ const pieChartRef = ref(null)
 let lineChart = null
 let pieChart = null
 
-// 🌟 全局拦截器：去掉所有名称里的“流水”二字，让界面清爽
 const getTranslatedName = (rawName) => {
     let finalName = rawName;
     if (rawName && rawName.startsWith('TAG:')) {
@@ -144,7 +143,6 @@ const getTranslatedName = (rawName) => {
             finalName = dictItem ? dictItem.desc : code;
         }
     }
-    // 把后端传过来的“现金收银流水”、“聚合扫码流水”里的“流水”暴力切掉
     return finalName ? finalName.replace(/流水/g, '') : '';
 }
 
@@ -174,8 +172,7 @@ const initLineChart = () => {
     if (!lineChartRef.value) return
     if (!lineChart) lineChart = echarts.init(lineChartRef.value)
 
-    // 🌟 把基础类目的“流水”也精简掉
-    const legendData = ['全口径大盘总计', '扫码总计', '现金收银', '会员充值'];
+    const legendData = ['全口径大盘总计', '扫码总计', '现金收银', '会员充值', '售后退款']; // 🌟 添加图例
     const seriesData = [
         {
             name: '全口径大盘总计', type: 'line', smooth: true,
@@ -200,6 +197,13 @@ const initLineChart = () => {
             areaStyle: { color: 'rgba(230, 162, 60, 0.2)' },
             itemStyle: { color: '#E6A23C' },
             data: data.value.trendRecharge || []
+        },
+        // 🌟 核心：新增的专属退款红线
+        {
+            name: '售后退款', type: 'line', smooth: true,
+            itemStyle: { color: '#F56C6C' },
+            lineStyle: { width: 2, type: 'solid' },
+            data: data.value.trendRefund || []
         }
     ];
 
@@ -220,9 +224,7 @@ const initLineChart = () => {
 
     lineChart.setOption({
         tooltip: { trigger: 'axis', appendToBody: true },
-        // 🌟 取消了 type: 'scroll'，允许自然换行
         legend: { data: legendData, bottom: '0' },
-        // 🌟 把 bottom 从 15% 拉大到了 20%，给两排标签留足空间防止遮挡 x 轴
         grid: { left: '3%', right: '4%', bottom: '20%', containLabel: true },
         xAxis: { type: 'category', boundaryGap: false, data: data.value.trendDates || [] },
         yAxis: { type: 'value', name: '金额 (元)' },
@@ -241,12 +243,10 @@ const initPieChart = () => {
 
     pieChart.setOption({
         tooltip: { trigger: 'item', formatter: '{b}: ¥ {c} ({d}%)', appendToBody: true },
-        // 🌟 同样取消了翻页模式，自然铺开两排
         legend: { orient: 'horizontal', bottom: '0' },
         color: ['#409EFF', '#9C27B0', '#67C23A', '#E6A23C', '#F56C6C', '#13CE66', '#FF9900', '#8e44ad', '#e74c3c'],
         series: [{
             name: '资金占比', type: 'pie',
-            // 🌟 稍微上移了饼图本体 (center属性)，给底部多行标签腾出位置
             radius: ['40%', '65%'], center: ['50%', '42%'],
             avoidLabelOverlap: false,
             itemStyle: { borderRadius: 10, borderColor: '#fff', borderWidth: 2 },
