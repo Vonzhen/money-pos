@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.money.dto.OmsOrder.OmsSalesDataVO;
 import com.money.entity.OmsOrder;
 import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -43,4 +44,21 @@ public interface OmsOrderMapper extends BaseMapper<OmsOrder> {
     List<OmsSalesDataVO.TimeTrafficVO> getMonthlyTrafficAnalysis(int days, double divisor);
 
     List<Map<String, Object>> getCashierRiskSummary(LocalDateTime startTime, LocalDateTime endTime);
+
+    /**
+     * 🌟 交接班专属：优惠/抵扣/满减 聚合核算
+     */
+    @Select("<script>" +
+            "SELECT " +
+            "IFNULL(SUM(manual_discount_amount), 0) AS manualDiscount, " +
+            "IFNULL(SUM(use_voucher_amount), 0) AS voucherDiscount, " +
+            "IFNULL(SUM(coupon_amount), 0) AS memberCouponPay " +
+            "FROM oms_order " +
+            "WHERE create_time &gt;= #{startTime} AND create_time &lt;= #{endTime} " +
+            "  AND status IN ('PAID', 'PARTIAL_REFUNDED', 'REFUNDED') " +
+            "<if test='cashierName != null and cashierName != \"全部收银员\"'> " +
+            "  AND create_by = #{cashierName} " +
+            "</if>" +
+            "</script>")
+    Map<String, BigDecimal> getShiftDiscountStats(@Param("startTime") LocalDateTime startTime, @Param("endTime") LocalDateTime endTime, @Param("cashierName") String cashierName);
 }

@@ -1,4 +1,4 @@
-name: Build MoneyPOS EXE Installer
+name: Build WanXiangPOS EXE Installer
 
 on:
   workflow_dispatch:
@@ -40,21 +40,18 @@ jobs:
           npm install
           npm run build
 
-      # 6. 🌟 核心：下载并准备 JRE 与 MariaDB 环境
+      # 6. 下载并准备 JRE 与 MariaDB 环境
       - name: Prepare External Environments (JRE & MariaDB)
         shell: powershell
         run: |
-          # 在根目录建立独立的环境变量存储区
           mkdir build-env
           cd build-env
           
           # --- 下载并处理 JRE ---
-          # 使用更稳定的 17.0.10 版本
           echo "Downloading JRE 17..."
           $jreUrl = "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.10%2B7/OpenJDK17U-jre_x64_windows_hotspot_17.0.10_7.zip"
           Invoke-WebRequest -Uri $jreUrl -OutFile "jre.zip"
           Expand-Archive -Path "jre.zip" -DestinationPath "."
-          # 模糊匹配 jdk 文件夹并重命名为 jre，确保 package.json 能找到
           Get-ChildItem -Path "jdk*" | Rename-Item -NewName "jre"
           Remove-Item "jre.zip"
           
@@ -63,7 +60,6 @@ jobs:
           $dbUrl = "https://archive.mariadb.org/mariadb-10.11.6/winx64-packages/mariadb-10.11.6-winx64.zip"
           Invoke-WebRequest -Uri $dbUrl -OutFile "mariadb.zip"
           Expand-Archive -Path "mariadb.zip" -DestinationPath "."
-          # 模糊匹配 mariadb 文件夹并重命名为 mariadb
           Get-ChildItem -Path "mariadb-10*" | Rename-Item -NewName "mariadb"
           Remove-Item "mariadb.zip"
           
@@ -71,16 +67,27 @@ jobs:
           Remove-Item -Recurse -Force "mariadb/mysql-test" -ErrorAction SilentlyContinue
           Remove-Item -Recurse -Force "mariadb/sql-bench" -ErrorAction SilentlyContinue
 
-      # 7. 开始 Electron 封包
+      # 7. 🌟 绝对防御：统一物资装箱！把所有外部依赖搬进 frontend 目录
+      - name: Assemble All Resources
+        shell: powershell
+        run: |
+          echo "组装后端 JAR 包..."
+          New-Item -ItemType Directory -Force -Path "money-pos-web/backend"
+          Copy-Item -Path "money-pos/qk-money-app/money-app-biz/target/*.jar" -Destination "money-pos-web/backend/money-pos.jar" -Force
+          
+          echo "搬运 JRE 和 MariaDB..."
+          Move-Item -Path "build-env/jre" -Destination "money-pos-web/jre" -Force
+          Move-Item -Path "build-env/mariadb" -Destination "money-pos-web/mariadb" -Force
+
+      # 8. 开始 Electron 封包
       - name: Build Electron EXE
         working-directory: ./money-pos-web
         run: |
-          npm install
           npm run electron:build
 
-      # 8. 上传最终成品
+      # 9. 上传最终成品
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MoneyPOS-Installer
+          name: WanXiangPOS-Installer
           path: money-pos-web/release/*.exe
