@@ -81,12 +81,10 @@ public class OmsOrderRefundServiceImpl implements OmsOrderRefundService {
                             .set(PosMemberCoupon::getUseTime, null)
                             .set(PosMemberCoupon::getOrderNo, null));
 
-                    // 🌟 核心修复：统计退还后，该会员当下拥有多少张未使用的满减券
                     Long totalUnusedVouchers = posMemberCouponMapper.selectCount(new LambdaQueryWrapper<PosMemberCoupon>()
                             .eq(PosMemberCoupon::getMemberId, order.getMemberId())
                             .eq(PosMemberCoupon::getStatus, "UNUSED"));
 
-                    // 传入真实的变动后张数
                     umsMemberAssetService.logVoucherRefund(order.getMemberId(), new BigDecimal(voucherCount), new BigDecimal(totalUnusedVouchers), orderNo);
                 }
             }
@@ -157,29 +155,58 @@ public class OmsOrderRefundServiceImpl implements OmsOrderRefundService {
                 GmsGoods sub = gmsGoodsMapper.selectById(c.getSubGoodsId());
                 if (sub != null) {
                     int qty = Math.multiplyExact(returnQty, c.getSubGoodsQty());
+
+                    // 1. 先原子加库存
                     gmsGoodsMapper.addStockAtomically(sub.getId(), new BigDecimal(qty));
+
+                    // 2. 查出最新库存
+                    GmsGoods updatedSub = gmsGoodsMapper.selectById(sub.getId());
+                    int latestStock = (updatedSub != null && updatedSub.getStock() != null) ? updatedSub.getStock().intValue() : 0;
+
                     BigDecimal cost = sub.getAvgCostPrice() != null ? sub.getAvgCostPrice() :
                             (sub.getPurchasePrice() != null ? sub.getPurchasePrice() : BigDecimal.ZERO);
                     impact = impact.add(cost.multiply(new BigDecimal(qty)));
-                    recordStockLog(sub, qty, orderNo, cost, "套餐回补");
+
+                    // 3. 记录流水，传入最新结余
+                    recordStockLog(sub, qty, latestStock, orderNo, cost, "套餐回补");
                 }
             }
         } else {
+            // 1. 先原子加库存
             gmsGoodsMapper.addStockAtomically(goods.getId(), new BigDecimal(returnQty));
+
+            // 2. 查出最新库存
+            GmsGoods updatedGoods = gmsGoodsMapper.selectById(goods.getId());
+            int latestStock = (updatedGoods != null && updatedGoods.getStock() != null) ? updatedGoods.getStock().intValue() : 0;
+
             BigDecimal cost = detail.getPurchasePrice() != null ? detail.getPurchasePrice() : BigDecimal.ZERO;
             impact = cost.multiply(new BigDecimal(returnQty));
-            recordStockLog(goods, returnQty, orderNo, cost, "单品回补");
+
+            // 3. 记录流水，传入最新结余
+            recordStockLog(goods, returnQty, latestStock, orderNo, cost, "单品回补");
         }
         omsOrderDetailMapper.refundGoodsAtomically(detail.getId(), returnQty);
         return impact;
     }
 
-    private void recordStockLog(GmsGoods g, int qty, String orderNo, BigDecimal cost, String remark) {
+    // 🌟 核心修复：接收 latestStock 参数，并赋值给 afterQuantity
+    private void recordStockLog(GmsGoods g, int qty, int latestStock, String orderNo, BigDecimal cost, String remark) {
         GmsStockLog log = new GmsStockLog();
-        log.setGoodsId(g.getId()); log.setGoodsName(g.getName()); log.setGoodsBarcode(g.getBarcode());
-        log.setType("RETURN"); log.setQuantity(qty); log.setOrderNo(orderNo);
-        log.setCostPriceSnapshot(cost); log.setImpactAmount(cost.multiply(new BigDecimal(qty)));
-        log.setRemark(remark); log.setCreateTime(LocalDateTime.now());
+        log.setGoodsId(g.getId());
+        log.setGoodsName(g.getName());
+        log.setGoodsBarcode(g.getBarcode());
+        log.setType("RETURN");
+        log.setQuantity(qty);
+
+        // 🌟 赋值结余库存
+        log.setAfterQuantity(latestStock);
+
+        log.setOrderNo(orderNo);
+        log.setCostPriceSnapshot(cost);
+        log.setImpactAmount(cost.multiply(new BigDecimal(qty)));
+        log.setRemark(remark);
+        log.setCreateTime(LocalDateTime.now());
+
         gmsStockLogService.save(log);
     }
 }

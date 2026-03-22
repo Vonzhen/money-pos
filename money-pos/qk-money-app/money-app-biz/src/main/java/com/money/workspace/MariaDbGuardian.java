@@ -153,12 +153,11 @@ public class MariaDbGuardian {
                     try (Statement stmt = conn.createStatement()) {
                         stmt.execute("ALTER USER 'root'@'localhost' IDENTIFIED BY '" + dbPassword + "'");
                         stmt.execute("CREATE DATABASE IF NOT EXISTS `" + DB_NAME + "` CHARACTER SET utf8mb4");
-                        // 🌟 注入主权签名表，防止未来误连其他同路径库（如拷贝安装目录后）
-                        stmt.execute("CREATE TABLE IF NOT EXISTS `" + DB_NAME + "`.`sys_app_signature` (`id` INT PRIMARY KEY, `sign` VARCHAR(50))");
-                        stmt.execute("INSERT IGNORE INTO `" + DB_NAME + "`.`sys_app_signature` VALUES (1, 'MoneyPOS')");
+
+                        // 🌟 架构净化：建表权已 100% 移交 Flyway，此处不再插入任何业务或签名表
 
                         FileUtil.writeString(dbPassword, new File(PWD_FILE), StandardCharsets.UTF_8);
-                        log.info("🛡️ [Guardian] 安全加固与签名注入完成。");
+                        log.info("🛡️ [Guardian] 数据库内核加固与空库创建完毕（结构初始化已移交 Flyway）。");
                     }
                 }
                 return true;

@@ -1,4 +1,4 @@
-<h1 align="center">💰 麦尼收银系统</h1>
+<h1 align="center">💰 万象收银系统</h1>
 
 <p align="center">
   <strong>Money - 基于 Spring Boot 2.7 & VueJS 3 的多店铺收银系统</strong>
@@ -37,7 +37,7 @@
 
 ## 📖 项目简介
 
-麦尼收银系统是一款基于自制快速后台开发框架 [QK-MONEY](https://github.com/ycf1998/qk-money) 开发的多店铺收银系统。系统支持**会员管理**、**商品管理**、**订单管理**等功能，并集成了**小票打印**等实用特性，适用于零售、餐饮等多种场景。
+万象收银系统是一款基于自制快速后台开发框架 [QK-MONEY](https://github.com/ycf1998/qk-money) 开发的多店铺收银系统。系统支持**会员管理**、**商品管理**、**订单管理**等功能，并集成了**小票打印**等实用特性，适用于零售、餐饮等多种场景。
 
 > 💡 **提示**：原 Vue2 版本请切换到 `main-vue2` 分支。
 
@@ -171,5 +171,5 @@ npm run dev
 ---
 
 <p align="center">
-  <strong>🎉 感谢使用麦尼收银系统！</strong>
+  <strong>🎉 感谢使用万象收银系统！</strong>
 </p>
