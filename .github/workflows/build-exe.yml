@@ -71,11 +71,11 @@ jobs:
       - name: Assemble All Resources
         shell: powershell
         run: |
-          echo "组装后端 JAR 包..."
+          echo "Copying backend JAR..."
           New-Item -ItemType Directory -Force -Path "money-pos-web/backend"
           Copy-Item -Path "money-pos/qk-money-app/money-app-biz/target/*.jar" -Destination "money-pos-web/backend/money-pos.jar" -Force
           
-          echo "搬运 JRE 和 MariaDB..."
+          echo "Moving JRE and MariaDB..."
           Move-Item -Path "build-env/jre" -Destination "money-pos-web/jre" -Force
           Move-Item -Path "build-env/mariadb" -Destination "money-pos-web/mariadb" -Force
 
