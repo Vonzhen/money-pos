@@ -47,24 +47,24 @@
   },
   "build": {
     "appId": "com.money.pos",
-    "productName": "MoneyPOS",
+    "productName": "万象收银系统",
     "directories": {
       "output": "release"
     },
     "extraFiles": [
       {
-        "from": "../build-env/mariadb",
+        "from": "mariadb",
         "to": "mariadb"
       },
       {
-        "from": "../build-env/jre",
+        "from": "jre",
         "to": "jre"
       }
     ],
     "extraResources": [
       {
-        "from": "../money-pos/qk-money-app/money-app-biz/target/money-pos.jar",
-        "to": "backend/money-pos.jar"
+        "from": "backend",
+        "to": "backend"
       }
     ],
     "win": {
@@ -78,7 +78,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "MoneyPOS 收银系统"
+      "shortcutName": "万象收银系统"
     }
   }
 }

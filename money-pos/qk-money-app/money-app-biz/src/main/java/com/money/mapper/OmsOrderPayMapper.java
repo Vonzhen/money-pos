@@ -25,5 +25,21 @@ public interface OmsOrderPayMapper extends BaseMapper<OmsOrderPay> {
             "  AND o.status IN ('PAID', 'PARTIAL_REFUNDED', 'REFUNDED') " + // 🌟 锁定主单有效状态
             "GROUP BY DATE(o.create_time), p.pay_method_code, p.pay_tag")
     List<Map<String, Object>> getDailyPaySummary(@Param("startTime") LocalDateTime startTime, @Param("endTime") LocalDateTime endTime);
-
+    /**
+     * 🌟 交接班专属：高精度资金流扫荡
+     * 精确到秒，严格过滤操作人
+     */
+    @Select("<script>" +
+            "SELECT p.pay_method_code AS methodCode, " +
+            "SUM(p.pay_amount) AS totalAmount " +
+            "FROM oms_order_pay p " +
+            "JOIN oms_order o ON p.order_no = o.order_no " +
+            "WHERE o.create_time &gt;= #{startTime} AND o.create_time &lt;= #{endTime} " +
+            "  AND o.status IN ('PAID', 'PARTIAL_REFUNDED', 'REFUNDED') " +
+            "<if test='cashierName != null and cashierName != \"全部收银员\"'> " +
+            "  AND o.create_by = #{cashierName} " +
+            "</if>" +
+            "GROUP BY p.pay_method_code" +
+            "</script>")
+    List<Map<String, Object>> getShiftPayStats(@Param("startTime") LocalDateTime startTime, @Param("endTime") LocalDateTime endTime, @Param("cashierName") String cashierName);
 }

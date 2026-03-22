@@ -31,7 +31,7 @@
         <div class="flex items-center gap-5">
             <div class="flex items-center gap-1 cursor-pointer text-orange-400 hover:text-orange-300 transition-colors bg-gray-800 px-3 py-1.5 rounded-full border border-gray-700" @click="$emit('action', 'admin')">
                 <el-icon><HomeFilled /></el-icon>
-                <span class="text-xs font-bold">后台管理</span>
+                <span class="text-sm font-bold">后台管理</span>
             </div>
             <div class="flex items-center gap-1.5 text-gray-300">
                 <el-icon><Avatar /></el-icon>

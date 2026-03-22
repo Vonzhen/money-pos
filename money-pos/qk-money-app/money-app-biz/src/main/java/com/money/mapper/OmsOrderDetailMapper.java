@@ -69,4 +69,24 @@ public interface OmsOrderDetailMapper extends BaseMapper<OmsOrderDetail> {
             "ORDER BY totalProfit DESC " +
             "LIMIT 50")
     List<com.money.dto.Finance.FinanceDataVO.ProfitRankVO> getProfitRankingData(@Param("startTime") LocalDateTime startTime);
+
+    /**
+     * 🌟 交接班专属：品牌贡献度 (已剔除退款退货)
+     */
+    @Select("<script>" +
+            "SELECT IFNULL(gb.name, '无品牌/未知') AS brandName, " +
+            "SUM((ood.quantity - IFNULL(ood.return_quantity, 0)) * IFNULL(ood.goods_price, 0)) AS brandSales " +
+            "FROM oms_order_detail ood " +
+            "LEFT JOIN gms_brand gb ON ood.brand_id = gb.id " +
+            "JOIN oms_order o ON ood.order_no = o.order_no " +
+            "WHERE o.status IN ('PAID', 'PARTIAL_REFUNDED', 'REFUNDED') " +
+            "  AND o.create_time &gt;= #{startTime} AND o.create_time &lt;= #{endTime} " +
+            "<if test='cashierName != null and cashierName != \"全部收银员\"'> " +
+            "  AND o.create_by = #{cashierName} " +
+            "</if> " +
+            "GROUP BY gb.id, gb.name " +
+            "HAVING brandSales > 0 " +
+            "ORDER BY brandSales DESC" +
+            "</script>")
+    List<com.money.dto.Finance.FinanceDataVO.BrandContributionVO> getShiftBrandContribution(@Param("startTime") LocalDateTime startTime, @Param("endTime") LocalDateTime endTime, @Param("cashierName") String cashierName);
 }

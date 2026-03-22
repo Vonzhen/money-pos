@@ -114,7 +114,35 @@ const suspendedOrderList = ref([])
 const payMethodDict = ref([])
 const payTagDict = ref([])
 const memberTypesDict = ref([])
-const cashierName = computed(() => userStore.name || '未知收银员')
+
+// ==========================================
+// 🌟 核心修复：精准狙击收银员真名提取机制
+// ==========================================
+const cashierName = computed(() => {
+    // 1. 真相大白：用户信息藏在 userStore.info 里面！
+    const info = userStore.info;
+    if (info) {
+        // 兼容后端常见的各种中英文命名字段（昵称优先，真名其次，账号名兜底）
+        return info.nickname || info.nickName || info.name || info.realName || info.username || info.userName || '管理员';
+    }
+
+    // 2. 缓存兜底：防止页面刚刷新，Store 还没来得及加载的瞬间黑屏
+    try {
+        // 您的系统登录后可能会存进本地缓存
+        const localUserStr = localStorage.getItem('user') || localStorage.getItem('userInfo');
+        if (localUserStr) {
+            const parsed = JSON.parse(localUserStr);
+            const localInfo = parsed.info || parsed;
+            const name = localInfo.nickname || localInfo.nickName || localInfo.name || localInfo.username;
+            if (name) return name;
+        }
+    } catch (e) {
+        // 忽略解析错误
+    }
+
+    return '未知收银员';
+});
+// ==========================================
 
 let clockTimer = null; // 🌟 声明时钟句柄，防止内存泄露
 
