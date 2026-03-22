@@ -35,11 +35,24 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity httpSecurity) throws Exception {
         httpSecurity.authorizeRequests(authorize -> {
-                    // 🌟 核心修复：最高优先级放行灾备大屏的 SSE 日志通道 (因为原生的 EventSource 无法携带 Token)
+                    // 🌟 核心修复 1：放行前端静态资源 (否则 Electron 无法加载页面)
+                    authorize.antMatchers(
+                            "/",                // 根路径
+                            "/index.html",      // 首页
+                            "/favicon.ico",     // 图标
+                            "/assets/**",       // Vite 打包后的资源 (JS/CSS/图片)
+                            "/*.js",            // 根目录下的 JS
+                            "/*.css",           // 根目录下的 CSS
+                            "/*.png",           // 根目录下的图片
+                            "/*.svg"            // 根目录下的图标
+                    ).permitAll();
+
+                    // 🌟 核心修复 2：放行灾备大屏的 SSE 日志通道
                     authorize.antMatchers(HttpMethod.GET, "/sys/backup/stream").permitAll();
 
                     // 放行忽略的url (读取配置文件的白名单)
                     this.ignore(authorize);
+
                     // 其他请求都需要认证
                     authorize.anyRequest().authenticated();
                 })

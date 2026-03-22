@@ -167,6 +167,13 @@ public class UmsMemberImportService {
                 BigDecimal addCou = m.getCoupon() != null ? m.getCoupon() : BigDecimal.ZERO;
                 existMember.setBalance((existMember.getBalance() != null ? existMember.getBalance() : BigDecimal.ZERO).add(addBal));
                 existMember.setCoupon((existMember.getCoupon() != null ? existMember.getCoupon() : BigDecimal.ZERO).add(addCou));
+
+                // ==========================================
+                // 🌟 核心修复：亡者复苏！
+                // 解除软删除标记，让这名老会员重新回到页面列表中！
+                // ==========================================
+                existMember.setDeleted(false); // 设置为 false 代表未被删除
+
                 umsMemberMapper.updateById(existMember);
                 targetMemberId = existMember.getId();
                 targetLogMember = existMember;
@@ -194,6 +201,10 @@ public class UmsMemberImportService {
                 String newCode;
                 do { newCode = RandomUtil.randomNumbers(8); } while (umsMemberMapper.exists(new LambdaQueryWrapper<UmsMember>().eq(UmsMember::getCode, newCode)));
                 m.setCode(newCode);
+
+                // 确保新插入的数据绝对不会处于删除状态
+                m.setDeleted(false);
+
                 umsMemberMapper.insert(m);
                 targetMemberId = m.getId();
                 targetLogMember = m;
