@@ -7,13 +7,14 @@ import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 import { createSvgIconsPlugin } from 'vite-plugin-svg-icons'
 
 export default defineConfig(async ({mode}) => ({
-  // 前端页面的基础访问路径
-  base: mode  === 'demo' ? '/money-pos-demo' : '/money-pos',
+  // 🌟 核心修复：前端页面基础路径改为相对路径 './'
+  // 这样打包后 Electron 读本地 index.html 时，资源路径才会是 ./assets/... 从而精准找到 CSS/JS
+  base: mode  === 'demo' ? '/money-pos-demo' : './',
   envPrefix: ["VITE_"],
   server: {
     port: 1520,
     strictPort: true,
-    // 🌟 架构规范：使用 /api 作为 API 专属网关前缀，彻底避开前端文件路由
+    // 🌟 架构规范：开发环境的代理保持不变
     proxy: {
       '/api': {
         target: 'http://localhost:9101',
