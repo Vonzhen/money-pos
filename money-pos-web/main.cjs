@@ -30,28 +30,31 @@ function createWindows() {
         width: 1280,
         height: 800,
         title: "万象收银系统",
-        show: false, // 🌟 先隐藏，等页面加载好再显示，防止白屏闪烁
+        show: false, // 先隐藏，等页面加载好再显示，防止白屏闪烁
         webPreferences: {
             nodeIntegration: false,
-            contextIsolation: true
+            contextIsolation: true,
+            webSecurity: false // 🌟 允许本地 file:// 协议跨域请求 127.0.0.1
         },
         autoHideMenuBar: true
     });
 
-    // 🌟 核心修改：打包后不再读本地 file://，直接读取 Java 提供的 Web 服务
-    // 这样做能保证 CSS/JS 路径 100% 正确
-    const indexUrl = isPackaged
-        ? 'http://127.0.0.1:9101/money-pos/'
+    // 🌟 核心修改：彻底切换为“本地加载模式(Model B)”
+    // 打包后直接去读本地 dist 文件夹里的 HTML，彻底抛弃让 Java 吐页面的幻想！
+    const indexPath = isPackaged
+        ? `file://${path.join(__dirname, 'dist', 'index.html')}`
         : 'http://localhost:1520/money-pos';
 
-    mainWindow.loadURL(indexUrl);
+    mainWindow.loadURL(indexPath);
 
     // 页面准备好后再显示，体验更丝滑
     mainWindow.once('ready-to-show', () => {
         mainWindow.show();
         mainWindow.maximize(); // 默认最大化
-        // 如果需要调试，可以取消下面这行的注释
-        // mainWindow.webContents.openDevTools();
+
+        // 🌟 强烈建议：本次打包强行开启控制台！
+        // 如果界面出不来，看右侧控制台的红字，一秒钟破案！正常运行后可以再注释掉。
+        mainWindow.webContents.openDevTools();
     });
 
     // --- 探测并创建客显副屏 ---
@@ -64,11 +67,11 @@ function createWindows() {
             frame: false,
             show: false,
             title: "万象收银系统-客显屏",
-            webPreferences: { nodeIntegration: false, contextIsolation: true }
+            webPreferences: { nodeIntegration: false, contextIsolation: true, webSecurity: false }
         });
 
-        // 客显屏同样访问 Java 提供的路由
-        guestWindow.loadURL(`${indexUrl}#/guest`);
+        // 客显屏同样访问本地文件
+        guestWindow.loadURL(`${indexPath}#/guest`);
         guestWindow.once('ready-to-show', () => guestWindow.show());
     }
 }
@@ -96,11 +99,15 @@ function startBackend() {
 function checkHealth() {
     console.log("⏳ [万象总控] 正在探测后端健康状态...");
 
-    // 探测后端一个特定的接口
-    const req = http.get('http://127.0.0.1:9101/money-pos/sys/backup/stream', (res) => {
-        // 只要后端给了响应（哪怕是 401），说明 Tomcat 已经把服务跑起来了
-        console.log(`✅ [万象总控] 后端已就绪 (HTTP ${res.statusCode})，正在唤起 UI 界面...`);
-        createWindows();
+    // 🌟 换成最标准、最准确的 actuator 接口，彻底避免安全框架误伤
+    const req = http.get('http://127.0.0.1:9101/money-pos/actuator/health', (res) => {
+        if (res.statusCode === 200) {
+            console.log(`✅ [万象总控] 后端已就绪 (HTTP 200)，正在唤起本地 UI 界面...`);
+            createWindows();
+        } else {
+            console.log(`⚠️ [万象总控] 收到响应但非200 (${res.statusCode})，继续等待...`);
+            setTimeout(checkHealth, 1500);
+        }
     });
 
     req.on('error', (err) => {

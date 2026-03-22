@@ -4,9 +4,18 @@ import { useUserStore } from '@/store';
 import axios from 'axios';
 import { ElMessage } from 'element-plus';
 
+// ==========================================
+// 🌟 核心修复：智能识别运行环境，动态修正 API 基准地址
+// ==========================================
+let apiBaseUrl = import.meta.env.VITE_BASE_URL;
+// 如果发现是 Electron 打包后的 file:// 协议，强行指向本地的 Java 后端端口
+if (window.location.protocol === 'file:') {
+    apiBaseUrl = 'http://127.0.0.1:9101/money-pos';
+}
+
 // 创建 axios 实例
 const instance = axios.create({
-    baseURL: import.meta.env.VITE_BASE_URL,
+    baseURL: apiBaseUrl, // 替换为智能推导后的地址
     timeout: 30000,
 });
 
@@ -23,6 +32,7 @@ instance.interceptors.request.use(
         const tenantCode = window.location.search.match(/(^|&|\?)tenant=([^&]*)(&|$)/i)?.[2];
         if (tenantCode && (window.tenant == null || window.tenant.tenantCode !== tenantCode)) {
             try {
+                // 这里也使用推导后的 config.baseURL 确保万无一失
                 const { data } = await axios.get(`${config.baseURL}/tenants/byCode?code=${tenantCode}`);
                 if (data.data) {
                     window.tenant = data.data;
