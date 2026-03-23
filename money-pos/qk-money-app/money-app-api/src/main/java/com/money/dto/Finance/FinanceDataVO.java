@@ -28,7 +28,6 @@ public class FinanceDataVO {
         private List<BigDecimal> trendRecharge;
         private List<BigDecimal> trendTotal;
 
-        // 🌟 修复：把这个字段挪到了 FinanceDashboardVO 内部！
         private Map<String, List<BigDecimal>> dynamicTrendMap;
         @Schema(description = "近7天售后退款专线")
         private List<BigDecimal> trendRefund;
@@ -68,13 +67,28 @@ public class FinanceDataVO {
         private List<BrandContributionVO> brandMatrix;
     }
 
+    // ==========================================
+    // 🌟 核心修复区：品牌贡献度实体类
+    // ==========================================
     @Data
     public static class BrandContributionVO {
         private String brandName;
         private BigDecimal revenue;
         private BigDecimal couponConsumption;
+
+        // 🌟 修复 1：必须提供一个无参构造！让 MyBatis 可以先建个空对象，不至于因为参数不够而越界爆炸。
+        public BrandContributionVO() {
+        }
+
+        // 保留原有的全参构造，防止系统中其他手动 new 这个对象的地方报错。
         public BrandContributionVO(String brandName, BigDecimal revenue, BigDecimal couponConsumption) {
             this.brandName = brandName; this.revenue = revenue; this.couponConsumption = couponConsumption;
+        }
+
+        // 🌟 修复 2：偷天换日！SQL 查出来的列名叫 `brandSales`，MyBatis 会来找 `setBrandSales` 方法。
+        // 我们在这里拦截它，并把值悄悄赋给前端真正需要的 `revenue` 字段！
+        public void setBrandSales(BigDecimal brandSales) {
+            this.revenue = brandSales;
         }
     }
 
@@ -102,18 +116,15 @@ public class FinanceDataVO {
         private List<PayPieData> pieData;
     }
 
-    // ==========================================
-    // 🌟 6.6 核心新增：风控雷达数据结构
-    // ==========================================
     @Data
     public static class RiskControlVO {
-        private Integer abnormalOrderCount; // 异常单数
-        private BigDecimal totalLossAmount; // 直接损失金额
-        private BigDecimal totalManualDiscount; // 手工放水总额
-        private Integer totalRefundCount; // 发生退款的单据数
+        private Integer abnormalOrderCount;
+        private BigDecimal totalLossAmount;
+        private BigDecimal totalManualDiscount;
+        private Integer totalRefundCount;
 
-        private List<CashierRiskVO> cashierRiskList; // 收银员风控黑榜
-        private List<AbnormalOrderVO> recentAbnormalOrders; // 高危异常订单列表
+        private List<CashierRiskVO> cashierRiskList;
+        private List<AbnormalOrderVO> recentAbnormalOrders;
     }
 
     @Data
@@ -138,16 +149,13 @@ public class FinanceDataVO {
         private String riskType;
     }
 
-    // ==========================================
-    // 🌟 8.1 核心新增：资产驾驶舱数据结构
-    // ==========================================
     @Data
     public static class AssetDashboardVO {
-        private BigDecimal todayRealCash;      // 今日实收现金 (final_pay_amount)
-        private BigDecimal todayWaivedAmount;  // 今日店铺免收 (waived_coupon_amount)
-        private BigDecimal todayAssetDeduct;   // 今日会员核销 (actual_coupon_deduct)
+        private BigDecimal todayRealCash;
+        private BigDecimal todayWaivedAmount;
+        private BigDecimal todayAssetDeduct;
 
-        private BigDecimal principalRatio;     // 本金消耗占比 (%)
-        private BigDecimal giftRatio;          // 赠送金消耗占比 (%)
+        private BigDecimal principalRatio;
+        private BigDecimal giftRatio;
     }
 }

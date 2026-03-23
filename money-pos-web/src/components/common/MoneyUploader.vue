@@ -50,7 +50,8 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue'])
 const userStore = useUserStore()
 
-const uploadUrl = ref('')
+// 🌟 核心修复 1：把地址设为 '#'，彻底阻止组件在 Electron(file://) 环境下乱发网络请求！
+const uploadUrl = ref('#')
 const headers = computed(() => ({ Authorization: 'Bearer ' + userStore.token }))
 
 const fileList = ref([])
@@ -87,39 +88,36 @@ const handleBeforeUpload = (file) => {
     return true;
 }
 
-// 🌟 终极降维打击：纯前端模拟上传 (生成本地 Blob URL)
+// 🌟 恢复您最初的完美逻辑：纯前端模拟上传 (生成本地 Blob URL预览)
 const customUpload = (options) => {
     const { file, onSuccess, onError } = options;
 
-    // 模拟网络延迟 500ms
     setTimeout(() => {
         try {
-            // 利用浏览器内存，直接把本地文件变成一段 URL
             const localBlobUrl = URL.createObjectURL(file);
 
-            // 欺骗组件，让它以为后端返回了成功状态和 URL
+            // 欺骗组件，让它以为上传成功了，以显示缩略图
             onSuccess({ code: 200, data: localBlobUrl }, file);
 
-            // 手动把这个临时 URL 塞进文件列表
             const targetFile = fileList.value.find(f => f.uid === file.uid);
             if (targetFile) {
                 targetFile.url = localBlobUrl;
+                targetFile.raw = file; // 🌟 核心修复 2：必须保留真实的二进制文件(raw)，供父组件(商品页面)点击保存时打包发送给后端！
             } else {
-                fileList.value.push({ name: file.name, url: localBlobUrl, uid: file.uid });
+                fileList.value.push({ name: file.name, url: localBlobUrl, uid: file.uid, raw: file });
             }
 
             syncModelValue();
-            ElMessage.success('图片解析成功！');
+            ElMessage.success('图片加载成功！');
 
         } catch (e) {
             onError(e);
-            ElMessage.error('图片解析失败');
+            ElMessage.error('图片加载失败');
         }
-    }, 500);
+    }, 100);
 }
 
 const handleRemove = (uploadFile, uploadFiles) => {
-    // 释放内存
     if (uploadFile.url && uploadFile.url.startsWith('blob:')) {
         URL.revokeObjectURL(uploadFile.url);
     }

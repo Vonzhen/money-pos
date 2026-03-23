@@ -12,7 +12,16 @@
                         </div>
                     </div>
 
-                    <div class="flex items-center gap-2">
+                    <div class="flex items-center gap-3">
+                        <span class="text-sm font-medium text-gray-600">收银员:</span>
+                        <el-input
+                            v-model="searchCashierName"
+                            placeholder="留空查全部"
+                            clearable
+                            class="!w-28"
+                            @change="fetchData"
+                        />
+
                         <span class="text-sm font-medium text-gray-600">接班时间:</span>
                         <el-date-picker
                             v-model="shiftStartTime"
@@ -133,7 +142,7 @@ import PageWrapper from "@/components/PageWrapper.vue"
 import financeApi from "@/api/finance/finance.js"
 import { Clock, Printer, Money, Wallet, Ticket, DataAnalysis } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { useUserStore } from "@/store/index.js" // 引入用户状态获取收银员姓名
+import { useUserStore } from "@/store/index.js"
 
 const userStore = useUserStore()
 
@@ -144,6 +153,9 @@ const getTodayMorning = () => {
 
 const shiftStartTime = ref(getTodayMorning())
 const loading = ref(false)
+
+// 🌟 核心修复 2：定义搜索变量，默认查全店大盘数据
+const searchCashierName = ref('全部收银员')
 
 const data = ref({
     shiftStartTime: '', shiftEndTime: '', cashierName: '',
@@ -162,10 +174,16 @@ const fetchData = async () => {
     if (!shiftStartTime.value) return
     loading.value = true
     try {
-        // 请求时带上当前收银员的名字，后端直接回传或入账
-        const cashierName = userStore.name || '未知收银员'
-        const res = await financeApi.getShiftHandover({ startTime: shiftStartTime.value, cashierName: cashierName })
+        // 🌟 核心修复 3：不再强制使用当前登录人，而是使用搜索框的值，为空则自动设为"全部收银员"
+        const cName = searchCashierName.value || '全部收银员'
+
+        const res = await financeApi.getShiftHandover({ startTime: shiftStartTime.value, cashierName: cName })
         data.value = res.data || res || {}
+
+        // 强制回显到界面，避免后端返回为空时前端显示默认的'当前当班收银员'
+        if(!data.value.cashierName) {
+            data.value.cashierName = cName;
+        }
     } catch (error) {
         ElMessage.error("获取交班数据失败")
     } finally {
@@ -193,6 +211,9 @@ const handlePrint = () => {
 }
 
 onMounted(() => {
+    // 🌟 如果需要的话，可以根据角色判断：如果是老板，默认查“全部收银员”；如果是店员，默认查自己
+    // 这里为了兼顾后台核算，默认设为 "全部收银员"
+    searchCashierName.value = '全部收银员'
     fetchData()
 })
 </script>
