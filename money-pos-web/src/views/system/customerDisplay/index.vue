@@ -136,14 +136,14 @@
                                                 <div v-for="(item, idx) in realCart" :key="idx" class="bg-white p-1 rounded shadow-sm border border-gray-100 flex justify-between items-center text-[9px]">
                                                     <div class="flex flex-col overflow-hidden flex-1 pr-1">
                                                         <span class="font-bold text-gray-800 truncate">{{ item.name || '商品' }}</span>
-                                                        <span class="text-[10px] text-gray-400 font-bold mt-0.5">x {{ item.qty }}</span>
+                                                        <span class="text-[10px] text-gray-400 font-bold mt-0.5">x {{ getQty(item) }}</span>
                                                     </div>
                                                     <div class="flex flex-col items-end justify-center w-12 shrink-0 border-r border-gray-100 pr-1 mr-1">
-                                                        <span v-if="item.originalPrice > item.price" class="text-gray-400 line-through text-[7px]">￥{{ item.originalPrice.toFixed(2) }}</span>
-                                                        <span class="text-gray-500 text-[8px]">￥{{ item.price.toFixed(2) }}</span>
+                                                        <span v-if="getOriginalPrice(item) > getPrice(item)" class="text-gray-400 line-through text-[7px]">￥{{ getOriginalPrice(item).toFixed(2) }}</span>
+                                                        <span class="text-gray-500 text-[8px]">￥{{ getPrice(item).toFixed(2) }}</span>
                                                     </div>
                                                     <div class="flex flex-col items-end justify-center w-14 shrink-0">
-                                                        <span class="font-mono font-bold" :class="item.originalPrice > item.price ? 'text-red-600' : 'text-gray-800'">￥{{ (item.subtotal || 0).toFixed(2) }}</span>
+                                                        <span class="font-mono font-bold" :class="getOriginalPrice(item) > getPrice(item) ? 'text-red-600' : 'text-gray-800'">￥{{ getSubtotal(item).toFixed(2) }}</span>
                                                     </div>
                                                 </div>
                                             </div>
@@ -217,21 +217,24 @@ import { Monitor, Timer, PictureRounded, Select, VideoCamera, VideoPlay, Delete,
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useUserStore } from '@/store/index.js'
 import axios from 'axios'
+import { getToken } from '@/composables/token.js'
 
 const userStore = useUserStore()
 const loading = ref(false)
 const saving = ref(false)
 
-const baseUrl = import.meta.env.VITE_BASE_URL || '/api'
-const uploadUrl = ref(baseUrl + '/common/upload')
-const headers = computed(() => ({ Authorization: 'Bearer ' + userStore.token }))
+let apiBaseUrl = import.meta.env.VITE_BASE_URL;
+if (window.location.protocol === 'file:') {
+    apiBaseUrl = 'http://127.0.0.1:9101/money-pos';
+}
+
+const uploadUrl = ref(apiBaseUrl + '/sys/oss/upload')
+const headers = computed(() => ({ Authorization: 'Bearer ' + getToken() }))
 
 const settings = reactive({ enabled: true, interval: 5, welcomeText: '欢迎光临！今日全场满99减20...', paymentCodes: [], library: [], playlist: [] })
 
-// 🌟 严格状态机驱动：初始化为 OFFLINE
 const posState = ref('OFFLINE');
 
-// 协议包数据载体
 const realCart = ref([]);
 const realMember = ref(null);
 const realParticipatingAmount = ref(0);
@@ -240,15 +243,27 @@ const realPayment = ref({ targetPay: 0, tendered: 0, aggregate: 0, change: 0 });
 const cartContainerRef = ref(null);
 let receiverWs = null;
 
+// ==========================================
+// 🌟 核心修复：防御性数据字段解析，完美适配后端 Java DTO
+// ==========================================
+const getPrice = (item) => Number(item.price ?? item.unitRealPrice ?? 0);
+const getOriginalPrice = (item) => Number(item.originalPrice ?? item.unitOriginalPrice ?? 0);
+const getSubtotal = (item) => Number(item.subtotal ?? item.subTotalRetail ?? item.subTotalMember ?? 0);
+const getQty = (item) => Number(item.qty ?? item.quantity ?? 1);
+
 const initReceiver = () => {
-    // 🌟 预留战役3接口：单机环境下的寻址兼容，暂时先按规矩读当前 hostname
-    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const hostname = window.location.hostname || 'localhost';
-    const wsUrl = `${wsProtocol}//${hostname}:9101/money-pos/ws/pos-sync`;
+    let wsHost = window.location.hostname || '127.0.0.1';
+    let wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+
+    if (window.location.protocol === 'file:') {
+        wsHost = '127.0.0.1';
+        wsProtocol = 'ws:';
+    }
+
+    const wsUrl = `${wsProtocol}//${wsHost}:9101/money-pos/ws/pos-sync`;
 
     receiverWs = new WebSocket(wsUrl);
 
-    // 状态机流转
     receiverWs.onopen = () => { posState.value = 'STANDBY'; };
     receiverWs.onclose = () => { posState.value = 'OFFLINE'; setTimeout(initReceiver, 5000); };
     receiverWs.onerror = () => { posState.value = 'OFFLINE'; };
@@ -258,7 +273,6 @@ const initReceiver = () => {
             const data = JSON.parse(event.data);
             const { state, cart, pAmount, member, payment } = data;
 
-            // 丢弃陈旧或非法包 (Protocol Validation)
             if (!state) return;
 
             if (cart) realCart.value = cart;
@@ -266,8 +280,7 @@ const initReceiver = () => {
             if (member !== undefined) realMember.value = member;
             if (payment !== undefined) realPayment.value = payment;
 
-            // 状态机跃迁 (State Transition)
-            if (state === 'IDLE') posState.value = 'STANDBY'; // 原 IDLE 映射为 STANDBY
+            if (state === 'IDLE') posState.value = 'STANDBY';
             else if (state === 'CASHIER_UPDATE' || state === 'CHECKOUT_OPEN') posState.value = 'CASHIER';
             else if (state === 'PAY_SUCCESS') {
                 posState.value = 'SUCCESS';
@@ -306,41 +319,56 @@ const deleteFromLibrary = (index) => {
 }
 const addPaymentCode = () => settings.paymentCodes.push({ name: '', url: '', isDefault: false });
 const removePaymentCode = (index) => settings.paymentCodes.splice(index, 1);
+
 const handleQrUploadSuccess = (res, index) => {
     const raw = res.data?.data || res.data || res;
-    if (raw?.url) { settings.paymentCodes[index].url = raw.url; ElMessage.success('收款码已上传'); }
+    if (raw?.url || typeof raw === 'string') {
+        settings.paymentCodes[index].url = raw.url || raw;
+        ElMessage.success('收款码已上传');
+    }
 }
 const handleBeforeUpload = (file) => file.size / 1024 / 1024 < 10;
 const handleUploadSuccess = (res) => {
     const raw = res.data?.data || res.data || res;
-    if (raw?.url) { settings.library.unshift(raw.url); ElMessage.success('素材上传成功！'); }
+    if (raw?.url || typeof raw === 'string') {
+        settings.library.unshift(raw.url || raw);
+        ElMessage.success('素材上传成功！');
+    }
 }
 
 const fetchSettings = async () => {
     loading.value = true;
     try {
-        const res = await axios.get(`${baseUrl}/common/display-settings`, { headers: headers.value });
+        const res = await axios.get(`${apiBaseUrl}/common/display-settings`, { headers: headers.value });
         const rawData = res.data.data || res.data;
         if (rawData && rawData !== "{}") {
             const data = typeof rawData === 'string' ? JSON.parse(rawData) : rawData;
             if (!data.paymentCodes) data.paymentCodes = [];
             Object.assign(settings, data);
         }
-    } finally { loading.value = false; }
+    } catch (e) {
+        console.error("获取设置失败", e);
+    } finally {
+        loading.value = false;
+    }
 }
 
 const saveSettings = async () => {
     saving.value = true;
     try {
-        await axios.put(`${baseUrl}/common/display-settings`, settings, { headers: headers.value });
+        await axios.put(`${apiBaseUrl}/common/display-settings`, settings, { headers: headers.value });
         ElMessage.success('客显与结算规则已永久保存！');
-    } catch (e) { ElMessage.error('保存失败'); }
-    finally { saving.value = false; }
+    } catch (e) {
+        ElMessage.error('保存失败');
+    } finally {
+        saving.value = false;
+    }
 }
 
 onMounted(() => { fetchSettings(); initReceiver(); })
 onUnmounted(() => { if (receiverWs) receiverWs.close(); })
 </script>
+
 <style scoped>
 @keyframes marquee { 0% { transform: translateX(100%); } 100% { transform: translateX(-100%); } }
 .animate-marquee { display: inline-block; padding-left: 100%; animation: marquee 15s linear infinite; }
