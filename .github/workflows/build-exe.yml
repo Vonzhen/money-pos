@@ -8,11 +8,9 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      # 1. 检出源码
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 2. 搭建 Java 17 编译环境
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
@@ -20,12 +18,10 @@ jobs:
           distribution: 'temurin'
           cache: maven
 
-      # 3. 编译后端 JAR
       - name: Build Backend (Maven)
         working-directory: ./money-pos
         run: mvn clean package -DskipTests
 
-      # 4. 搭建 Node.js 环境
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -33,14 +29,12 @@ jobs:
           cache: 'npm'
           cache-dependency-path: './money-pos-web/package-lock.json'
 
-      # 5. 编译前端 Vue 静态文件
       - name: Build Frontend (Vue)
         working-directory: ./money-pos-web
         run: |
           npm install
           npm run build
 
-      # 6. 下载并准备 JRE 与 MariaDB 环境
       - name: Prepare External Environments (JRE & MariaDB)
         shell: powershell
         run: |
@@ -55,6 +49,11 @@ jobs:
           Get-ChildItem -Path "jdk*" | Rename-Item -NewName "jre"
           Remove-Item "jre.zip"
           
+          # 🌟 品牌重塑：自动给 Java 引擎改名 Vana
+          echo "Renaming java.exe to vana-java.exe..."
+          Rename-Item -Path "jre\bin\java.exe" -NewName "vana-java.exe" -Force
+          Rename-Item -Path "jre\bin\javaw.exe" -NewName "vana-javaw.exe" -Force -ErrorAction SilentlyContinue
+          
           # --- 下载并处理 MariaDB ---
           echo "Downloading MariaDB 10.11..."
           $dbUrl = "https://archive.mariadb.org/mariadb-10.11.6/winx64-packages/mariadb-10.11.6-winx64.zip"
@@ -67,25 +66,23 @@ jobs:
           Remove-Item -Recurse -Force "mariadb/mysql-test" -ErrorAction SilentlyContinue
           Remove-Item -Recurse -Force "mariadb/sql-bench" -ErrorAction SilentlyContinue
 
-      # 7. 🌟 绝对防御：统一物资装箱！把所有外部依赖搬进 frontend 目录
       - name: Assemble All Resources
         shell: powershell
         run: |
           echo "Copying backend JAR..."
           New-Item -ItemType Directory -Force -Path "money-pos-web/backend"
-          Copy-Item -Path "money-pos/qk-money-app/money-app-biz/target/*.jar" -Destination "money-pos-web/backend/money-pos.jar" -Force
+          # 🌟 品牌重塑：复制过来的后端包直接改名为 vana-pos.jar
+          Copy-Item -Path "money-pos/qk-money-app/money-app-biz/target/*.jar" -Destination "money-pos-web/backend/vana-pos.jar" -Force
           
           echo "Moving JRE and MariaDB..."
           Move-Item -Path "build-env/jre" -Destination "money-pos-web/jre" -Force
           Move-Item -Path "build-env/mariadb" -Destination "money-pos-web/mariadb" -Force
 
-      # 8. 开始 Electron 封包
       - name: Build Electron EXE
         working-directory: ./money-pos-web
         run: |
           npm run electron:build
 
-      # 9. 上传最终成品
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:

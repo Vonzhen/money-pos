@@ -1,7 +1,7 @@
 {
-  "name": "qk-money-ui",
+  "name": "vana-pos-ui",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "main": "main.cjs",
   "scripts": {
@@ -46,7 +46,7 @@
     "vite-plugin-svg-icons": "^2.0.1"
   },
   "build": {
-    "appId": "com.money.pos",
+    "appId": "com.vana.pos",
     "productName": "万象收银系统",
     "directories": {
       "output": "release"
@@ -78,7 +78,8 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "万象收银系统"
+      "shortcutName": "万象收银系统",
+      "include": "build/installer.nsh"
     }
   }
 }

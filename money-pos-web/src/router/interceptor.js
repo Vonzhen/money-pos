@@ -3,7 +3,6 @@ import 'nprogress/nprogress.css'
 import {getToken, removeToken, setToken} from "@/composables/token.js";
 import {useAppStore, useUserStore} from "@/store/index.js";
 
-// 🌟 核心修复：把客显屏路由加入免检白名单！
 const whitelist = ['/login', '/guest']
 
 export default function (router) {
@@ -22,14 +21,14 @@ export default function (router) {
         NProgress.start()
         const hasToken = getToken()
 
-        // 🌟 新增判断逻辑：如果是客显屏，无论有没有 Token，直接放行！
         if (to.path === '/guest') {
             next()
             return
         }
 
         if (hasToken && to.path === '/login') {
-            next({path: '/'})
+            // 🌟 核心修改：如果已登录，打开软件直接送到收银台，而不是后台
+            next({path: '/pos'})
         } else if (hasToken) {
             try {
                 await useUserStore().loadInfo()

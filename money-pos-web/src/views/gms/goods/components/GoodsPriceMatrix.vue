@@ -19,11 +19,11 @@
                         </div>
                         <div class="flex items-center gap-2" :class="matrix.couponEnabled ? 'mb-2' : ''">
                             <span class="text-xs text-gray-500 w-10 shrink-0">会员价:</span>
-                            <el-input v-model="matrix.prices[level.value]" size="small" placeholder="￥0.00" class="flex-1 font-bold text-gray-800" @input="() => handleCalcCoupon(level.value)" />
+                            <el-input-number v-model="matrix.prices[level.value]" :precision="2" :min="0" :controls="false" size="small" placeholder="￥0.00" class="!w-full flex-1 font-bold text-gray-800" @change="() => handleCalcCoupon(level.value)" />
                         </div>
                         <div v-if="matrix.couponEnabled" class="flex items-center gap-2">
                             <span class="text-xs text-green-600 font-bold w-10 shrink-0">会员券:</span>
-                            <el-input v-model="matrix.coupons[level.value]" size="small" placeholder="差额" class="flex-1 text-green-600" @input="() => handleCalcPrice(level.value)" />
+                            <el-input-number v-model="matrix.coupons[level.value]" :precision="2" :min="0" :controls="false" size="small" placeholder="差额" class="!w-full flex-1 text-green-600" @change="() => handleCalcPrice(level.value)" />
                         </div>
                     </div>
                 </div>
@@ -60,7 +60,6 @@ const {
 
 let isRevertingBrand = false;
 
-// 🌟 强效同步：将本地状态深度同步给主表单载荷
 const syncToFormPayload = () => {
     if (!props.form) return;
     props.form._matrixPrices = JSON.parse(JSON.stringify(matrix.prices));
@@ -69,15 +68,12 @@ const syncToFormPayload = () => {
     props.form._validLevels = validLevels.value;
 };
 
-// 监听本地变动
 watch(matrix, syncToFormPayload, { deep: true });
 
-// 🌟 核心公式联动：零售价一变，所有分摊券额自动重算
 watch(() => props.form.salePrice, (newVal) => {
     if (newVal) syncAllCoupons(newVal);
 });
 
-// 品牌切换保护
 watch(() => props.form.brandId, async (newBrandId, oldBrandId) => {
     if (isRevertingBrand) { isRevertingBrand = false; return; }
     if (!newBrandId) { await initMatrixForBrand(null); syncToFormPayload(); return; }
@@ -101,7 +97,6 @@ onMounted(async () => {
         initSnapshot(brandId, props.form.levelPrices, props.form.levelCoupons);
     }
     await initMatrixForBrand(brandId, true);
-    // 🌟 强制同步一次，确保初始状态也被捕获
     syncToFormPayload();
 });
 

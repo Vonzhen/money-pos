@@ -11,9 +11,9 @@
                 <div class="form-group">
                     <label for="username" class="sr-only">Username</label>
                     <el-form-item prop="username" class="form-item">
-                        <el-input 
-                            v-model="loginForm.username" 
-                            size="large" 
+                        <el-input
+                            v-model="loginForm.username"
+                            size="large"
                             placeholder="请输入账号"
                             prefix-icon="User"
                             class="form-input"
@@ -25,10 +25,10 @@
                 <div class="form-group">
                     <label for="password" class="sr-only">Password</label>
                     <el-form-item prop="password" class="form-item">
-                        <el-input 
-                            v-model="loginForm.password" 
-                            size="large" 
-                            type="password" 
+                        <el-input
+                            v-model="loginForm.password"
+                            size="large"
+                            type="password"
                             show-password
                             placeholder="请输入密码"
                             prefix-icon="Lock"
@@ -78,7 +78,7 @@
 
 <script setup>
 import { useUserStore } from '@/store';
-import { ref } from 'vue';
+import { ref, onMounted, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
 
 const noProd = import.meta.env.MODE !== 'production';
@@ -87,6 +87,9 @@ const router = useRouter();
 const userStore = useUserStore();
 
 const loginFormRef = ref();
+const usernameInputRef = ref();
+const passwordInputRef = ref();
+
 const loginForm = ref({
     username: '',
     password: '',
@@ -99,18 +102,30 @@ const rules = {
 
 const loading = ref(false);
 
+onMounted(() => {
+    // 🌟 品牌重塑：改用 Vana 专属的本地缓存 Key
+    const savedUsername = localStorage.getItem('vanapos_remember_username');
+    if (savedUsername) {
+        loginForm.value.username = savedUsername;
+        nextTick(() => {
+            passwordInputRef.value?.focus();
+        });
+    } else {
+        nextTick(() => {
+            usernameInputRef.value?.focus();
+        });
+    }
+});
+
 async function login() {
-    // 校验表单
     const valid = await loginFormRef.value.validate();
     if (!valid) return;
 
     loading.value = true;
     try {
-        // 调用登录接口
         await userStore.login(loginForm.value);
-
-        // 登录成功后跳转到首页
-        await router.push({ path: '/' });
+        localStorage.setItem('vanapos_remember_username', loginForm.value.username);
+        await router.push({ path: '/pos' });
     } catch (error) {
         console.error("登录失败：", error)
     } finally {
@@ -402,33 +417,33 @@ html {
     margin: 0 16px;
     max-width: 100%;
   }
-  
+
   .quick-login-container {
     flex-wrap: wrap;
   }
-  
+
   .quick-login-tag {
     font-size: 13px;
     padding: 8px 16px;
     margin-bottom: 8px;
   }
-  
+
   .form-input {
     height: 50px;
     font-size: 15px;
   }
-  
+
   .login-button {
     height: 50px;
     font-size: 15px;
     margin-top: 20px;
   }
-  
+
   .text-center {
     font-size: 24px;
     margin-bottom: 24px;
   }
-  
+
   .form-group {
     margin-bottom: 16px;
   }
@@ -439,22 +454,22 @@ html {
     padding: 20px;
     margin: 0 12px;
   }
-  
+
   .text-center {
     font-size: 20px;
     margin-bottom: 20px;
   }
-  
+
   .form-input {
     height: 48px;
     font-size: 14px;
   }
-  
+
   .login-button {
     height: 48px;
     font-size: 14px;
   }
-  
+
   .quick-login-tag {
     font-size: 12px;
     padding: 6px 14px;
