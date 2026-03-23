@@ -223,12 +223,14 @@ const userStore = useUserStore()
 const loading = ref(false)
 const saving = ref(false)
 
+// 🌟 修复：动态获取基准地址，强制适配 Electron 的 file:// 协议
 let apiBaseUrl = import.meta.env.VITE_BASE_URL;
 if (window.location.protocol === 'file:') {
     apiBaseUrl = 'http://127.0.0.1:9101/money-pos';
 }
 
-const uploadUrl = ref(apiBaseUrl + '/sys/oss/upload')
+// 🌟 核心修复：精准对齐后端的上传接口！绝不能写成 sys/oss/upload
+const uploadUrl = ref(apiBaseUrl + '/common/upload')
 const headers = computed(() => ({ Authorization: 'Bearer ' + getToken() }))
 
 const settings = reactive({ enabled: true, interval: 5, welcomeText: '欢迎光临！今日全场满99减20...', paymentCodes: [], library: [], playlist: [] })
@@ -243,9 +245,7 @@ const realPayment = ref({ targetPay: 0, tendered: 0, aggregate: 0, change: 0 });
 const cartContainerRef = ref(null);
 let receiverWs = null;
 
-// ==========================================
-// 🌟 核心修复：防御性数据字段解析，完美适配后端 Java DTO
-// ==========================================
+// 防御性数据提取
 const getPrice = (item) => Number(item.price ?? item.unitRealPrice ?? 0);
 const getOriginalPrice = (item) => Number(item.originalPrice ?? item.unitOriginalPrice ?? 0);
 const getSubtotal = (item) => Number(item.subtotal ?? item.subTotalRetail ?? item.subTotalMember ?? 0);
@@ -265,6 +265,7 @@ const initReceiver = () => {
     receiverWs = new WebSocket(wsUrl);
 
     receiverWs.onopen = () => { posState.value = 'STANDBY'; };
+    // 若断开，5秒后重连
     receiverWs.onclose = () => { posState.value = 'OFFLINE'; setTimeout(initReceiver, 5000); };
     receiverWs.onerror = () => { posState.value = 'OFFLINE'; };
 
@@ -320,19 +321,28 @@ const deleteFromLibrary = (index) => {
 const addPaymentCode = () => settings.paymentCodes.push({ name: '', url: '', isDefault: false });
 const removePaymentCode = (index) => settings.paymentCodes.splice(index, 1);
 
-const handleQrUploadSuccess = (res, index) => {
-    const raw = res.data?.data || res.data || res;
-    if (raw?.url || typeof raw === 'string') {
-        settings.paymentCodes[index].url = raw.url || raw;
+// 🌟 核心修复：解析 el-upload 成功回调中的数据格式
+const handleQrUploadSuccess = (response, uploadFile, index) => {
+    // response 可能直接是对象，也可能包装在 data 中
+    const url = response.url || (response.data && response.data.url) || response;
+    if (url && typeof url === 'string') {
+        settings.paymentCodes[index].url = url;
         ElMessage.success('收款码已上传');
+    } else {
+         ElMessage.error('上传失败: 无法解析返回地址');
+         console.error('上传返回体:', response);
     }
 }
 const handleBeforeUpload = (file) => file.size / 1024 / 1024 < 10;
-const handleUploadSuccess = (res) => {
-    const raw = res.data?.data || res.data || res;
-    if (raw?.url || typeof raw === 'string') {
-        settings.library.unshift(raw.url || raw);
+const handleUploadSuccess = (response, uploadFile) => {
+    // 兼容取值逻辑
+    const url = response.url || (response.data && response.data.url) || response;
+    if (url && typeof url === 'string') {
+        settings.library.unshift(url);
         ElMessage.success('素材上传成功！');
+    } else {
+        ElMessage.error('上传失败: 无法解析返回地址');
+        console.error('上传返回体:', response);
     }
 }
 

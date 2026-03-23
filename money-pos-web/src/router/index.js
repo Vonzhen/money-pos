@@ -3,12 +3,18 @@ import intercept from "./interceptor.js"
 
 import Layout from "@/layouts/DashboardLayout.vue"
 import NotFound from "@/views/error/NotFound.vue";
+import CustomerDisplay from "@/views/system/customerDisplay/index.vue";
 
-// 存放固定的路由
 const defaultRouterList = [
     {
         path: '/',
+        // 🌟 恢复原状：根目录的指路牌依然指向后台，这样您点击"进入后台"才不会跳错
         redirect: () => "/dashboard"
+    },
+    {
+        path: '/guest',
+        name: 'GuestDisplay',
+        component: CustomerDisplay
     },
     {
         path: '/dashboard',
@@ -21,13 +27,11 @@ const defaultRouterList = [
             }
         ]
     },
-    // 登录页
     {
         path: '/login',
         name: 'Login',
         component: () => import('@/views/Login.vue'),
     },
-    // 个人中心
     {
         path: '/personal',
         component: Layout,
@@ -39,7 +43,6 @@ const defaultRouterList = [
             }
         ]
     },
-    // 404
     {path: '/:pathMatch(.*)*', name: 'NotFound', component: NotFound}
 ]
 

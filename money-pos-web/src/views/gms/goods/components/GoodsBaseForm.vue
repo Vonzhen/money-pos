@@ -22,10 +22,24 @@
 
         <div class="grid grid-cols-3 gap-6 mt-4 border-t border-gray-200 pt-4 items-center">
             <el-form-item label="进货成本" prop="purchasePrice" class="mb-0">
-                <el-input v-model="form.purchasePrice" placeholder="￥ 0.00" />
+                <el-input-number
+                    v-model="form.purchasePrice"
+                    :precision="2"
+                    :min="0"
+                    :controls="false"
+                    class="!w-full"
+                    placeholder="￥ 0.00"
+                />
             </el-form-item>
             <el-form-item label="系统零售价" prop="salePrice" class="mb-0">
-                <el-input v-model="form.salePrice" class="font-black text-red-600" placeholder="￥ 0.00" />
+                <el-input-number
+                    v-model="form.salePrice"
+                    :precision="2"
+                    :min="0"
+                    :controls="false"
+                    class="!w-full font-black text-red-600"
+                    placeholder="￥ 0.00"
+                />
             </el-form-item>
             <el-form-item label="参与满减" prop="isDiscountParticipable" class="mb-0">
                 <el-switch v-model="form.isDiscountParticipable" :active-value="1" :inactive-value="0" active-text="允许" inactive-text="禁止" inline-prompt style="--el-switch-on-color: #f97316;" />
@@ -38,3 +52,10 @@
 import { Goods } from '@element-plus/icons-vue';
 defineProps({ form: Object, brands: Array, categories: Array });
 </script>
+
+<style scoped>
+/* 确保数字输入框里的文字靠左对齐，跟普通输入框体验一致 */
+:deep(.el-input__inner) {
+    text-align: left !important;
+}
+</style>

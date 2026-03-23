@@ -2,7 +2,8 @@ import { getToken } from '@/composables/token.js';
 import MoneyConfig from '@/money.config.js';
 import { useUserStore } from '@/store';
 import axios from 'axios';
-import { ElMessage } from 'element-plus';
+// 🌟 必须多引入一个 ElMessageBox，用来召唤锁屏弹窗
+import { ElMessage, ElMessageBox } from 'element-plus';
 
 // ==========================================
 // 🌟 核心修复：智能识别运行环境，动态修正 API 基准地址
@@ -94,14 +95,56 @@ instance.interceptors.response.use(
         const status = error.response?.status;
         switch (status) {
             case 401:
-                ElMessage.error('登录状态已过期');
-                useUserStore().logout();
+                // 🌟 落地 4：防丢单锁屏保护机制
+                // 探测当前是否在收银台页面（防止丢失购物车数据）
+                if (window.location.hash.includes('/pos')) {
+                    // 防止多个并发请求同时失败导致弹出无数个框
+                    if (!window.isLocking) {
+                        window.isLocking = true;
+                        const savedUsername = localStorage.getItem('vanapos_remember_username') || '';
+
+                        ElMessageBox.prompt(
+                            `系统检测到登录状态已过期。\n为防止购物车数据丢失，请输入账号【${savedUsername || '当前用户'}】的密码解锁：`,
+                            'VanaPOS 安全锁屏保护',
+                            {
+                                confirmButtonText: '验证并解锁',
+                                cancelButtonText: '放弃数据并退出',
+                                inputType: 'password',
+                                inputPattern: /.+/,
+                                inputErrorMessage: '密码不能为空',
+                                closeOnClickModal: false,
+                                closeOnPressEscape: false,
+                                showClose: false
+                            }
+                        ).then(async ({ value }) => {
+                            try {
+                                // 尝试静默重新登录
+                                await useUserStore().login({ username: savedUsername, password: value });
+                                ElMessage.success('身份验证成功，收银台已恢复！');
+                                window.isLocking = false;
+                                // 注意：虽然解锁成功，但刚才触发 401 的那次点击可能需要收银员再点一次
+                            } catch (e) {
+                                window.isLocking = false;
+                                ElMessage.error('密码验证失败，已强制注销');
+                                useUserStore().logout();
+                            }
+                        }).catch(() => {
+                            // 点击了放弃按钮
+                            window.isLocking = false;
+                            useUserStore().logout();
+                        });
+                    }
+                } else {
+                    // 普通后台页面，直接踢出去
+                    ElMessage.error('登录状态已过期，请重新登录');
+                    useUserStore().logout();
+                }
                 break;
             case 403:
-                ElMessage.error('您没有权限哦');
+                ElMessage.error('您没有权限执行此操作');
                 break;
             default:
-                ElMessage.error(error.message || '请求失败');
+                ElMessage.error(error.response?.data?.message || error.message || '请求失败');
         }
 
         return Promise.reject(error);
