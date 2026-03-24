@@ -4,6 +4,7 @@ import com.money.dto.OmsOrder.AnalysisAtomicDataDTO;
 import com.money.dto.OmsOrder.OmsSalesDataVO.BrandSalesVO;
 import com.money.dto.OmsOrder.OmsSalesDataVO.GoodsSalesRankVO;
 import com.money.dto.OmsOrder.OmsSalesDataVO.MarketingRoiVO;
+import com.money.dto.OmsOrder.OmsSalesDataVO.CategorySalesVO; // 🌟 导入刚才定义的内部类
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
@@ -17,7 +18,6 @@ import java.util.List;
 @Mapper
 public interface OmsOrderAnalysisMapper {
 
-    // 🌟 修复：使用子查询聚合商品数量，彻底解决跨天/跨周统计时的笛卡尔积乘数 Bug
     @Select("SELECT " +
             "  CASE " +
             "    WHEN #{dimension} = 'MONTHLY' THEN DATE_FORMAT(create_time, '%Y-%m') " +
@@ -66,4 +66,21 @@ public interface OmsOrderAnalysisMapper {
             "SELECT '会员资产' AS ruleType, '会员专属券核销' AS ruleName, COUNT(id) AS usedCount, SUM(IFNULL(coupon_amount, 0)) AS totalDiscountGived, SUM(IFNULL(final_sales_amount, 0)) AS totalRevenueBrought " +
             "FROM oms_order WHERE status IN ('PAID', 'COMPLETED', 'PARTIAL_REFUNDED') AND create_time >= #{startTime} AND create_time <= #{endTime} AND IFNULL(coupon_amount, 0) > 0")
     List<MarketingRoiVO> getMarketingRoiStats(@Param("startTime") LocalDateTime startTime, @Param("endTime") LocalDateTime endTime);
+
+    // ==========================================
+    // 🌟 新增：商品分类销售占比分析
+    // ==========================================
+    @Select("SELECT " +
+            "  IFNULL(c.name, '未分类') AS categoryName, " +
+            "  SUM(d.quantity - IFNULL(d.return_quantity, 0)) AS salesQty, " +
+            "  SUM((d.quantity - IFNULL(d.return_quantity, 0)) * IFNULL(d.goods_price, 0)) AS salesAmount " +
+            "FROM oms_order_detail d " +
+            "INNER JOIN oms_order o ON d.order_no = o.order_no " +
+            "LEFT JOIN gms_goods_category c ON d.category_id = c.id " +
+            "WHERE o.status IN ('PAID', 'COMPLETED', 'PARTIAL_REFUNDED') " +
+            "  AND o.create_time >= #{startTime} AND o.create_time <= #{endTime} " +
+            "GROUP BY d.category_id, categoryName " +
+            "HAVING salesQty > 0 " +
+            "ORDER BY salesAmount DESC")
+    List<CategorySalesVO> getCategorySalesDistribution(@Param("startTime") LocalDateTime startTime, @Param("endTime") LocalDateTime endTime);
 }

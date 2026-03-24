@@ -5,6 +5,7 @@ import com.money.dto.OmsOrder.OmsSalesDataVO.SalesDashboardVO;
 import com.money.dto.OmsOrder.OmsSalesDataVO.PerformanceReportVO;
 import com.money.dto.OmsOrder.OmsSalesDataVO.MarketingRoiVO;
 import com.money.dto.OmsOrder.OmsSalesDataVO.HourlyTrafficVO;
+import com.money.dto.OmsOrder.OmsSalesDataVO.CategorySalesVO; // 🌟 导入分类VO
 import com.money.dto.OmsOrder.OrderCountVO;
 import com.money.dto.OmsOrder.ProfitAuditVO;
 import com.money.dto.OmsOrder.OmsOrderQueryDTO;
@@ -25,11 +26,12 @@ public interface OmsSalesAnalysisService {
 
     PageVO<ProfitAuditVO> getProfitAuditPage(OmsOrderQueryDTO queryDTO);
 
-    // ==========================================
-    // 🌟 8.2 核心升级：增加 dayOfWeek (星期几) 筛选维度
-    // ==========================================
     List<HourlyTrafficVO> getTrafficAnalysis(Integer dayOfWeek);
 
     List<OmsSalesDataVO.TimeTrafficVO> getWeeklyTraffic();
+
     List<OmsSalesDataVO.TimeTrafficVO> getMonthlyTraffic();
+
+    // 🌟 新增：获取商品分类销售占比
+    List<CategorySalesVO> getCategorySales(String startDate, String endDate);
 }
