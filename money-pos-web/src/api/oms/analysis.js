@@ -1,7 +1,6 @@
 import { req } from '../index.js'
 
 export default {
-    // 1. 办事罗盘数据 (注意这里结尾的逗号，极大概率是刚才漏了它)
     getTrafficAnalysis(dayOfWeek) {
         return req({
             url: '/oms/analysis/traffic',
@@ -10,13 +9,20 @@ export default {
         })
     },
 
-    // 2. 潮汐趋势分析 - 按周宏观大盘
     getWeeklyTraffic() {
         return req({ url: '/oms/analysis/weekly-traffic', method: 'get' })
     },
 
-    // 3. 潮汐趋势分析 - 按月潮汐预判
     getMonthlyTraffic() {
         return req({ url: '/oms/analysis/monthly-traffic', method: 'get' })
+    },
+
+    // 🌟 新增：获取分类销售占比数据
+    getCategorySales(startDate, endDate) {
+        return req({
+            url: '/oms/analysis/category-sales',
+            method: 'get',
+            params: { startDate, endDate }
+        })
     }
 }

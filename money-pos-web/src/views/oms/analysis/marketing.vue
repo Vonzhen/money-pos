@@ -4,9 +4,9 @@
             <div class="flex items-center justify-between mb-6">
                 <div>
                     <h2 class="text-2xl font-bold text-gray-800 flex items-center">
-                        <el-icon class="text-orange-500 mr-2"><TrendCharts /></el-icon> 5.4 营销活动核销与成本复盘
+                        <el-icon class="text-orange-500 mr-2"><TrendCharts /></el-icon> 5.4 经营大盘：分类占比与活动复盘
                     </h2>
-                    <p class="text-sm text-gray-500 mt-1">分析每一分让利带来的真实收益，将会员券与满减券对比核算</p>
+                    <p class="text-sm text-gray-500 mt-1">洞察各品类销售结构，分析让利带来的真实收益与 ROI 杠杆</p>
                 </div>
                 <div class="flex gap-4">
                     <el-date-picker
@@ -21,11 +21,17 @@
                 </div>
             </div>
 
-            <el-card shadow="hover" class="mb-6 rounded-lg" header="📈 营销活动 ROI 杠杆率走势">
-                <div ref="chartRef" style="height: 350px; width: 100%;"></div>
-            </el-card>
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                <el-card shadow="hover" class="rounded-lg" header="📊 品类销售额占比结构">
+                    <div ref="categoryChartRef" style="height: 350px; width: 100%;"></div>
+                </el-card>
 
-            <el-card shadow="hover" class="rounded-lg" header="📋 活动战绩明细 (ROI 降序)">
+                <el-card shadow="hover" class="rounded-lg" header="📈 营销活动 ROI 杠杆率走势">
+                    <div ref="chartRef" style="height: 350px; width: 100%;"></div>
+                </el-card>
+            </div>
+
+            <el-card shadow="hover" class="rounded-lg" header="📋 营销战绩明细 (ROI 降序)">
                 <el-table :data="tableData" stripe border v-loading="loading">
                     <el-table-column prop="ruleName" label="营销活动/券名称" min-width="180">
                         <template #default="{row}">
@@ -66,29 +72,49 @@
 import { ref, onMounted, nextTick } from 'vue'
 import PageWrapper from "@/components/PageWrapper.vue"
 import { req } from "@/api/index.js"
+import analysisApi from "@/api/oms/analysis.js"
 import { TrendCharts } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import dayjs from 'dayjs'
 
 const dateRange = ref([dayjs().subtract(29, 'day').format('YYYY-MM-DD'), dayjs().format('YYYY-MM-DD')])
 const tableData = ref([])
+const categoryData = ref([])
 const loading = ref(false)
+
 const chartRef = ref(null)
+const categoryChartRef = ref(null)
 let myChart = null
+let categoryChart = null
 
 const fetchData = async () => {
     loading.value = true
     try {
         const [startDate, endDate] = dateRange.value
-        const res = await req({ url: '/oms/analysis/marketing-roi', method: 'GET', params: { startDate, endDate } })
-        tableData.value = res?.data || []
-        nextTick(initChart)
-    } catch (e) { console.error(e) } finally { loading.value = false }
+
+        // 并发请求
+        const [roiRes, catRes] = await Promise.all([
+            req({ url: '/oms/analysis/marketing-roi', method: 'GET', params: { startDate, endDate } }),
+            analysisApi.getCategorySales(startDate, endDate)
+        ])
+
+        tableData.value = roiRes?.data || []
+        categoryData.value = catRes?.data || []
+
+        nextTick(() => {
+            initRoiChart()
+            initCategoryChart()
+        })
+    } catch (e) {
+        console.error(e)
+    } finally {
+        loading.value = false
+    }
 }
 
 const formatMoney = (val) => Number(val || 0).toFixed(2)
 
-const initChart = () => {
+const initRoiChart = () => {
     if (!chartRef.value || tableData.value.length === 0) return
     if (!myChart) myChart = echarts.init(chartRef.value)
 
@@ -107,5 +133,54 @@ const initChart = () => {
     })
 }
 
-onMounted(fetchData)
+// 渲染分类销售饼图
+const initCategoryChart = () => {
+    if (!categoryChartRef.value || categoryData.value.length === 0) return
+    if (!categoryChart) categoryChart = echarts.init(categoryChartRef.value)
+
+    const pieData = categoryData.value.map(item => ({
+        name: item.categoryName,
+        value: item.salesAmount,
+        qty: item.salesQty
+    }))
+
+    categoryChart.setOption({
+        tooltip: {
+            trigger: 'item',
+            formatter: function (params) {
+                return `${params.name} <br/>
+                        销售额：<b>¥${params.value}</b> (${params.percent}%) <br/>
+                        销售件数：<b>${params.data.qty} 件</b>`
+            }
+        },
+        legend: { type: 'scroll', orient: 'vertical', right: 10, top: 20, bottom: 20 },
+        series: [
+            {
+                name: '分类销售',
+                type: 'pie',
+                radius: ['40%', '70%'],
+                avoidLabelOverlap: false,
+                itemStyle: {
+                    borderRadius: 10,
+                    borderColor: '#fff',
+                    borderWidth: 2
+                },
+                label: { show: false, position: 'center' },
+                emphasis: {
+                    label: { show: true, fontSize: '20', fontWeight: 'bold' }
+                },
+                labelLine: { show: false },
+                data: pieData
+            }
+        ]
+    })
+}
+
+onMounted(() => {
+    fetchData()
+    window.addEventListener('resize', () => {
+        myChart?.resize()
+        categoryChart?.resize()
+    })
+})
 </script>

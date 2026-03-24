@@ -1,20 +1,19 @@
-import {createRouter, createWebHashHistory} from 'vue-router'
+import { createRouter, createWebHashHistory } from 'vue-router'
 import intercept from "./interceptor.js"
 
 import Layout from "@/layouts/DashboardLayout.vue"
-import NotFound from "@/views/error/NotFound.vue";
-import CustomerDisplay from "@/views/system/customerDisplay/index.vue";
+import NotFound from "@/views/error/NotFound.vue"
+import GuestDisplay from "@/views/display/guest/index.vue"
 
 const defaultRouterList = [
     {
         path: '/',
-        // 🌟 恢复原状：根目录的指路牌依然指向后台，这样您点击"进入后台"才不会跳错
         redirect: () => "/dashboard"
     },
     {
         path: '/guest',
         name: 'GuestDisplay',
-        component: CustomerDisplay
+        component: GuestDisplay
     },
     {
         path: '/dashboard',
@@ -43,7 +42,18 @@ const defaultRouterList = [
             }
         ]
     },
-    {path: '/:pathMatch(.*)*', name: 'NotFound', component: NotFound}
+    {
+        path: '/system/customerDisplay',
+        component: Layout,
+        children: [
+            {
+                path: '',
+                name: 'CustomerDisplayConfig',
+                component: () => import('@/views/system/customerDisplay/index.vue'),
+            }
+        ]
+    },
+    { path: '/:pathMatch(.*)*', name: 'NotFound', component: NotFound }
 ]
 
 export const routes = [...defaultRouterList]

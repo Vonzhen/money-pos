@@ -43,6 +43,16 @@ public class OmsSalesDataVO {
         }
     }
 
+    // ==========================================
+    // 🌟 新增：分类销售数据传输对象
+    // ==========================================
+    @Data
+    public static class CategorySalesVO {
+        private String categoryName;
+        private Integer salesQty;
+        private BigDecimal salesAmount;
+    }
+
     @Data
     public static class PerformanceReportVO {
         private String period;

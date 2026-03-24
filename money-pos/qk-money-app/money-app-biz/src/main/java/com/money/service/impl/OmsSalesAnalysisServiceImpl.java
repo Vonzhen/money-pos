@@ -39,8 +39,6 @@ public class OmsSalesAnalysisServiceImpl implements OmsSalesAnalysisService {
     private final SysStrategyMapper sysStrategyMapper;
     private final OmsOrderAnalysisMapper omsOrderAnalysisMapper;
     private final OmsOrderTrafficMapper omsOrderTrafficMapper;
-
-    // 🌟 核心补全：注入审计风控专职管家
     private final OmsOrderAuditMapper omsOrderAuditMapper;
 
     // 自适应前端时间格式引擎
@@ -160,7 +158,6 @@ public class OmsSalesAnalysisServiceImpl implements OmsSalesAnalysisService {
         return vo;
     }
 
-    // 🌟 财务核算穿透：调用 OmsOrderAuditMapper 查明细快照并处理分页
     @Override
     public PageVO<ProfitAuditVO> getProfitAuditPage(OmsOrderQueryDTO queryDTO) {
         Page<ProfitAuditVO> page = omsOrderAuditMapper.getProfitAuditPage(
@@ -242,5 +239,15 @@ public class OmsSalesAnalysisServiceImpl implements OmsSalesAnalysisService {
         LocalDateTime startTime = endTime.minusDays(days);
 
         return omsOrderTrafficMapper.getMonthlyTrafficAnalysis(startTime, endTime, divisor);
+    }
+
+    // ==========================================
+    // 🌟 新增：商品分类销售占比实现
+    // ==========================================
+    @Override
+    public List<CategorySalesVO> getCategorySales(String startDate, String endDate) {
+        LocalDateTime startTime = parseStartTime(startDate);
+        LocalDateTime endTime = parseEndTime(endDate);
+        return omsOrderAnalysisMapper.getCategorySalesDistribution(startTime, endTime);
     }
 }
