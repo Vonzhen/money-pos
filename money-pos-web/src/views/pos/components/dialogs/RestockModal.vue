@@ -113,6 +113,13 @@
                 </el-button>
             </div>
         </template>
+
+        <QuickAddGoodsModal
+            v-model="quickAddVisible"
+            :initBarcode="missingBarcode"
+            @success="handleQuickAddSuccess"
+            @closed="resetScanner"
+        />
     </el-dialog>
 </template>
 
@@ -122,6 +129,7 @@ import { Search, Box, Delete } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { req } from '@/api/index.js'
 import inventoryApi from '@/api/gms/inventory.js'
+import QuickAddGoodsModal from './QuickAddGoodsModal.vue' // 🌟 引入极速建档组件
 
 const props = defineProps(['modelValue'])
 const emit = defineEmits(['update:modelValue', 'closed'])
@@ -135,6 +143,10 @@ const autocompleteKey = ref(0)
 const remark = ref('')
 const inboundList = ref([])
 const qtyInputRefs = ref([])
+
+// 🌟 新增：建档弹窗相关状态
+const quickAddVisible = ref(false)
+const missingBarcode = ref('')
 
 const setQtyRef = (el, index) => {
     if (el) qtyInputRefs.value[index] = el
@@ -162,7 +174,7 @@ const initModal = () => {
     resetScanner()
 }
 
-// 🌟 弹窗打开动画结束后，强制光标进入扫码框
+// 弹窗打开动画结束后，强制光标进入扫码框
 const handleOpened = () => {
     scannerInput.value?.focus();
 }
@@ -202,6 +214,7 @@ const handleSelect = (item) => {
     resetScanner();
 }
 
+// 🌟 核心拦截升级：找不到商品时呼出极速建档
 const handleScan = async () => {
     if (!scanKeyword.value) return;
     try {
@@ -213,10 +226,27 @@ const handleScan = async () => {
             ElMessage.warning('匹配到多个商品，请手动选择');
             scannerInput.value?.focus();
         } else {
-            ElMessage.error('未找到相关商品');
-            resetScanner();
+            // 拦截查无此物事件
+            ElMessageBox.confirm(`条码 [${scanKeyword.value}] 未录入系统，是否立即极速建档？`, '未建档商品', {
+                confirmButtonText: '立即建档',
+                cancelButtonText: '重新扫码',
+                type: 'warning'
+            }).then(() => {
+                missingBarcode.value = scanKeyword.value; // 把刚刚扫的未匹配条码传给弹窗
+                quickAddVisible.value = true;
+            }).catch(() => {
+                resetScanner();
+            });
         }
     } catch (e) { resetScanner(); }
+}
+
+// 🌟 建档成功回调：拿到新商品，立刻加入补货单！
+const handleQuickAddSuccess = (newGoods) => {
+    if (newGoods) {
+        handleSelect(newGoods);
+    }
+    resetScanner();
 }
 
 const removeItem = (index) => {

@@ -17,6 +17,7 @@
             @open-drawer="openDrawer"
             @clear-cart="handleClearConfirm"
             @suspend="handleSuspendRetrieve"
+            @quick-add="handleQuickAddTrigger"
         />
 
         <CheckoutModal v-model="dialogs.checkout" :pay-method-dict="payMethodDict" :pay-tag-dict="payTagDict" @checkout-success="handleCheckoutSuccess" @closed="keepFocus" />
@@ -27,6 +28,13 @@
         <SuspendModal v-model="dialogs.suspendList" :suspendedList="suspendedOrderList" @retrieve="retrieveOrder" @closed="keepFocus" />
         <SalesOrderModal v-model="dialogs.sales" @closed="keepFocus" />
         <ShiftModal v-model="dialogs.shift" :cashier-name="cashierName" @closed="keepFocus" />
+
+        <QuickAddGoodsModal
+            v-model="dialogs.quickAdd"
+            :initBarcode="missingBarcode"
+            @success="handleQuickAddSuccess"
+            @closed="keepFocus"
+        />
     </div>
 </template>
 
@@ -54,15 +62,15 @@ import MemberAddModal from './components/dialogs/MemberAddModal.vue'
 import SuspendModal from './components/dialogs/SuspendModal.vue'
 import SalesOrderModal from './components/dialogs/SalesOrderModal.vue'
 import ShiftModal from './components/dialogs/ShiftModal.vue'
+import QuickAddGoodsModal from './components/dialogs/QuickAddGoodsModal.vue'
 
 const router = useRouter()
 const userStore = useUserStore()
-const { cartList, currentMember, totalAmount, clearAll, restoreOrder } = usePosStore();
+const { cartList, currentMember, totalAmount, clearAll, restoreOrder, scanAndAddToCart, addToCart } = usePosStore();
 
 const bottomConsoleRef = ref(null)
 const keepFocus = () => bottomConsoleRef.value?.focusInput()
 
-// 🌟 架构升级：DialogManager 集中式状态管理，拒绝变量爆炸
 const dialogs = reactive({
     checkout: false,
     restock: false,
@@ -71,35 +79,62 @@ const dialogs = reactive({
     memberAdd: false,
     suspendList: false,
     sales: false,
-    shift: false
+    shift: false,
+    quickAdd: false // 🌟 控制弹窗显隐
 });
 
-// 检查是否任何弹窗开启
 const isAnyDialogOpen = computed(() => Object.values(dialogs).some(isOpen => isOpen === true));
-
 const { notifyPaySuccess, notifyIdle, notifyMemberBind } = useDisplaySync(computed(() => dialogs.checkout));
 
+// 🌟 记录收银台扫码未找到的条码
+const missingBarcode = ref('')
+
+// 🌟 接收 BottomConsole 发射出来的建档信号
+const handleQuickAddTrigger = (barcode) => {
+    missingBarcode.value = barcode;
+    dialogs.quickAdd = true;
+}
+
+// 🌟 建档成功回调：立刻加入购物车！
+const handleQuickAddSuccess = (newGoods) => {
+    if (newGoods) {
+        addToCart(newGoods);
+        ElMessage.success(`[${newGoods.name}] 建档成功并已加入收银车！`);
+    }
+    keepFocus();
+}
+
+// 物理扫码枪直接盲扫时触发
 useScanner({
-    onEnter: () => {
-        // 如果没有弹窗干扰，且购物车有货，触发结账
-        if (!isAnyDialogOpen.value && cartList.value.length > 0) {
-            dialogs.checkout = true;
+    onEnter: async (buffer) => {
+        if (!isAnyDialogOpen.value) {
+            if (buffer && buffer.length > 0) {
+                const res = await scanAndAddToCart(buffer);
+                if (!res.success && res.reason === 'not_found') {
+                    // 查无此物！直接走弹框流程
+                    ElMessageBox.confirm(`条码 [${res.barcode}] 未录入系统，是否立即极速建档？`, '未建档商品', {
+                        confirmButtonText: '立即建档',
+                        cancelButtonText: '取消',
+                        type: 'warning'
+                    }).then(() => {
+                        handleQuickAddTrigger(res.barcode);
+                    }).catch(() => {
+                        keepFocus();
+                    });
+                } else if (!res.success && res.reason === 'multiple') {
+                    ElMessage.warning('匹配到多个商品，请手动到明细中搜索');
+                }
+                return;
+            }
+            if (cartList.value.length > 0) { dialogs.checkout = true; }
         }
     },
     onEscape: () => {
-        // 1. 如果在结账界面，ESC 仅关闭结账界面
-        if (dialogs.checkout) {
-            dialogs.checkout = false;
-            return;
-        }
-        // 2. 🌟 安全红线：高危清空操作拦截
-        if (cartList.value.length > 0) {
-            handleClearConfirm();
-        }
+        if (dialogs.checkout) { dialogs.checkout = false; return; }
+        if (cartList.value.length > 0) { handleClearConfirm(); }
     }
 })
 
-// 🌟 安全红线：订单号并发碰撞防御机制
 const generateOrderNo = () => {
     const timePart = dayjs().format('YYYYMMDDHHmmss');
     const randomPart = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
@@ -115,20 +150,10 @@ const payMethodDict = ref([])
 const payTagDict = ref([])
 const memberTypesDict = ref([])
 
-// ==========================================
-// 🌟 核心修复：精准狙击收银员真名提取机制
-// ==========================================
 const cashierName = computed(() => {
-    // 1. 真相大白：用户信息藏在 userStore.info 里面！
     const info = userStore.info;
-    if (info) {
-        // 兼容后端常见的各种中英文命名字段（昵称优先，真名其次，账号名兜底）
-        return info.nickname || info.nickName || info.name || info.realName || info.username || info.userName || '管理员';
-    }
-
-    // 2. 缓存兜底：防止页面刚刷新，Store 还没来得及加载的瞬间黑屏
+    if (info) return info.nickname || info.nickName || info.name || info.realName || info.username || info.userName || '管理员';
     try {
-        // 您的系统登录后可能会存进本地缓存
         const localUserStr = localStorage.getItem('user') || localStorage.getItem('userInfo');
         if (localUserStr) {
             const parsed = JSON.parse(localUserStr);
@@ -136,15 +161,11 @@ const cashierName = computed(() => {
             const name = localInfo.nickname || localInfo.nickName || localInfo.name || localInfo.username;
             if (name) return name;
         }
-    } catch (e) {
-        // 忽略解析错误
-    }
-
+    } catch (e) {}
     return '未知收银员';
 });
-// ==========================================
 
-let clockTimer = null; // 🌟 声明时钟句柄，防止内存泄露
+let clockTimer = null;
 
 onMounted(async () => {
     try {
@@ -154,7 +175,6 @@ onMounted(async () => {
         if (dict.paySubTag) payTagDict.value = dict.paySubTag
     } catch (e) { }
 
-    // 🌟 安全红线：挂单防丢恢复机制 (从磁盘读取)
     try {
         const localSuspend = localStorage.getItem('pos_suspended_orders');
         if (localSuspend) suspendedOrderList.value = JSON.parse(localSuspend);
@@ -164,15 +184,9 @@ onMounted(async () => {
     clockTimer = setInterval(() => currentTime.value = dayjs().format('YYYY-MM-DD HH:mm:ss'), 1000)
 })
 
-onUnmounted(() => {
-    // 🌟 核心清理：组件销毁时杀掉幽灵定时器
-    if (clockTimer) clearInterval(clockTimer);
-})
+onUnmounted(() => { if (clockTimer) clearInterval(clockTimer); })
 
-// 🌟 安全红线：挂单持久化监听器 (有变动立刻落盘)
-watch(suspendedOrderList, (newVal) => {
-    localStorage.setItem('pos_suspended_orders', JSON.stringify(newVal));
-}, { deep: true });
+watch(suspendedOrderList, (newVal) => { localStorage.setItem('pos_suspended_orders', JSON.stringify(newVal)); }, { deep: true });
 
 const handleNavAction = (action) => {
     if (action === 'shift') dialogs.shift = true
@@ -192,9 +206,7 @@ const handleClearConfirm = () => {
     }).then(() => {
         handleClear();
         ElMessage.success('已清空订单');
-    }).catch(() => {
-        keepFocus();
-    });
+    }).catch(() => { keepFocus(); });
 }
 
 const handleClear = () => {
@@ -220,7 +232,6 @@ const handleMemberSelect = (member) => {
 
 const handleSuspendRetrieve = () => {
     if (cartList.value.length > 0) {
-        // 🌟 架构升级：废除 JSON 脆弱拷贝，使用防弹级 structuredClone + toRaw 解析 Vue 代理
         const snapshotCart = cartList.value.map(item => structuredClone(toRaw(item)));
         const snapshotMember = structuredClone(toRaw(currentMember.value));
 
@@ -235,12 +246,8 @@ const handleSuspendRetrieve = () => {
         handleClear();
         ElMessage.success('🛡️ 订单已挂起并安全落盘！');
     }
-    else if (suspendedOrderList.value.length > 0) {
-        dialogs.suspendList = true;
-    }
-    else {
-        ElMessage.warning('当前没有挂单记录');
-    }
+    else if (suspendedOrderList.value.length > 0) { dialogs.suspendList = true; }
+    else { ElMessage.warning('当前没有挂单记录'); }
 }
 
 const retrieveOrder = (index) => {

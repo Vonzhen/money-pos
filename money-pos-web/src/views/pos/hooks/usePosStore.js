@@ -253,6 +253,33 @@ export function usePosStore() {
         return await req({ url: '/pos/settleAccounts', method: 'POST', data: orderData });
     };
 
+// 🌟 核心新增：暴露按条码搜索并加入购物车的能力，供外部扫码枪接管
+    const scanAndAddToCart = async (barcode) => {
+        try {
+            const res = await req({ url: '/pos/goods', method: 'GET', params: { barcode: barcode } });
+            const items = res.data || [];
+            if (items.length === 1) {
+                addToCart(items[0]);
+                return { success: true, goods: items[0] };
+            } else if (items.length > 1) {
+                return { success: false, reason: 'multiple', items };
+            } else {
+                return { success: false, reason: 'not_found', barcode };
+            }
+        } catch (e) {
+            return { success: false, reason: 'error', error: e };
+        }
+    };
+
+    return {
+        cartList, enrichedCartList, currentMember, isWaiveCoupon, manualDiscount, selectedCouponRule, usedCouponCount, paymentList,
+        totalCount, totalAmount, memberAmount, actualCouponUsed, waivedCouponAmount, finalPayAmount, theoreticalCouponUsed, participatingAmount, paymentStats,
+        reqId, trialResult, isTrialing,
+        addToCart, removeItem, bindMember, clearMember, clearAll, restoreOrder, submitOrder, runTrial, prepareCheckout, getCartItemPrices,
+        getTrialItemInfo,
+        scanAndAddToCart // 🌟 暴露出扫码方法
+    };
+
     return {
         cartList, enrichedCartList, currentMember, isWaiveCoupon, manualDiscount, selectedCouponRule, usedCouponCount, paymentList,
         totalCount, totalAmount, memberAmount, actualCouponUsed, waivedCouponAmount, finalPayAmount, theoreticalCouponUsed, participatingAmount, paymentStats,
