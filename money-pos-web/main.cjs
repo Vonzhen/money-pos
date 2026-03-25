@@ -1,4 +1,4 @@
-const { app, BrowserWindow, screen } = require('electron');
+const { app, BrowserWindow, screen, Menu } = require('electron'); // 🌟 引入 Menu
 const path = require('path');
 const { spawn, exec } = require('child_process');
 const http = require('http');
@@ -63,7 +63,11 @@ function checkHealth() {
     req.end();
 }
 
-app.whenReady().then(startBackend);
+app.whenReady().then(() => {
+    // 🌟 终极拔除：全局清空原生菜单栏，界面更清爽、更商业化
+    Menu.setApplicationMenu(null);
+    startBackend();
+});
 
 app.on('window-all-closed', () => {
     if (backendProcess) {

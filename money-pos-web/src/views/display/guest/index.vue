@@ -176,13 +176,7 @@
 
 <script setup>
 import { ref, reactive, onMounted, onUnmounted, computed, nextTick, watch } from 'vue'
-import {
-    Monitor,
-    PictureRounded,
-    SuccessFilled,
-    Present,
-    Link
-} from '@element-plus/icons-vue'
+import { Monitor, PictureRounded, SuccessFilled, Present, Link } from '@element-plus/icons-vue'
 import axios from 'axios'
 import { getToken } from '@/composables/token.js'
 
@@ -257,13 +251,43 @@ const fetchSettings = async () => {
         const rawData = res.data?.data ?? res.data
         if (rawData && rawData !== "{}") {
             const data = typeof rawData === 'string' ? JSON.parse(rawData) : rawData
+
+            // ==========================================
+            // 🌟 核心修复 (拒绝盲猜)：绝对路径自适应防御
+            // 根据情报：数据库存的是绝对路径 http://localhost:9101/...
+            // 修复逻辑：将 localhost 强行替换为专用的 Vana 内部引擎 IP 127.0.0.1
+            // 确保 file:// 协议下资产请求绝对通畅。
+            // ==========================================
+            const internalBackendHost = '127.0.0.1:9101'; // 内部 Java 引擎地址
+
+            // 1. 处理待机海报链接
+            const fixedPlaylist = (Array.isArray(data.playlist) ? data.playlist : [])
+                .map(url => {
+                    if (url && url.startsWith('http')) {
+                        return url.replace('localhost:9101', internalBackendHost);
+                    }
+                    return url; // 如果是 OSS 云链接，放行
+                })
+                .filter(Boolean); // 移除空链接
+
+            // 2. 处理收款码链接
+            const fixedPaymentCodes = (Array.isArray(data.paymentCodes) ? data.paymentCodes : [])
+                .map(code => {
+                    if (code && code.url && code.url.startsWith('http')) {
+                        const fixedUrl = code.url.replace('localhost:9101', internalBackendHost);
+                        return { ...code, url: fixedUrl };
+                    }
+                    return code; // 如果是云链接，放行
+                })
+                .filter(Boolean); // 移除空对象
+
             Object.assign(settings, {
                 enabled: data.enabled ?? true,
                 interval: data.interval ?? 5,
                 welcomeText: data.welcomeText ?? '欢迎光临！',
-                paymentCodes: Array.isArray(data.paymentCodes) ? data.paymentCodes : [],
+                paymentCodes: fixedPaymentCodes, // 🌟 使用修复后的收款码数据
                 library: Array.isArray(data.library) ? data.library : [],
-                playlist: Array.isArray(data.playlist) ? data.playlist : []
+                playlist: fixedPlaylist // 🌟 使用修复后的海报数据
             })
         }
     } catch (e) {
@@ -709,7 +733,7 @@ onUnmounted(() => {
 
 .qr-empty {
     color: #9ca3af;
-    border: 2px dashed #e5e7eb;
+    border: 2px dashed #e5e5;
     border-radius: 12px;
     padding: 24px 36px;
     font-size: 18px;

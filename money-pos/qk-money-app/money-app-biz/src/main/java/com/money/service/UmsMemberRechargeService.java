@@ -54,7 +54,6 @@ public class UmsMemberRechargeService {
         order.setAmount(dto.getAmount() != null ? dto.getAmount() : BigDecimal.ZERO);
         order.setGiftCoupon(dto.getGiftCoupon() != null ? dto.getGiftCoupon() : BigDecimal.ZERO);
 
-        // 🌟 核心修复 1：强行兜底 realAmount，绝不允许充值金额在财务台账上变成 0
         BigDecimal fallbackRealAmount = (dto.getRealAmount() != null && dto.getRealAmount().compareTo(BigDecimal.ZERO) > 0)
                 ? dto.getRealAmount() : order.getAmount();
         order.setRealAmount(fallbackRealAmount);
@@ -93,14 +92,12 @@ public class UmsMemberRechargeService {
             long total = posMemberCouponMapper.selectCount(new LambdaQueryWrapper<PosMemberCoupon>()
                     .eq(PosMemberCoupon::getMemberId, member.getId())
                     .eq(PosMemberCoupon::getStatus, STATUS_UNUSED));
-            // 🌟 修复：购买满减券也记作充值收款行为
             umsMemberLogMapper.insert(createLog(member, TYPE_VOUCHER, "RECHARGE", BigDecimal.valueOf(dto.getQuantity()), order.getRealAmount(), BigDecimal.valueOf(total), orderNo, "购买满减券"));
         }
     }
 
     @Transactional(rollbackFor = Exception.class)
     public void voidRecharge(String orderNo, String reason) {
-        // ... (保持原有的撤销逻辑不变)
         UmsRechargeOrder order = umsRechargeOrderMapper.selectOne(new LambdaQueryWrapper<UmsRechargeOrder>().eq(UmsRechargeOrder::getOrderNo, orderNo));
         if (order == null || STATUS_VOID.equals(order.getStatus())) {
             throw new BaseException("单据无效或已撤销");
@@ -112,13 +109,18 @@ public class UmsMemberRechargeService {
         BigDecimal beforeBalance = member.getBalance() != null ? member.getBalance() : BigDecimal.ZERO;
         BigDecimal beforeCoupon = member.getCoupon() != null ? member.getCoupon() : BigDecimal.ZERO;
 
+        // 🌟 核心修复 1：提取真实的退款金额（负数），如果为空则给 0。这是为了修正原来掩耳盗铃写死的 BigDecimal.ZERO
+        BigDecimal negateRealAmount = order.getRealAmount() != null ? order.getRealAmount().negate() : BigDecimal.ZERO;
+
         if (TYPE_BALANCE.equals(order.getType())) {
             int s1 = umsMemberMapper.update(null, new LambdaUpdateWrapper<UmsMember>()
                     .setSql("balance = balance - " + order.getAmount())
                     .eq(UmsMember::getId, member.getId())
                     .ge(UmsMember::getBalance, order.getAmount()));
             if (s1 == 0) throw new BaseException("撤销失败：余额不足扣回");
-            umsMemberLogMapper.insert(createLog(member, TYPE_BALANCE, "REVERSAL", order.getAmount().negate(), BigDecimal.ZERO, beforeBalance.subtract(order.getAmount()), orderNo, "【充值撤销】" + reason));
+
+            // 🌟 核心修复 2：真实记录退给客人的负数现金 negateRealAmount
+            umsMemberLogMapper.insert(createLog(member, TYPE_BALANCE, "REVERSAL", order.getAmount().negate(), negateRealAmount, beforeBalance.subtract(order.getAmount()), orderNo, "【充值撤销】" + reason));
 
             if (order.getGiftCoupon().compareTo(BigDecimal.ZERO) > 0) {
                 int s2 = umsMemberMapper.update(null, new LambdaUpdateWrapper<UmsMember>()
@@ -126,6 +128,7 @@ public class UmsMemberRechargeService {
                         .eq(UmsMember::getId, member.getId())
                         .ge(UmsMember::getCoupon, order.getGiftCoupon()));
                 if (s2 == 0) throw new BaseException("撤销失败：赠送券已被消耗");
+                // 赠送的金额本身没收现金，所以这里扣回的实收依然是 ZERO
                 umsMemberLogMapper.insert(createLog(member, TYPE_COUPON, "REVERSAL", order.getGiftCoupon().negate(), BigDecimal.ZERO, beforeCoupon.subtract(order.getGiftCoupon()), orderNo, "【红冲赠送扣回】"));
             }
         } else if (TYPE_COUPON.equals(order.getType())) {
@@ -134,13 +137,17 @@ public class UmsMemberRechargeService {
                     .eq(UmsMember::getId, member.getId())
                     .ge(UmsMember::getCoupon, order.getAmount()));
             if (s3 == 0) throw new BaseException("撤销失败：券额已被消耗");
-            umsMemberLogMapper.insert(createLog(member, TYPE_COUPON, "REVERSAL", order.getAmount().negate(), BigDecimal.ZERO, beforeCoupon.subtract(order.getAmount()), orderNo, "【充值撤销】" + reason));
+
+            // 🌟 核心修复 3：应用 negateRealAmount
+            umsMemberLogMapper.insert(createLog(member, TYPE_COUPON, "REVERSAL", order.getAmount().negate(), negateRealAmount, beforeCoupon.subtract(order.getAmount()), orderNo, "【充值撤销】" + reason));
         } else if (TYPE_VOUCHER.equals(order.getType())) {
             posMemberCouponMapper.delete(new LambdaQueryWrapper<PosMemberCoupon>()
                     .eq(PosMemberCoupon::getMemberId, member.getId())
                     .eq(PosMemberCoupon::getStatus, STATUS_UNUSED)
                     .last("LIMIT " + order.getAmount().intValue()));
-            umsMemberLogMapper.insert(createLog(member, TYPE_VOUCHER, "REVERSAL", order.getAmount().negate(), BigDecimal.ZERO, BigDecimal.ZERO, orderNo, "【发券撤销】"));
+
+            // 🌟 核心修复 4：应用 negateRealAmount
+            umsMemberLogMapper.insert(createLog(member, TYPE_VOUCHER, "REVERSAL", order.getAmount().negate(), negateRealAmount, BigDecimal.ZERO, orderNo, "【发券撤销】"));
         }
 
         order.setStatus(STATUS_VOID);
