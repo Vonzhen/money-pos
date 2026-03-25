@@ -33,11 +33,29 @@ function createWindows() {
     const externalDisplay = displays.find(d => d.bounds.x !== 0 || d.bounds.y !== 0);
     if (externalDisplay) {
         guestWindow = new BrowserWindow({
+            // 1. 物理坐标定位
             x: externalDisplay.bounds.x, y: externalDisplay.bounds.y,
+            // 2. 基础无边框全屏
             fullscreen: true, frame: false, show: false,
+
+            // ==========================================
+            // 🌟 核心改造：客显屏专属“隐身装甲”配置
+            // ==========================================
+            skipTaskbar: true,          // 绝对不在底部的 Windows 任务栏显示图标
+            type: 'toolbar',            // 🌟 杀手锏：在 Windows 中设为 toolbar，彻底在 Alt+Tab 中隐身！
+            alwaysOnTop: true,          // 始终置顶，防止被其他弹窗遮挡
+            minimizable: false,         // 禁止最小化
+            maximizable: false,         // 禁止最大化
+            resizable: false,           // 禁止缩放
+            kiosk: true,                // 开启 POS/广告机专属的霸道全屏模式
+
             title: "万象收银系统-客显屏",
             webPreferences: { nodeIntegration: false, contextIsolation: true, webSecurity: false }
         });
+
+        // 强行拔除副屏的菜单栏
+        guestWindow.setMenu(null);
+
         guestWindow.loadURL(`${indexPath}#/guest`);
         guestWindow.once('ready-to-show', () => { guestWindow.show(); });
     }

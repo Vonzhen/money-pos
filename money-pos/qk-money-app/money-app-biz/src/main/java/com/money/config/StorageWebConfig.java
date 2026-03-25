@@ -18,17 +18,23 @@ public class StorageWebConfig implements WebMvcConfigurer {
 
     @Override
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
-        // 确保使用标准的 file: 协议前缀，并且在 Windows/Linux 下都适用
         File localDir = new File(localPath);
-        String location = localDir.toURI().toString();
 
+        // 🌟 核心修复：防止“首次启动必须重启”Bug
+        // 如果目录不存在，强行在启动时就把它建出来，逼迫 Spring Boot 乖乖建立映射隧道！
+        if (!localDir.exists()) {
+            localDir.mkdirs();
+        }
+
+        String location = localDir.toURI().toString();
         if (!location.endsWith("/")) {
             location += "/";
         }
 
-        // 宽容映射：无论前端请求是 /assets/** 还是 /money-pos/assets/** 都能被正确拦截并转发到 D 盘
         registry.addResourceHandler("/assets/**", "/money-pos/assets/**")
                 .addResourceLocations(location);
+
+        // ... 下面打印日志的代码保持不变
 
         System.out.println("=================================================");
         System.out.println("[MoneyPOS 图像引擎] 静态资源隧道已开启映射:");
