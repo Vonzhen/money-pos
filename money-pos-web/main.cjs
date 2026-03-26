@@ -28,9 +28,15 @@ function createWindows() {
     const indexPath = isPackaged ? `file://${path.join(__dirname, 'dist', 'index.html')}` : 'http://localhost:1520/money-pos';
 
     mainWindow.loadURL(`${indexPath}#/pos`);
+
     mainWindow.once('ready-to-show', () => {
         mainWindow.show();
         mainWindow.maximize();
+    });
+
+    // 🌟 主副屏同生共死：只要主窗口关闭，直接触发应用全局退出
+    mainWindow.on('closed', () => {
+        app.quit();
     });
 
     // 🌟 修复嗅探：只要 ID 和系统主屏不一样，就是副屏（完美兼容负坐标、左右颠倒布局）
@@ -99,16 +105,19 @@ app.whenReady().then(() => {
     startBackend();
 });
 
-app.on('window-all-closed', () => {
+// 🌟 核心修复：在应用真正退出前，无条件强杀 Java 引擎
+app.on('before-quit', () => {
     if (backendProcess) {
-        console.log("🛑 [VanaPOS总控] 正在执行优雅停机序列...");
-        backendProcess.kill('SIGINT');
-
+        console.log("🛑 [VanaPOS总控] 正在执行强行停机序列...");
         if (process.platform === 'win32') {
-            setTimeout(() => {
-                exec(`taskkill /pid ${backendProcess.pid} /t /f`, (err) => {});
-            }, 3000);
+            // Windows 下连带子线程一起强杀
+            exec(`taskkill /pid ${backendProcess.pid} /t /f`, (err) => {});
+        } else {
+            backendProcess.kill('SIGKILL');
         }
     }
+});
+
+app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();
 });

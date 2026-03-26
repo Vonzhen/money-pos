@@ -341,14 +341,62 @@ onUnmounted(() => {
 .primary-money { color: #2563eb; }
 .pay-tip { font-size: 18px; font-weight: 800; color: #6b7280; background: #f9fafb; border-radius: 12px; padding: 12px 16px; width: 100%; max-width: 520px; margin-top: 8px; }
 .warning-tip { color: #ea580c; background: #fff7ed; }
-.qr-group { margin-top: 24px; width: 100%; display: flex; justify-content: center; gap: 24px; flex-wrap: wrap; }
-.qr-empty { color: #9ca3af; border: 2px dashed #e5e5; border-radius: 12px; padding: 24px 36px; font-size: 18px; font-weight: 700; }
-.qr-item { display: flex; flex-direction: column; align-items: center; }
-.qr-image-box { padding: 10px; background: #fff; border: 1px solid #e5e7eb; border-radius: 16px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
-/* 🌟 核心调整：二维码狂暴放大，从 160px 增加到 240px！ */
-.qr-image { width: 240px; height: 240px; object-fit: cover; }
-/* 🌟 字体也等比例放大 */
-.qr-name { margin-top: 14px; font-size: 22px; font-weight: 800; color: #4b5563; }
-@keyframes marquee { 0% { transform: translateX(0); } 100% { transform: translateX(-100%); } }
-@keyframes bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+/* ==========================================
+   🌟 终极修复：完美“一行两个，多余换行”的流式二维码矩阵
+========================================== */
+.qr-group {
+    margin-top: 24px;
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+    /* 🌟 恢复您的原意：允许自动换行 */
+    flex-wrap: wrap;
+}
+
+.qr-empty {
+    color: #9ca3af; border: 2px dashed #e5e5; border-radius: 12px; padding: 24px 36px; font-size: 18px; font-weight: 700;
+}
+
+.qr-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+
+    /* 🌟 核心魔法：宽度严格设定为 50% 减去间隙的一半。绝对保证一行刚好装下两个！ */
+    width: calc(50% - 10px);
+
+    /* 限制一个极限最大值，防止在 4K 巨屏上二维码大得吓人 */
+    max-width: 200px;
+}
+
+.qr-image-box {
+    padding: 10px;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 16px;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+
+    /* 宽充满父级，高度自动按 1:1 保持完美正方形，无需再写死 height */
+    width: 100%;
+    aspect-ratio: 1 / 1;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.qr-image {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.qr-name {
+    margin-top: 12px;
+    font-size: 18px;
+    font-weight: 800;
+    color: #4b5563;
+    text-align: center;
+}
 </style>
