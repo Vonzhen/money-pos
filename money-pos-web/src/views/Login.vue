@@ -12,7 +12,7 @@
                     <label for="username" class="sr-only">Username</label>
                     <el-form-item prop="username" class="form-item">
                         <el-input
-                            v-model="loginForm.username"
+                            ref="usernameInputRef"  v-model="loginForm.username"
                             size="large"
                             placeholder="请输入账号"
                             prefix-icon="User"
@@ -26,7 +26,7 @@
                     <label for="password" class="sr-only">Password</label>
                     <el-form-item prop="password" class="form-item">
                         <el-input
-                            v-model="loginForm.password"
+                            ref="passwordInputRef"  v-model="loginForm.password"
                             size="large"
                             type="password"
                             show-password
@@ -53,7 +53,7 @@
                 <el-tag
                     class="quick-login-tag"
                     type="danger"
-                    @click="() => { loginForm.username = 'money'; loginForm.password = '123' }"
+                    @click="() => { loginForm.username = 'vana'; loginForm.password = '123' }"
                 >
                     超级管理员
                 </el-tag>
