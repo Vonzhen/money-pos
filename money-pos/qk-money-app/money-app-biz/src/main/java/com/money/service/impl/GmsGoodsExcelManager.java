@@ -39,7 +39,7 @@ public class GmsGoodsExcelManager {
     @SneakyThrows
     @Transactional(rollbackFor = Exception.class)
     public String importGoods(MultipartFile file) {
-        log.info("开始执行动态智能 Excel 商品导入引擎(智能表头版)...");
+        log.info("开始执行动态智能 Excel 商品导入引擎(智能脱壳 + 自动建档版)...");
 
         List<GmsGoodsCategory> categoryList = gmsGoodsCategoryService.list();
         Map<String, Long> catName2IdMap = categoryList.stream().collect(Collectors.toMap(GmsGoodsCategory::getName, GmsGoodsCategory::getId, (k1, k2) -> k1));
@@ -62,7 +62,6 @@ public class GmsGoodsExcelManager {
         Map<String, Map<String, BigDecimal>> skuLevelPriceMap = new HashMap<>();
         Map<String, Map<String, BigDecimal>> skuLevelCouponMap = new HashMap<>();
 
-        // 🌟 核心升级：动态表头嗅探器
         Map<String, Integer> headerIndexMap = new HashMap<>();
         Map<Integer, String> dynamicPriceColMap = new HashMap<>();
         int[] skipCount = new int[]{0};
@@ -74,8 +73,20 @@ public class GmsGoodsExcelManager {
                     String headName = entry.getValue();
                     if (StrUtil.isBlank(headName)) continue;
                     headName = headName.trim();
-                    headerIndexMap.put(headName, entry.getKey()); // 记录列名对应的真实索引
 
+                    // ==========================================
+                    // 🌟 核心引擎 1：表头脱壳滤网！
+                    // 把 "*商品条码(必填且唯一)" 洗成纯净的 "商品条码"
+                    // ==========================================
+                    String cleanName = headName.replaceAll("[\\*]", "")
+                            .replaceAll("\\(.*?\\)", "")
+                            .replaceAll("（.*?）", "")
+                            .trim();
+
+                    headerIndexMap.put(cleanName, entry.getKey());
+                    headerIndexMap.put(headName, entry.getKey());
+
+                    // 会员价列特殊处理
                     if (headName.startsWith("[会员特价] ")) {
                         String levelCode = dictReverseMap.get(headName.replace("[会员特价] ", "").trim());
                         if (StrUtil.isNotBlank(levelCode)) dynamicPriceColMap.put(entry.getKey(), levelCode);
@@ -83,7 +94,7 @@ public class GmsGoodsExcelManager {
                 }
             }
 
-            // 智能取值器：不管列怎么移动，只要名字对就能拿到值
+            // 智能取值器
             private String getVal(Map<Integer, String> data, String... possibleNames) {
                 for (String name : possibleNames) {
                     Integer idx = headerIndexMap.get(name);
@@ -110,36 +121,66 @@ public class GmsGoodsExcelManager {
                 goods.setMnemonicCode(PinyinUtil.getFirstLetter(goods.getName()));
                 goods.setIsCombo(0);
 
-                // 🌟 精准翻译分类与品牌
+                // ==========================================
+                // 🌟 核心引擎 2：智能自动创建新分类
+                // ==========================================
                 String catCn = getVal(data, "商品分类", "所属分类");
-                if (catCn != null) goods.setCategoryId(catName2IdMap.get(catCn));
+                if (StrUtil.isNotBlank(catCn)) {
+                    Long catId = catName2IdMap.get(catCn);
+                    // 字典里没找到？说明是新分类，当场创建！
+                    if (catId == null) {
+                        GmsGoodsCategory newCat = new GmsGoodsCategory();
+                        newCat.setName(catCn);
+                        // 🌟 核心修复：指定为一级分类（根节点），满足数据库校验！
+                        newCat.setPid(0L);
 
-                String brandCn = getVal(data, "品牌归属", "商品品牌");
-                if (brandCn != null) goods.setBrandId(brandName2IdMap.get(brandCn));
+                        gmsGoodsCategoryService.save(newCat);
+                        catId = newCat.getId();
+                        catName2IdMap.put(catCn, catId);
+                    }
+                    goods.setCategoryId(catId);
+                }
 
-                // 🌟 解析满减参与状态
+                // ==========================================
+                // 🌟 核心引擎 3：智能自动创建新品牌 (已去除 setSort)
+                // ==========================================
+                String brandCn = getVal(data, "品牌归属", "所属品牌", "商品品牌");
+                if (StrUtil.isNotBlank(brandCn)) {
+                    Long brandId = brandName2IdMap.get(brandCn);
+                    // 字典里没找到？当场创建新品牌！
+                    if (brandId == null) {
+                        GmsBrand newBrand = new GmsBrand();
+                        newBrand.setName(brandCn);
+                        gmsBrandService.save(newBrand);
+                        brandId = newBrand.getId();
+                        // 同步更新字典
+                        brandName2IdMap.put(brandCn, brandId);
+                    }
+                    goods.setBrandId(brandId);
+                }
+
                 String discountStr = getVal(data, "参与满减", "是否满减");
                 if ("允许".equals(discountStr) || "是".equals(discountStr) || "1".equals(discountStr)) {
                     goods.setIsDiscountParticipable(1);
                 } else {
-                    goods.setIsDiscountParticipable(0); // 默认不参与或禁止
+                    goods.setIsDiscountParticipable(0);
                 }
 
-                String statusStr = getVal(data, "状态", "上架状态");
+                String statusStr = getVal(data, "状态", "上架状态", "商品状态");
                 goods.setStatus((statusStr != null && statusStr.contains("SOLD_OUT")) ? "SOLD_OUT" : "SALE");
 
                 goods.setUnit(getVal(data, "单位", "计量单位"));
                 goods.setSize(getVal(data, "规格", "规格尺寸"));
 
-                String salePriceStr = getVal(data, "零售价", "系统零售价");
+                String salePriceStr = getVal(data, "零售价", "系统零售价", "建议零售价");
                 BigDecimal salePrice = new BigDecimal(salePriceStr != null ? salePriceStr : "0");
                 goods.setSalePrice(salePrice);
 
-                String costPriceStr = getVal(data, "进货价", "进货成本");
+                String costPriceStr = getVal(data, "进货价", "进货成本", "加权平均成本价");
                 goods.setAvgCostPrice(new BigDecimal(costPriceStr != null ? costPriceStr : "0"));
                 goods.setPurchasePrice(goods.getAvgCostPrice());
 
-                String stockStr = getVal(data, "当前库存", "库存");
+                String stockStr = getVal(data, "当前库存", "库存", "初始库存");
                 goods.setStock(stockStr != null ? Long.parseLong(stockStr) : 0L);
 
                 parsedGoodsList.add(goods);
@@ -157,7 +198,6 @@ public class GmsGoodsExcelManager {
                     }
                 }
 
-                // 处理固定表头的会员价
                 String vipP = getVal(data, "普通会员价"); if (vipP != null) currentPrices.put("VIP", new BigDecimal(vipP));
                 String goldP = getVal(data, "黄金会员价"); if (goldP != null) currentPrices.put("GOLD", new BigDecimal(goldP));
                 String platP = getVal(data, "铂金会员价"); if (platP != null) currentPrices.put("PLATINUM", new BigDecimal(platP));

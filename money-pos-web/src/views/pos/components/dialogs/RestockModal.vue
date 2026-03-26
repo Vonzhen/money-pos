@@ -107,9 +107,9 @@
 
         <template #footer>
             <div class="flex justify-end gap-3 pt-2">
-                <el-button @click="visible = false" size="large">取 消</el-button>
+                <el-button @click="visible = false" size="large">关 闭</el-button>
                 <el-button type="primary" @click="submitInbound" size="large" class="font-bold px-10 shadow-md" :loading="submitting" :disabled="inboundList.length === 0">
-                    确认入库并更新库存
+                    确认入库
                 </el-button>
             </div>
         </template>
@@ -124,12 +124,12 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick } from 'vue'
+import { ref, computed, nextTick, watch } from 'vue' // 🌟 引入 watch
 import { Search, Box, Delete } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { req } from '@/api/index.js'
 import inventoryApi from '@/api/gms/inventory.js'
-import QuickAddGoodsModal from './QuickAddGoodsModal.vue' // 🌟 引入极速建档组件
+import QuickAddGoodsModal from './QuickAddGoodsModal.vue'
 
 const props = defineProps(['modelValue'])
 const emit = defineEmits(['update:modelValue', 'closed'])
@@ -140,13 +140,48 @@ const submitting = ref(false)
 const scanKeyword = ref('')
 const scannerInput = ref(null)
 const autocompleteKey = ref(0)
+
+// 🌟 本地存储 Key
+const DRAFT_KEY = 'vana_pos_inbound_draft'
+
 const remark = ref('')
 const inboundList = ref([])
 const qtyInputRefs = ref([])
+const hasDraft = ref(false) // 是否存在草稿标识
 
-// 🌟 新增：建档弹窗相关状态
 const quickAddVisible = ref(false)
 const missingBarcode = ref('')
+
+// ==========================================
+// 🌟 核心防线：草稿箱黑匣子引擎 (深度监听)
+// ==========================================
+watch(inboundList, (newVal) => {
+    if (newVal && newVal.length > 0) {
+        localStorage.setItem(DRAFT_KEY, JSON.stringify(newVal));
+        hasDraft.value = true;
+    } else {
+        localStorage.removeItem(DRAFT_KEY);
+        hasDraft.value = false;
+    }
+}, { deep: true }); // 深度监听，改价格改数量也会触发保存
+
+watch(remark, (newVal) => {
+    if (newVal) {
+        localStorage.setItem(DRAFT_KEY + '_remark', newVal);
+    } else {
+        localStorage.removeItem(DRAFT_KEY + '_remark');
+    }
+});
+
+// 手动清空草稿
+const clearDraft = () => {
+    ElMessageBox.confirm('确定要放弃当前的入库列表吗？', '清空草稿', { type: 'warning' }).then(() => {
+        inboundList.value = [];
+        remark.value = '';
+        qtyInputRefs.value = [];
+        resetScanner();
+    }).catch(() => {});
+};
 
 const setQtyRef = (el, index) => {
     if (el) qtyInputRefs.value[index] = el
@@ -167,14 +202,30 @@ const jumpToNextQty = (currentIndex) => {
 
 const totalCost = computed(() => inboundList.value.reduce((sum, item) => sum + ((item.price || 0) * (item.qty || 0)), 0))
 
+// 🌟 弹窗初始化时，优先抢救草稿！
 const initModal = () => {
-    inboundList.value = []
-    remark.value = ''
-    qtyInputRefs.value = []
-    resetScanner()
+    const draftData = localStorage.getItem(DRAFT_KEY);
+    const draftRemark = localStorage.getItem(DRAFT_KEY + '_remark');
+
+    if (draftData) {
+        try {
+            inboundList.value = JSON.parse(draftData);
+            remark.value = draftRemark || '';
+            hasDraft.value = true;
+        } catch (e) {
+            inboundList.value = [];
+            remark.value = '';
+            hasDraft.value = false;
+        }
+    } else {
+        inboundList.value = [];
+        remark.value = '';
+        hasDraft.value = false;
+    }
+    qtyInputRefs.value = [];
+    resetScanner();
 }
 
-// 弹窗打开动画结束后，强制光标进入扫码框
 const handleOpened = () => {
     scannerInput.value?.focus();
 }
@@ -214,7 +265,6 @@ const handleSelect = (item) => {
     resetScanner();
 }
 
-// 🌟 核心拦截升级：找不到商品时呼出极速建档
 const handleScan = async () => {
     if (!scanKeyword.value) return;
     try {
@@ -226,13 +276,12 @@ const handleScan = async () => {
             ElMessage.warning('匹配到多个商品，请手动选择');
             scannerInput.value?.focus();
         } else {
-            // 拦截查无此物事件
             ElMessageBox.confirm(`条码 [${scanKeyword.value}] 未录入系统，是否立即极速建档？`, '未建档商品', {
                 confirmButtonText: '立即建档',
                 cancelButtonText: '重新扫码',
                 type: 'warning'
             }).then(() => {
-                missingBarcode.value = scanKeyword.value; // 把刚刚扫的未匹配条码传给弹窗
+                missingBarcode.value = scanKeyword.value;
                 quickAddVisible.value = true;
             }).catch(() => {
                 resetScanner();
@@ -241,7 +290,6 @@ const handleScan = async () => {
     } catch (e) { resetScanner(); }
 }
 
-// 🌟 建档成功回调：拿到新商品，立刻加入补货单！
 const handleQuickAddSuccess = (newGoods) => {
     if (newGoods) {
         handleSelect(newGoods);
@@ -268,6 +316,12 @@ const submitInbound = async () => {
             }))
         };
         await inventoryApi.createInbound(payload);
+
+        // 🌟 提交成功后，彻底撕毁草稿！
+        localStorage.removeItem(DRAFT_KEY);
+        localStorage.removeItem(DRAFT_KEY + '_remark');
+        inboundList.value = [];
+
         ElMessage.success('入库成功');
         visible.value = false;
     } catch (e) {
