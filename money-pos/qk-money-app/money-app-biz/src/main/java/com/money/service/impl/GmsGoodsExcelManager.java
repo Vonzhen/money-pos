@@ -24,11 +24,6 @@ import java.math.BigDecimal;
 import java.util.*;
 import java.util.stream.Collectors;
 
-/**
- * 商品 Excel 批处理管家 (Manager 层)
- * 职责：专门负责沉重的 Excel 矩阵解析、字典逆向翻译、品牌策略兜底与批量 Upsert。
- * 彻底为 GmsGoodsServiceImpl 核心业务类减负。
- */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -44,7 +39,7 @@ public class GmsGoodsExcelManager {
     @SneakyThrows
     @Transactional(rollbackFor = Exception.class)
     public String importGoods(MultipartFile file) {
-        log.info("开始执行动态智能 Excel 商品导入引擎(Manager版)...");
+        log.info("开始执行动态智能 Excel 商品导入引擎(智能表头版)...");
 
         List<GmsGoodsCategory> categoryList = gmsGoodsCategoryService.list();
         Map<String, Long> catName2IdMap = categoryList.stream().collect(Collectors.toMap(GmsGoodsCategory::getName, GmsGoodsCategory::getId, (k1, k2) -> k1));
@@ -52,26 +47,24 @@ public class GmsGoodsExcelManager {
         List<GmsBrand> brandList = gmsBrandService.list();
         Map<String, Long> brandName2IdMap = brandList.stream().collect(Collectors.toMap(GmsBrand::getName, GmsBrand::getId, (k1, k2) -> k1));
 
-        List<SysDictDetail> dictList = sysDictDetailMapper.selectList(
-                new LambdaQueryWrapper<SysDictDetail>().eq(SysDictDetail::getDict, "memberType")
-        );
+        List<SysDictDetail> dictList = sysDictDetailMapper.selectList(new LambdaQueryWrapper<SysDictDetail>().eq(SysDictDetail::getDict, "memberType"));
         Map<String, String> dictReverseMap = dictList.stream().collect(Collectors.toMap(SysDictDetail::getCnDesc, SysDictDetail::getValue, (k1, k2) -> k1));
 
         List<SysBrandConfig> brandConfigs = sysBrandConfigMapper.selectList(new LambdaQueryWrapper<>());
         Map<String, Boolean> brandDualTrackRadar = new HashMap<>();
         if (brandConfigs != null) {
             for (SysBrandConfig config : brandConfigs) {
-                if (config.getCouponEnabled() != null) {
-                    brandDualTrackRadar.put(config.getBrand(), config.getCouponEnabled());
-                }
+                if (config.getCouponEnabled() != null) brandDualTrackRadar.put(config.getBrand(), config.getCouponEnabled());
             }
         }
 
         List<GmsGoods> parsedGoodsList = new ArrayList<>();
         Map<String, Map<String, BigDecimal>> skuLevelPriceMap = new HashMap<>();
         Map<String, Map<String, BigDecimal>> skuLevelCouponMap = new HashMap<>();
-        Map<Integer, String> dynamicPriceColMap = new HashMap<>();
 
+        // 🌟 核心升级：动态表头嗅探器
+        Map<String, Integer> headerIndexMap = new HashMap<>();
+        Map<Integer, String> dynamicPriceColMap = new HashMap<>();
         int[] skipCount = new int[]{0};
 
         EasyExcel.read(file.getInputStream(), new AnalysisEventListener<Map<Integer, String>>() {
@@ -79,17 +72,32 @@ public class GmsGoodsExcelManager {
             public void invokeHeadMap(Map<Integer, String> headMap, AnalysisContext context) {
                 for (Map.Entry<Integer, String> entry : headMap.entrySet()) {
                     String headName = entry.getValue();
-                    if (headName != null && headName.startsWith("[会员特价] ")) {
+                    if (StrUtil.isBlank(headName)) continue;
+                    headName = headName.trim();
+                    headerIndexMap.put(headName, entry.getKey()); // 记录列名对应的真实索引
+
+                    if (headName.startsWith("[会员特价] ")) {
                         String levelCode = dictReverseMap.get(headName.replace("[会员特价] ", "").trim());
                         if (StrUtil.isNotBlank(levelCode)) dynamicPriceColMap.put(entry.getKey(), levelCode);
                     }
                 }
             }
 
+            // 智能取值器：不管列怎么移动，只要名字对就能拿到值
+            private String getVal(Map<Integer, String> data, String... possibleNames) {
+                for (String name : possibleNames) {
+                    Integer idx = headerIndexMap.get(name);
+                    if (idx != null && StrUtil.isNotBlank(data.get(idx))) {
+                        return data.get(idx).trim();
+                    }
+                }
+                return null;
+            }
+
             @Override
             public void invoke(Map<Integer, String> data, AnalysisContext context) {
-                String barcode = data.get(0);
-                String name = data.get(1);
+                String barcode = getVal(data, "商品条码", "条码");
+                String name = getVal(data, "商品名称", "名称");
 
                 if (StrUtil.isBlank(barcode) || StrUtil.isBlank(name)) {
                     skipCount[0]++;
@@ -97,39 +105,49 @@ public class GmsGoodsExcelManager {
                 }
 
                 GmsGoods goods = new GmsGoods();
-                goods.setBarcode(barcode.trim());
-                goods.setName(name.trim());
+                goods.setBarcode(barcode);
+                goods.setName(name);
                 goods.setMnemonicCode(PinyinUtil.getFirstLetter(goods.getName()));
                 goods.setIsCombo(0);
 
-                String catCn = data.get(2);
-                if (StrUtil.isNotBlank(catCn)) goods.setCategoryId(catName2IdMap.get(catCn.trim()));
+                // 🌟 精准翻译分类与品牌
+                String catCn = getVal(data, "商品分类", "所属分类");
+                if (catCn != null) goods.setCategoryId(catName2IdMap.get(catCn));
 
-                String brandCn = data.get(3);
-                if (StrUtil.isNotBlank(brandCn)) goods.setBrandId(brandName2IdMap.get(brandCn.trim()));
+                String brandCn = getVal(data, "品牌归属", "商品品牌");
+                if (brandCn != null) goods.setBrandId(brandName2IdMap.get(brandCn));
+
+                // 🌟 解析满减参与状态
+                String discountStr = getVal(data, "参与满减", "是否满减");
+                if ("允许".equals(discountStr) || "是".equals(discountStr) || "1".equals(discountStr)) {
+                    goods.setIsDiscountParticipable(1);
+                } else {
+                    goods.setIsDiscountParticipable(0); // 默认不参与或禁止
+                }
+
+                String statusStr = getVal(data, "状态", "上架状态");
+                goods.setStatus((statusStr != null && statusStr.contains("SOLD_OUT")) ? "SOLD_OUT" : "SALE");
+
+                goods.setUnit(getVal(data, "单位", "计量单位"));
+                goods.setSize(getVal(data, "规格", "规格尺寸"));
+
+                String salePriceStr = getVal(data, "零售价", "系统零售价");
+                BigDecimal salePrice = new BigDecimal(salePriceStr != null ? salePriceStr : "0");
+                goods.setSalePrice(salePrice);
+
+                String costPriceStr = getVal(data, "进货价", "进货成本");
+                goods.setAvgCostPrice(new BigDecimal(costPriceStr != null ? costPriceStr : "0"));
+                goods.setPurchasePrice(goods.getAvgCostPrice());
+
+                String stockStr = getVal(data, "当前库存", "库存");
+                goods.setStock(stockStr != null ? Long.parseLong(stockStr) : 0L);
+
+                parsedGoodsList.add(goods);
 
                 boolean isDualTrackBrand = false;
                 if (goods.getBrandId() != null) {
                     isDualTrackBrand = brandDualTrackRadar.getOrDefault(String.valueOf(goods.getBrandId()), false);
                 }
-
-                String statusStr = data.get(4);
-                if (StrUtil.isNotBlank(statusStr) && statusStr.contains("SOLD_OUT")) {
-                    goods.setStatus("SOLD_OUT");
-                } else {
-                    goods.setStatus("SALE");
-                }
-
-                goods.setUnit(data.get(5));
-                goods.setSize(data.get(6));
-
-                BigDecimal salePrice = new BigDecimal(StrUtil.isNotBlank(data.get(7)) ? data.get(7) : "0");
-                goods.setSalePrice(salePrice);
-                goods.setAvgCostPrice(new BigDecimal(StrUtil.isNotBlank(data.get(8)) ? data.get(8) : "0"));
-                goods.setPurchasePrice(goods.getAvgCostPrice());
-                goods.setStock(StrUtil.isNotBlank(data.get(9)) ? Long.parseLong(data.get(9).trim()) : 0L);
-
-                parsedGoodsList.add(goods);
 
                 Map<String, BigDecimal> currentPrices = new HashMap<>();
                 for (Map.Entry<Integer, String> entry : dynamicPriceColMap.entrySet()) {
@@ -138,6 +156,13 @@ public class GmsGoodsExcelManager {
                         try { currentPrices.put(entry.getValue(), new BigDecimal(priceStr.trim())); } catch (Exception ignored) {}
                     }
                 }
+
+                // 处理固定表头的会员价
+                String vipP = getVal(data, "普通会员价"); if (vipP != null) currentPrices.put("VIP", new BigDecimal(vipP));
+                String goldP = getVal(data, "黄金会员价"); if (goldP != null) currentPrices.put("GOLD", new BigDecimal(goldP));
+                String platP = getVal(data, "铂金会员价"); if (platP != null) currentPrices.put("PLATINUM", new BigDecimal(platP));
+                String intP = getVal(data, "内部会员价"); if (intP != null) currentPrices.put("INTERNAL", new BigDecimal(intP));
+
                 skuLevelPriceMap.put(goods.getBarcode(), currentPrices);
 
                 Map<String, BigDecimal> currentCoupons = new HashMap<>();
@@ -209,26 +234,16 @@ public class GmsGoodsExcelManager {
         }
 
         String resultMsg = String.format("🎉 导入完成！成功新增 %d 条，更新 %d 条记录。", toSaveList.size(), toUpdateList.size());
-        if (skipCount[0] > 0) {
-            resultMsg += String.format(" 发现并自动跳过 %d 条无效数据(缺少条码或名称)。", skipCount[0]);
-        }
-
-        log.info(resultMsg);
+        if (skipCount[0] > 0) resultMsg += String.format(" 发现并跳过 %d 条无效数据。", skipCount[0]);
         return resultMsg;
     }
 
-    // 内部私有方法，专供批量导入时平滑更新价格矩阵
     private void saveLevelPrices(Long skuId, Map<String, BigDecimal> levelPrices, Map<String, BigDecimal> levelCoupons) {
-        List<PosSkuLevelPrice> existList = posSkuLevelPriceMapper.selectList(
-                new LambdaQueryWrapper<PosSkuLevelPrice>().eq(PosSkuLevelPrice::getSkuId, skuId)
-        );
+        List<PosSkuLevelPrice> existList = posSkuLevelPriceMapper.selectList(new LambdaQueryWrapper<PosSkuLevelPrice>().eq(PosSkuLevelPrice::getSkuId, skuId));
         Map<String, PosSkuLevelPrice> existMap = existList.stream().collect(Collectors.toMap(PosSkuLevelPrice::getLevelId, p -> p));
         Set<String> newLevels = levelPrices != null ? levelPrices.keySet() : new HashSet<>();
 
-        List<Long> toDeleteIds = existList.stream()
-                .filter(p -> !newLevels.contains(p.getLevelId()))
-                .map(PosSkuLevelPrice::getId)
-                .collect(Collectors.toList());
+        List<Long> toDeleteIds = existList.stream().filter(p -> !newLevels.contains(p.getLevelId())).map(PosSkuLevelPrice::getId).collect(Collectors.toList());
         if (!toDeleteIds.isEmpty()) posSkuLevelPriceMapper.deleteBatchIds(toDeleteIds);
 
         if (levelPrices != null) {

@@ -40,7 +40,7 @@ public class GmsGoodsExcelController {
     private final SysDictDetailMapper sysDictDetailMapper;
     private final GmsGoodsService gmsGoodsService;
 
-    // 🌟 核心引擎引入：用于批量拉取 9 级价格矩阵
+    // 用于批量拉取 9 级价格矩阵
     private final GmsGoodsPriceService gmsGoodsPriceService;
 
     @Operation(summary = "Excel智能矩阵批量导入商品")
@@ -61,8 +61,9 @@ public class GmsGoodsExcelController {
         response.setHeader("Content-disposition", "attachment;filename*=utf-8''" + fileName + ".xlsx");
 
         List<List<Object>> demoData = new ArrayList<>();
-        List<Object> demoRow = new ArrayList<>(Arrays.asList("690123456789", "农夫山泉500ml", "", "", "上架 (SALE)", "瓶", "500ml", "2.00", "1.15", "100"));
-        for (int i = 0; i < heads.size() - 10; i++) { demoRow.add(""); }
+        // 🌟 核心同步：因为新增了“参与满减”列，这里的示范数据也必须多塞一个空位或者示范值
+        List<Object> demoRow = new ArrayList<>(Arrays.asList("690123456789", "农夫山泉500ml", "", "", "上架 (SALE)", "允许", "瓶", "500ml", "2.00", "1.15", "100"));
+        for (int i = 0; i < heads.size() - 11; i++) { demoRow.add(""); }
         demoData.add(demoRow);
 
         EasyExcel.write(response.getOutputStream()).head(heads).registerWriteHandler(new ExcelDropDownHandler(dropDownConfig)).sheet("商品资料填写区").doWrite(demoData);
@@ -71,10 +72,8 @@ public class GmsGoodsExcelController {
     @GetMapping("/gms/goods/export")
     @Operation(summary = "导出全量商品资料到 Excel (包含完整价格矩阵)")
     public void exportGoods(HttpServletResponse response) throws IOException {
-        // 1. 获取动态表头
         List<List<String>> heads = buildDynamicHeads();
 
-        // 2. 提前查好字典、分类和品牌，做翻译映射
         List<GmsGoodsCategory> categories = gmsGoodsCategoryMapper.selectList(null);
         Map<Long, String> catMap = categories.stream().collect(Collectors.toMap(GmsGoodsCategory::getId, GmsGoodsCategory::getName));
 
@@ -83,17 +82,14 @@ public class GmsGoodsExcelController {
 
         List<SysDictDetail> dictList = getVipDictList();
 
-        // 3. 查出数据库里的所有主商品
         List<GmsGoods> goodsList = gmsGoodsService.list();
 
-        // 🌟 4. 【核心黑科技】一次性批量查出所有商品的价格矩阵！性能极速！
         List<Long> goodsIds = goodsList.stream().map(GmsGoods::getId).collect(Collectors.toList());
         Map<Long, List<PosSkuLevelPrice>> allPriceMatrixMap = new HashMap<>();
         if (!goodsIds.isEmpty()) {
             allPriceMatrixMap = gmsGoodsPriceService.getPriceMap(goodsIds);
         }
 
-        // 5. 组装 Excel 行数据
         List<List<Object>> dataList = new ArrayList<>();
         for (GmsGoods goods : goodsList) {
             List<Object> row = new ArrayList<>();
@@ -102,7 +98,6 @@ public class GmsGoodsExcelController {
             row.add(goods.getCategoryId() != null ? catMap.getOrDefault(goods.getCategoryId(), "") : "");
             row.add(goods.getBrandId() != null ? brandMap.getOrDefault(goods.getBrandId(), "") : "");
 
-            // 完美识别上架状态 (兼容您的 SALE / UP / 1)
             String statusStr = String.valueOf(goods.getStatus()).toUpperCase();
             if ("UP".equals(statusStr) || "1".equals(statusStr) || "TRUE".equals(statusStr) || "SALE".equals(statusStr)) {
                 row.add("上架 (SALE)");
@@ -110,28 +105,32 @@ public class GmsGoodsExcelController {
                 row.add("下架 (SOLD_OUT)");
             }
 
+            // 🌟 核心同步：导出时，也必须将数据库里的满减状态翻译为 Excel 的中文字段
+            Integer discountStatus = goods.getIsDiscountParticipable();
+            if (discountStatus != null && discountStatus == 1) {
+                row.add("允许");
+            } else {
+                row.add("禁止");
+            }
+
             row.add(goods.getUnit());
-            row.add(goods.getSize()); // 🌟 修复：使用正确的 size 字段！
+            row.add(goods.getSize());
             row.add(goods.getSalePrice());
             row.add(goods.getPurchasePrice());
             row.add(goods.getStock());
 
-            // 🌟 6. 【矩阵解析】拿到当前商品的独立价格矩阵
             List<PosSkuLevelPrice> skuPrices = allPriceMatrixMap.getOrDefault(goods.getId(), new ArrayList<>());
-            // 将当前商品的矩阵转为 Map<级别代号, 会员价>，方便 O(1) 极速查找
             Map<String, BigDecimal> currentSkuPriceMap = skuPrices.stream()
                     .collect(Collectors.toMap(PosSkuLevelPrice::getLevelId, PosSkuLevelPrice::getMemberPrice, (v1, v2) -> v1));
 
-            // 🌟 按照表头的字典顺序，挨个查询并填充那 9 个等级的价格
             for (SysDictDetail dict : dictList) {
                 BigDecimal price = currentSkuPriceMap.get(dict.getValue());
-                row.add(price != null ? price.toString() : ""); // 如果没设置这个级别的价格，留空
+                row.add(price != null ? price.toString() : "");
             }
 
             dataList.add(row);
         }
 
-        // 7. 打包推给前端下载
         response.setContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
         response.setCharacterEncoding("utf-8");
         String fileName = java.net.URLEncoder.encode("门店商品全量档案", "UTF-8").replaceAll("\\+", "%20");
@@ -142,16 +141,20 @@ public class GmsGoodsExcelController {
 
     private List<List<String>> buildDynamicHeads() {
         List<List<String>> heads = new ArrayList<>();
-        heads.add(Arrays.asList("*商品条码(必填且唯一)"));
-        heads.add(Arrays.asList("*商品名称(必填)"));
-        heads.add(Arrays.asList("所属分类(请选择)"));
-        heads.add(Arrays.asList("所属品牌(请选择)"));
-        heads.add(Arrays.asList("商品状态(请选择)"));
-        heads.add(Arrays.asList("单位(如:件)"));
-        heads.add(Arrays.asList("规格(如:500g)")); // 🌟 同步修改表头示例提示
-        heads.add(Arrays.asList("建议零售价"));
-        heads.add(Arrays.asList("加权平均成本价"));
-        heads.add(Arrays.asList("初始库存"));
+        heads.add(Arrays.asList("*商品条码(必填且唯一)"));  // 0
+        heads.add(Arrays.asList("*商品名称(必填)"));       // 1
+        heads.add(Arrays.asList("所属分类(请选择)"));      // 2
+        heads.add(Arrays.asList("所属品牌(请选择)"));      // 3
+        heads.add(Arrays.asList("商品状态(请选择)"));      // 4
+
+        // 🌟 核心插入：在第 5 列增加满减配置，且它也会受到下面下拉菜单的约束！
+        heads.add(Arrays.asList("参与满减(请选择)"));      // 5
+
+        heads.add(Arrays.asList("单位(如:件)"));           // 6
+        heads.add(Arrays.asList("规格(如:500g)"));         // 7
+        heads.add(Arrays.asList("建议零售价"));            // 8
+        heads.add(Arrays.asList("加权平均成本价"));        // 9
+        heads.add(Arrays.asList("初始库存"));              // 10
 
         List<SysDictDetail> dictList = getVipDictList();
         for (SysDictDetail dict : dictList) {
@@ -171,6 +174,10 @@ public class GmsGoodsExcelController {
             dropDownConfig.put(3, brands.stream().map(GmsBrand::getName).toArray(String[]::new));
         }
         dropDownConfig.put(4, new String[]{"上架 (SALE)", "下架 (SOLD_OUT)"});
+
+        // 🌟 核心联动：给第 5 列（参与满减）加上只允许选“允许”或“禁止”的强制下拉约束
+        dropDownConfig.put(5, new String[]{"允许", "禁止"});
+
         return dropDownConfig;
     }
 

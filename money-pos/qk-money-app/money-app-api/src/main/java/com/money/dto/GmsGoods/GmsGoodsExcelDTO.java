@@ -1,4 +1,4 @@
-package com.money.dto.Goods;
+package com.money.dto.GmsGoods;
 
 import com.alibaba.excel.annotation.ExcelProperty;
 import lombok.Data;

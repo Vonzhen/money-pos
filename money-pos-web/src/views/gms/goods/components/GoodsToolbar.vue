@@ -19,6 +19,23 @@
         <div class="flex items-center gap-2">
             <MoneyCUD :money-crud="moneyCrud" />
 
+            <el-dropdown @command="handleBatchDiscount" class="mr-2">
+                <el-button type="primary" plain>
+                    <el-icon class="mr-1"><Edit /></el-icon> 批量设置
+                    <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+                </el-button>
+                <template #dropdown>
+                    <el-dropdown-menu>
+                        <el-dropdown-item :command="1">
+                            <span class="text-orange-500 font-bold">● 批量允许满减</span>
+                        </el-dropdown-item>
+                        <el-dropdown-item :command="0" divided>
+                            <span class="text-gray-500 font-bold">● 批量禁止满减</span>
+                        </el-dropdown-item>
+                    </el-dropdown-menu>
+                </template>
+            </el-dropdown>
+
             <el-button type="warning" icon="Download" plain v-if="moneyCrud.optShow.export" @click="handleDownloadTemplate">模板下载</el-button>
 
             <el-upload
@@ -40,6 +57,8 @@ import SmartGoodsSelector from "@/components/common/SmartGoodsSelector.vue";
 import { useGoodsImportExport } from '../composables/useGoodsImportExport.js';
 import { ElMessage } from "element-plus";
 import { req } from '@/api/index.js';
+import { Edit, ArrowDown } from '@element-plus/icons-vue';
+import goodsApi from "@/api/gms/goods.js";
 
 const props = defineProps({
     moneyCrud: Object, brands: Array, categories: Array, dict: Object
@@ -59,32 +78,56 @@ const handleGoodsClear = () => {
     props.moneyCrud.doQuery();
 };
 
-// 🌟 导出全库商品的逻辑 (Blob 二进制流无缝下载)
+// 🌟 核心修复 2：增强版并发批量修改逻辑
+const handleBatchDiscount = async (status) => {
+    // 兼容所有可能的选中数据变量名
+    const selected = props.moneyCrud.selections || props.moneyCrud.selection || props.moneyCrud.selectedRows || [];
+
+    // 如果一条都没勾，抛出精准提示！
+    if (!selected || selected.length === 0) {
+        ElMessage.warning('⚠️ 请先在左侧列表中打勾勾选商品，再进行批量设置！');
+        console.warn('当前底层 CRUD 对象调试信息:', props.moneyCrud);
+        return;
+    }
+
+    const actionText = status === 1 ? '允许' : '禁止';
+    const loading = ElMessage.loading({ message: `正在为您批量[${actionText}]满减中，请勿关闭页面...`, duration: 0 });
+
+    try {
+        await Promise.all(selected.map(row =>
+            goodsApi.edit({ id: row.id, isDiscountParticipable: status })
+        ));
+        loading.close();
+        ElMessage.success(`✅ 搞定！已成功为 ${selected.length} 个商品批量[${actionText}]满减`);
+
+        // 延迟 500ms 刷新表格，防止后端事务没提交完
+        setTimeout(() => {
+            props.moneyCrud.doQuery();
+        }, 500);
+    } catch (e) {
+        loading.close();
+        console.error("批量设置异常:", e);
+        ElMessage.error(`批量修改出现异常，请刷新后重试`);
+    }
+};
+
 const handleExportGoods = async () => {
     ElMessage.success("正在生成 Excel 数据，请稍候...");
     try {
-        // 1. 使用系统自带的 req 发起请求，自动处理所有 context-path 和 Token
         const res = await req({
             url: '/gms/goods/export',
             method: 'GET',
-            responseType: 'blob' // 🌟 极其关键：告诉浏览器接收的是文件流，不是 JSON
+            responseType: 'blob'
         });
 
-        // 2. 将返回的二进制流转换成可下载的 Blob 对象
-        const blob = new Blob([res.data || res], {
-            type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        });
-
-        // 3. 利用浏览器原生能力，模拟点击下载
+        const blob = new Blob([res.data || res], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
         const downloadUrl = window.URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.style.display = 'none';
         link.href = downloadUrl;
-        link.download = `门店商品全量档案_${new Date().getTime()}.xlsx`; // 动态带上时间戳
+        link.download = `门店商品全量档案_${new Date().getTime()}.xlsx`;
         document.body.appendChild(link);
         link.click();
-
-        // 4. 打扫战场，释放内存
         window.URL.revokeObjectURL(downloadUrl);
         document.body.removeChild(link);
 
