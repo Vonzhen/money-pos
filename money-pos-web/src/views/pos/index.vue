@@ -45,6 +45,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
 import { useUserStore } from "@/store/index.js"
 import dictApi from "@/api/system/dict.js"
+import brandApi from '@/api/gms/brand.js' // 🌟 引入品牌 API
 
 import { usePosStore } from './hooks/usePosStore'
 import { useScanner } from './hooks/useScanner'
@@ -66,7 +67,8 @@ import QuickAddGoodsModal from './components/dialogs/QuickAddGoodsModal.vue'
 
 const router = useRouter()
 const userStore = useUserStore()
-const { cartList, currentMember, totalAmount, clearAll, restoreOrder, scanAndAddToCart, addToCart } = usePosStore();
+// 🌟 提取 initGlobalDicts 方法
+const { cartList, currentMember, totalAmount, clearAll, restoreOrder, scanAndAddToCart, addToCart, initGlobalDicts } = usePosStore();
 
 const bottomConsoleRef = ref(null)
 const keepFocus = () => bottomConsoleRef.value?.focusInput()
@@ -80,22 +82,19 @@ const dialogs = reactive({
     suspendList: false,
     sales: false,
     shift: false,
-    quickAdd: false // 🌟 控制弹窗显隐
+    quickAdd: false
 });
 
 const isAnyDialogOpen = computed(() => Object.values(dialogs).some(isOpen => isOpen === true));
 const { notifyPaySuccess, notifyIdle, notifyMemberBind } = useDisplaySync(computed(() => dialogs.checkout));
 
-// 🌟 记录收银台扫码未找到的条码
 const missingBarcode = ref('')
 
-// 🌟 接收 BottomConsole 发射出来的建档信号
 const handleQuickAddTrigger = (barcode) => {
     missingBarcode.value = barcode;
     dialogs.quickAdd = true;
 }
 
-// 🌟 建档成功回调：立刻加入购物车！
 const handleQuickAddSuccess = (newGoods) => {
     if (newGoods) {
         addToCart(newGoods);
@@ -104,14 +103,12 @@ const handleQuickAddSuccess = (newGoods) => {
     keepFocus();
 }
 
-// 物理扫码枪直接盲扫时触发
 useScanner({
     onEnter: async (buffer) => {
         if (!isAnyDialogOpen.value) {
             if (buffer && buffer.length > 0) {
                 const res = await scanAndAddToCart(buffer);
                 if (!res.success && res.reason === 'not_found') {
-                    // 查无此物！直接走弹框流程
                     ElMessageBox.confirm(`条码 [${res.barcode}] 未录入系统，是否立即极速建档？`, '未建档商品', {
                         confirmButtonText: '立即建档',
                         cancelButtonText: '取消',
@@ -168,12 +165,29 @@ const cashierName = computed(() => {
 let clockTimer = null;
 
 onMounted(async () => {
+    let fetchedMemberTypes = [];
+    let fetchedBrandsKv = {};
+
+    // 1. 获取系统字典
     try {
         const dict = await dictApi.loadDict(["memberType", "pos_payment_method", "paySubTag"])
-        if (dict.memberType) memberTypesDict.value = dict.memberType
-        if (dict.pos_payment_method) payMethodDict.value = dict.pos_payment_method
-        if (dict.paySubTag) payTagDict.value = dict.paySubTag
+        if (dict.memberType) {
+            memberTypesDict.value = dict.memberType;
+            fetchedMemberTypes = dict.memberType;
+        }
+        if (dict.pos_payment_method) payMethodDict.value = dict.pos_payment_method;
+        if (dict.paySubTag) payTagDict.value = dict.paySubTag;
     } catch (e) { }
+
+    // 2. 🌟 预加载所有品牌
+    try {
+        const brandRes = await (brandApi.list ? brandApi.list({ size: 1000 }) : brandApi.getSelect())
+        const brandList = brandRes?.data?.records || brandRes?.data || brandRes?.records || brandRes || []
+        brandList.forEach(e => { fetchedBrandsKv[e.id || e.value] = e.name || e.label })
+    } catch (e) {}
+
+    // 3. 🌟 注入到全局 Store 中
+    initGlobalDicts(fetchedBrandsKv, fetchedMemberTypes);
 
     try {
         const localSuspend = localStorage.getItem('pos_suspended_orders');

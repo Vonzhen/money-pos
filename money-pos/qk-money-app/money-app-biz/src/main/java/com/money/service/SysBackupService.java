@@ -13,23 +13,18 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.io.BufferedReader;
 import java.io.File;
-import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.ArrayList;
-import java.util.Enumeration;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
 
 /**
- * 🌟 工业级原子化灾备与还原引擎 (V5.1 修正版)
+ * 🌟 工业级原子化灾备与还原引擎 (V5.2 防拦截版)
  * 核心特性：影子库导入、版本校验、故障零污染回滚
  */
 @Slf4j
@@ -161,10 +156,12 @@ public class SysBackupService {
         }
     }
 
-    // 🌟 已修复：将 SHADOW_DIR 修正为 SHADOW_DB
+    // ==========================================
+    // 🌟 核心修复：拆分多条 SQL，绕过 JDBC 安全拦截
+    // ==========================================
     private void prepareShadowDatabase() throws Exception {
-        String sql = "DROP DATABASE IF EXISTS `" + SHADOW_DB + "`; CREATE DATABASE `" + SHADOW_DB + "` CHARACTER SET utf8mb4;";
-        executeSql(sql);
+        executeSql("DROP DATABASE IF EXISTS `" + SHADOW_DB + "`");
+        executeSql("CREATE DATABASE `" + SHADOW_DB + "` CHARACTER SET utf8mb4");
     }
 
     private void importSqlToDb(File sqlFile, String dbName) throws Exception {
@@ -177,6 +174,9 @@ public class SysBackupService {
         if (pb.start().waitFor() != 0) throw new RuntimeException("影子库导入指令执行失败");
     }
 
+    // ==========================================
+    // 🌟 核心修复：原子切换方法内，也必须拆分多条 SQL 执行！
+    // ==========================================
     private void atomicSwitchDatabase() throws Exception {
         String url = "jdbc:mysql://127.0.0.1:" + MariaDbGuardian.DB_PORT + "/mysql?useSSL=false";
         try (Connection conn = DriverManager.getConnection(url, "root", MariaDbGuardian.getDbPassword());
@@ -188,11 +188,12 @@ public class SysBackupService {
 
             if (tables.isEmpty()) throw new RuntimeException("影子库为空，拒绝切换");
 
+            // 创建/清理主库 (拆分执行，绝不用分号连写)
             stmt.execute("CREATE DATABASE IF NOT EXISTS `" + MariaDbGuardian.DB_NAME + "` CHARACTER SET utf8mb4");
-
             stmt.execute("DROP DATABASE IF EXISTS `" + MariaDbGuardian.DB_NAME + "`");
             stmt.execute("CREATE DATABASE `" + MariaDbGuardian.DB_NAME + "` CHARACTER SET utf8mb4");
 
+            // RENAME 语法本身支持用逗号批量改名，这是合法单条 SQL
             StringBuilder renameSql = new StringBuilder("RENAME TABLE ");
             for (int i = 0; i < tables.size(); i++) {
                 String t = tables.get(i);
