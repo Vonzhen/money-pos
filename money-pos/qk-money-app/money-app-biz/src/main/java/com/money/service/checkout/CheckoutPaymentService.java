@@ -20,13 +20,8 @@ public class CheckoutPaymentService {
 
     private final OmsOrderPayMapper omsOrderPayMapper;
 
-    /**
-     * 🌟 P1-2 核心修复：时空回放逻辑。
-     * 从数据库中提取支付胶囊，100% 还原当时的实收、找零和净额。
-     */
     public void loadExistingPayments(CheckoutContext context) {
         String orderNo = context.getOrder().getOrderNo();
-
         List<OmsOrderPay> pays = omsOrderPayMapper.selectList(
                 new LambdaQueryWrapper<OmsOrderPay>().eq(OmsOrderPay::getOrderNo, orderNo)
         );
@@ -42,42 +37,32 @@ public class CheckoutPaymentService {
             item.setMethodName(pay.getPayMethodName());
             item.setPayTag(pay.getPayTag());
 
-            // 兼容老数据：如果新字段为空，则回退使用老字段
             BigDecimal net = pay.getNetAmount() != null ? pay.getNetAmount() : pay.getPayAmount();
             BigDecimal orig = pay.getOriginalAmount() != null ? pay.getOriginalAmount() : net;
             BigDecimal change = pay.getChangeAllocated() != null ? pay.getChangeAllocated() : BigDecimal.ZERO;
 
             item.setNetAmount(net);
-            // 假设 StandardPayItem 中有这两个 setter (如果没有请自行补充)
             item.setOriginalAmount(orig);
             item.setChangeAmount(change);
 
             result.getValidItems().add(item);
-
-            // 累加计算小票大盘数据
             netTotal = netTotal.add(net);
             originalTotal = originalTotal.add(orig);
             changeTotal = changeTotal.add(change);
         }
 
-        // 🌟 完美还原：将历史的真实统计数据注回 Result，供前端无损回显
         result.setNetReceived(netTotal);
         result.setTotalPaid(originalTotal);
         result.setChangeAmount(changeTotal);
-
         context.setPaymentResult(result);
     }
 
-    /**
-     * 🌟 P1-2 核心修复：入库时将快照数据全面落盘。
-     */
     public void handlePayment(CheckoutContext context) {
         NormalizedPaymentResult payResult = context.getPaymentResult();
         String orderNo = context.getOrder().getOrderNo();
         LocalDateTime now = LocalDateTime.now();
 
         for (NormalizedPaymentResult.StandardPayItem item : payResult.getValidItems()) {
-            // 如果实收和净额都为0，则忽略
             if ((item.getNetAmount() == null || item.getNetAmount().compareTo(BigDecimal.ZERO) == 0) &&
                     (item.getOriginalAmount() == null || item.getOriginalAmount().compareTo(BigDecimal.ZERO) == 0)) {
                 continue;
@@ -86,20 +71,35 @@ public class CheckoutPaymentService {
             OmsOrderPay payRecord = new OmsOrderPay();
             payRecord.setOrderNo(orderNo);
             payRecord.setPayMethodCode(item.getMethodCode());
-            payRecord.setPayMethodName(item.getMethodName());
+
+            // ==========================================
+            // 🌟 修复问题5：【payMethodName 过度信任前端】
+            // 绝不直接使用 item.getMethodName()，后端强行匹配！
+            // ==========================================
+            payRecord.setPayMethodName(getSafeMethodName(item.getMethodCode(), item.getMethodName()));
+
             payRecord.setPayTag(item.getPayTag());
-
-            // 遗留字段兼容
             payRecord.setPayAmount(item.getNetAmount());
-
-            // 🌟 真实快照落盘 (兜底防止空指针)
             payRecord.setNetAmount(item.getNetAmount());
             payRecord.setOriginalAmount(item.getOriginalAmount() != null ? item.getOriginalAmount() : item.getNetAmount());
             payRecord.setChangeAllocated(item.getChangeAmount() != null ? item.getChangeAmount() : BigDecimal.ZERO);
-
             payRecord.setCreateTime(now);
 
             omsOrderPayMapper.insert(payRecord);
+        }
+    }
+
+    // 🌟 内部安全映射引擎：即便前端传错或被黑客篡改，落库的依然是标准名称
+    private String getSafeMethodName(String code, String fallbackName) {
+        if (code == null) return "未知支付";
+        switch (code.toUpperCase()) {
+            case "WECHAT": return "微信支付";
+            case "ALIPAY": return "支付宝";
+            case "CASH": return "现金";
+            case "BALANCE": return "余额支付";
+            case "UNIONPAY": return "银联刷卡";
+            // 如果遇到真的没见过的渠道，为了不阻断流程，再降级使用前端传来的名字（可加上[外部]标记防伪）
+            default: return fallbackName != null ? fallbackName : "其他渠道";
         }
     }
 }

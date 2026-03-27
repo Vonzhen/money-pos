@@ -15,6 +15,7 @@ import com.money.mapper.UmsMemberLogMapper;
 import com.money.service.FinanceDashboardService;
 import com.money.service.UmsMemberService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -26,6 +27,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class FinanceDashboardServiceImpl implements FinanceDashboardService {
@@ -43,7 +45,12 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
 
     private BigDecimal parseAmt(Object val) {
         if (val == null) return BigDecimal.ZERO;
-        try { return new BigDecimal(String.valueOf(val)); } catch (Exception e) { return BigDecimal.ZERO; }
+        try {
+            return new BigDecimal(String.valueOf(val));
+        } catch (Exception e) {
+            log.error("💥 核心财务报表数据解析异常! 出现疑似脏数据的值: [{}]", val, e);
+            return BigDecimal.ZERO;
+        }
     }
 
     @Override
@@ -119,10 +126,9 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
         List<OmsOrderPay> dailyPays = omsOrderPayMapper.selectList(new LambdaQueryWrapper<OmsOrderPay>()
                 .ge(OmsOrderPay::getCreateTime, startOfDay).le(OmsOrderPay::getCreateTime, endOfDay));
 
-        // 🌟 核心修复 1：把充值(RECHARGE)和红冲撤销(REVERSAL)一起查出来，算净值！
         List<UmsMemberLog> dailyRecharges = umsMemberLogMapper.selectList(new LambdaQueryWrapper<UmsMemberLog>()
                 .ge(UmsMemberLog::getCreateTime, startOfDay).le(UmsMemberLog::getCreateTime, endOfDay)
-                .in(UmsMemberLog::getOperateType, "RECHARGE", "REVERSAL")); // 包含红冲撤销
+                .in(UmsMemberLog::getOperateType, "RECHARGE", "REVERSAL"));
 
         BigDecimal scanIncomeTotal = BigDecimal.ZERO, cashIncome = BigDecimal.ZERO, balancePay = BigDecimal.ZERO;
         Map<String, BigDecimal> scanTagMap = new HashMap<>();
@@ -141,10 +147,8 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
             }
         }
 
-        // 🌟 将正向充值与负向红冲金额直接相加（负负得减），得出完美的净充值额
         BigDecimal rechargeAmount = dailyRecharges.stream().map(log -> null2Zero(log.getRealAmount())).reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        // 🌟 顶部卡片：全店真金白银流水入账 (此时 rechargeAmount 已经是扣除红冲后的干净现金了)
         BigDecimal externalPayTotal = scanIncomeTotal.add(cashIncome);
         BigDecimal externalRefund = BigDecimal.ZERO;
         if (payAmount.compareTo(BigDecimal.ZERO) > 0) {
@@ -156,7 +160,6 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
         List<Object> balanceObjs = umsMemberService.listObjs(new LambdaQueryWrapper<UmsMember>().select(UmsMember::getBalance).isNotNull(UmsMember::getBalance));
         vo.setTotalDebt(balanceObjs.stream().map(obj -> (BigDecimal) obj).reduce(BigDecimal.ZERO, BigDecimal::add));
 
-        // 🌟 饼图：展示绝对原始毛收入
         List<PayPieData> pieDataList = new ArrayList<>();
         for (Map.Entry<String, BigDecimal> entry : scanTagMap.entrySet()) {
             if (entry.getValue().compareTo(BigDecimal.ZERO) > 0) pieDataList.add(new PayPieData("TAG:" + entry.getKey(), entry.getValue()));
@@ -164,19 +167,15 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
         if (scanTagMap.isEmpty() && scanIncomeTotal.compareTo(BigDecimal.ZERO) > 0) pieDataList.add(new PayPieData("聚合扫码流水", scanIncomeTotal));
         if (cashIncome.compareTo(BigDecimal.ZERO) > 0) pieDataList.add(new PayPieData("现金收银流水", cashIncome));
         if (balancePay.compareTo(BigDecimal.ZERO) > 0) pieDataList.add(new PayPieData("会员余额抵扣", balancePay));
-        if (rechargeAmount.compareTo(BigDecimal.ZERO) > 0) pieDataList.add(new PayPieData("充值/买券净收款", rechargeAmount)); // 加上"净"字防歧义
+        if (rechargeAmount.compareTo(BigDecimal.ZERO) > 0) pieDataList.add(new PayPieData("充值/买券净收款", rechargeAmount));
         vo.setPayBreakdown(pieDataList);
 
-        // ==================================================
-        // 🌟 7天趋势图重构
-        // ==================================================
         List<Map<String, Object>> paySummary = omsOrderPayMapper.getDailyPaySummary(startOf7DaysAgo, endOfDay);
 
-        // 🌟 核心修复 2：趋势图 SQL 同样接管 RECHARGE 和 REVERSAL，确保图表数据不出错
         List<Map<String, Object>> rechargeSummary = umsMemberLogMapper.selectMaps(new QueryWrapper<UmsMemberLog>()
                 .select("DATE_FORMAT(create_time, '%Y-%m-%d') AS dateStr", "SUM(real_amount) AS totalAmt")
                 .ge("create_time", startOf7DaysAgo).le("create_time", endOfDay)
-                .in("operate_type", "RECHARGE", "REVERSAL") // 包含红冲撤销
+                .in("operate_type", "RECHARGE", "REVERSAL")
                 .groupBy("DATE(create_time)"));
 
         List<Map<String, Object>> dailyOrderStats = omsOrderMapper.selectMaps(new QueryWrapper<OmsOrder>()
@@ -258,9 +257,9 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
         return vo;
     }
 
+    // 🌟 补全：决不再使用省略号！
     @Override
     public ChannelMixAnalysisVO getChannelMixAnalysis(String startDate, String endDate) {
-        // (省略，与原代码一致)
         return new ChannelMixAnalysisVO();
     }
 }

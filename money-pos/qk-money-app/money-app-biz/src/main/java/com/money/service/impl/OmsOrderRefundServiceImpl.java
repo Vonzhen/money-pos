@@ -44,17 +44,32 @@ public class OmsOrderRefundServiceImpl implements OmsOrderRefundService {
     @Transactional(rollbackFor = Exception.class)
     public void returnOrder(String orderNo) {
         OmsOrder order = omsOrderMapper.selectOne(new LambdaQueryWrapper<OmsOrder>().eq(OmsOrder::getOrderNo, orderNo));
-        if (order == null || OrderStatusEnum.REFUNDED.name().equals(order.getStatus())) {
-            throw new BaseException("订单不存在或已全额退款");
+        if (order == null) {
+            throw new BaseException("订单不存在");
+        }
+        if (OrderStatusEnum.REFUNDED.name().equals(order.getStatus())) {
+            throw new BaseException("订单已全额退款，请勿重复操作");
+        }
+
+        boolean isLocked = omsOrderMapper.update(null, new LambdaUpdateWrapper<OmsOrder>()
+                .eq(OmsOrder::getOrderNo, orderNo)
+                .ne(OmsOrder::getStatus, OrderStatusEnum.REFUNDED.name())
+                .set(OmsOrder::getUpdateTime, LocalDateTime.now())) > 0;
+
+        if (!isLocked) {
+            log.warn("拦截到重复的整单退款请求: {}", orderNo);
+            throw new BaseException("订单正在处理退款或已退款，请勿重复点击");
         }
 
         omsOrderMapper.updateRefundStatusToFull(orderNo, OrderStatusEnum.REFUNDED.name());
 
         List<OmsOrderDetail> details = omsOrderDetailMapper.selectList(new LambdaQueryWrapper<OmsOrderDetail>().eq(OmsOrderDetail::getOrderNo, orderNo));
+
         GmsInventoryDoc doc = new GmsInventoryDoc();
         doc.setDocNo("TH" + System.currentTimeMillis());
         doc.setDocType("RETURN");
         doc.setCreateTime(LocalDateTime.now());
+        gmsInventoryDocMapper.insert(doc);
 
         BigDecimal totalCost = BigDecimal.ZERO;
         for (OmsOrderDetail d : details) {
@@ -63,14 +78,14 @@ public class OmsOrderRefundServiceImpl implements OmsOrderRefundService {
                 totalCost = totalCost.add(processInventoryAndLogs(orderNo, d, canReturn, doc));
             }
         }
+
         doc.setTotalAmount(totalCost);
-        gmsInventoryDocMapper.insert(doc);
+        gmsInventoryDocMapper.updateById(doc);
 
         if (order.getMemberId() != null) {
             umsMemberAssetService.processReturn(order.getMemberId(), order.getFinalSalesAmount(), order.getCouponAmount(), true, orderNo);
 
             if (order.getUseVoucherAmount() != null && order.getUseVoucherAmount().compareTo(BigDecimal.ZERO) > 0) {
-
                 Long voucherCount = posMemberCouponMapper.selectCount(new LambdaQueryWrapper<PosMemberCoupon>()
                         .eq(PosMemberCoupon::getOrderNo, orderNo));
 
@@ -110,6 +125,11 @@ public class OmsOrderRefundServiceImpl implements OmsOrderRefundService {
         OmsOrder order = omsOrderMapper.selectOne(new LambdaQueryWrapper<OmsOrder>().eq(OmsOrder::getOrderNo, dto.getOrderNo()));
         if (detail == null || order == null) throw new BaseException("数据异常");
 
+        if (!detail.getOrderNo().equals(order.getOrderNo())) {
+            log.error("触发越权/串单退货拦截! 请求单号:{}, 实际明细归属单号:{}", dto.getOrderNo(), detail.getOrderNo());
+            throw new BaseException("退货明细与订单归属不匹配，疑似非法操作！");
+        }
+
         BigDecimal unitSalesPrice = detail.getGoodsPrice() != null ? detail.getGoodsPrice() : BigDecimal.ZERO;
         BigDecimal unitCostPrice = detail.getPurchasePrice() != null ? detail.getPurchasePrice() : BigDecimal.ZERO;
 
@@ -123,14 +143,18 @@ public class OmsOrderRefundServiceImpl implements OmsOrderRefundService {
         BigDecimal refundCost = unitCostPrice.multiply(new BigDecimal(dto.getReturnQty()));
         BigDecimal refundMemberCoupon = unitCoupon.multiply(new BigDecimal(dto.getReturnQty()));
 
-        omsOrderMapper.applyPartialRefund(dto.getOrderNo(), refundSales, refundCost, refundMemberCoupon, OrderStatusEnum.PARTIAL_REFUNDED.name());
-
         GmsInventoryDoc doc = new GmsInventoryDoc();
         doc.setDocNo("TH" + System.currentTimeMillis());
         doc.setDocType("RETURN");
         doc.setCreateTime(LocalDateTime.now());
-        doc.setTotalAmount(processInventoryAndLogs(dto.getOrderNo(), detail, dto.getReturnQty(), doc));
         gmsInventoryDocMapper.insert(doc);
+
+        BigDecimal cost = processInventoryAndLogs(dto.getOrderNo(), detail, dto.getReturnQty(), doc);
+
+        doc.setTotalAmount(cost);
+        gmsInventoryDocMapper.updateById(doc);
+
+        omsOrderMapper.applyPartialRefund(dto.getOrderNo(), refundSales, refundCost, refundMemberCoupon, OrderStatusEnum.PARTIAL_REFUNDED.name());
 
         if (order.getMemberId() != null) {
             umsMemberAssetService.processReturn(order.getMemberId(), refundSales, refundMemberCoupon, false, dto.getOrderNo());
@@ -145,9 +169,19 @@ public class OmsOrderRefundServiceImpl implements OmsOrderRefundService {
     }
 
     private BigDecimal processInventoryAndLogs(String orderNo, OmsOrderDetail detail, int returnQty, GmsInventoryDoc doc) {
+        int updatedRows = omsOrderDetailMapper.refundGoodsAtomically(detail.getId(), returnQty);
+        if (updatedRows != 1) {
+            log.error("明细退货数量更新失败(可能超退或并发)。明细ID:{}, 请求退数量:{}", detail.getId(), returnQty);
+            throw new BaseException("退货数量异常：超过可退数量或重复退货，请刷新订单！");
+        }
+
         BigDecimal impact = BigDecimal.ZERO;
         GmsGoods goods = gmsGoodsMapper.selectById(detail.getGoodsId());
-        if (goods == null) return impact;
+
+        if (goods == null) {
+            log.error("退货异常：商品档案不存在，商品ID: {}", detail.getGoodsId());
+            throw new BaseException("退货失败：找不到对应的系统商品档案");
+        }
 
         if (goods.getIsCombo() != null && goods.getIsCombo() == 1) {
             List<GmsGoodsCombo> combos = gmsGoodsComboMapper.selectList(new LambdaQueryWrapper<GmsGoodsCombo>().eq(GmsGoodsCombo::getComboGoodsId, goods.getId()));
@@ -155,41 +189,49 @@ public class OmsOrderRefundServiceImpl implements OmsOrderRefundService {
                 GmsGoods sub = gmsGoodsMapper.selectById(c.getSubGoodsId());
                 if (sub != null) {
                     int qty = Math.multiplyExact(returnQty, c.getSubGoodsQty());
-
-                    // 1. 先原子加库存
                     gmsGoodsMapper.addStockAtomically(sub.getId(), new BigDecimal(qty));
-
-                    // 2. 查出最新库存
                     GmsGoods updatedSub = gmsGoodsMapper.selectById(sub.getId());
                     int latestStock = (updatedSub != null && updatedSub.getStock() != null) ? updatedSub.getStock().intValue() : 0;
-
-                    BigDecimal cost = sub.getAvgCostPrice() != null ? sub.getAvgCostPrice() :
-                            (sub.getPurchasePrice() != null ? sub.getPurchasePrice() : BigDecimal.ZERO);
+                    BigDecimal cost = sub.getAvgCostPrice() != null ? sub.getAvgCostPrice() : (sub.getPurchasePrice() != null ? sub.getPurchasePrice() : BigDecimal.ZERO);
                     impact = impact.add(cost.multiply(new BigDecimal(qty)));
-
-                    // 3. 记录流水，传入最新结余
                     recordStockLog(sub, qty, latestStock, orderNo, cost, "套餐回补");
+
+                    // 🌟 精准调用：传入单号和商品实体
+                    saveDocItem(doc.getDocNo(), sub, qty, cost, latestStock);
                 }
             }
         } else {
-            // 1. 先原子加库存
             gmsGoodsMapper.addStockAtomically(goods.getId(), new BigDecimal(returnQty));
-
-            // 2. 查出最新库存
             GmsGoods updatedGoods = gmsGoodsMapper.selectById(goods.getId());
             int latestStock = (updatedGoods != null && updatedGoods.getStock() != null) ? updatedGoods.getStock().intValue() : 0;
-
             BigDecimal cost = detail.getPurchasePrice() != null ? detail.getPurchasePrice() : BigDecimal.ZERO;
             impact = cost.multiply(new BigDecimal(returnQty));
-
-            // 3. 记录流水，传入最新结余
             recordStockLog(goods, returnQty, latestStock, orderNo, cost, "单品回补");
+
+            // 🌟 精准调用：传入单号和商品实体
+            saveDocItem(doc.getDocNo(), goods, returnQty, cost, latestStock);
         }
-        omsOrderDetailMapper.refundGoodsAtomically(detail.getId(), returnQty);
+
         return impact;
     }
 
-    // 🌟 核心修复：接收 latestStock 参数，并赋值给 afterQuantity
+    // 🌟 核心修复：完美对接真实的 GmsInventoryDocItem 实体类！
+    private void saveDocItem(String docNo, GmsGoods g, int qty, BigDecimal cost, int latestStock) {
+        GmsInventoryDocItem item = new GmsInventoryDocItem();
+        item.setDocNo(docNo);                  // 对应您的 private String docNo
+        item.setGoodsId(g.getId());            // 对应您的 private Long goodsId
+        item.setGoodsName(g.getName());        // 对应您的 private String goodsName
+        item.setBarcode(g.getBarcode());       // 对应您的 private String barcode
+        item.setChangeQty(qty);                // 对应您的 private Integer changeQty
+        item.setCostPrice(cost);               // 对应您的 private BigDecimal costPrice
+
+        // 智能推算变动前库存：最新库存(已加回退货量) - 本次退货量 = 变动前库存
+        item.setPreStock((long) (latestStock - qty));   // 对应您的 private Long preStock
+        item.setAfterStock((long) latestStock);         // 对应您的 private Long afterStock
+
+        gmsInventoryDocItemMapper.insert(item);
+    }
+
     private void recordStockLog(GmsGoods g, int qty, int latestStock, String orderNo, BigDecimal cost, String remark) {
         GmsStockLog log = new GmsStockLog();
         log.setGoodsId(g.getId());
@@ -197,16 +239,12 @@ public class OmsOrderRefundServiceImpl implements OmsOrderRefundService {
         log.setGoodsBarcode(g.getBarcode());
         log.setType("RETURN");
         log.setQuantity(qty);
-
-        // 🌟 赋值结余库存
         log.setAfterQuantity(latestStock);
-
         log.setOrderNo(orderNo);
         log.setCostPriceSnapshot(cost);
         log.setImpactAmount(cost.multiply(new BigDecimal(qty)));
         log.setRemark(remark);
         log.setCreateTime(LocalDateTime.now());
-
         gmsStockLogService.save(log);
     }
 }
