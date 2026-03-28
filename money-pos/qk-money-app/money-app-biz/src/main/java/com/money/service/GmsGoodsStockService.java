@@ -6,6 +6,8 @@ import com.money.entity.GmsGoods;
 import com.money.entity.GmsGoodsCombo;
 import com.money.mapper.GmsGoodsComboMapper;
 import com.money.mapper.GmsGoodsMapper;
+// 🌟 引入全局异常类，用于强阻断
+import com.money.web.exception.BaseException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -71,9 +73,12 @@ public class GmsGoodsStockService {
             if (map != null && map.get("totalValue") != null) {
                 return new BigDecimal(map.get("totalValue").toString());
             }
+            // 正常情况下（例如全店卖空了，真的没货），返回 0 是合法的
+            return BigDecimal.ZERO;
         } catch (Exception e) {
-            log.error("库存总货值计算异常: ", e);
+            log.error("💥 库存总货值计算异常: ", e);
+            // 🌟 核心修复 7：拒绝异常静默归零！遇到脏数据直接抛错阻断，保证财务数据的绝对纯洁！
+            throw new BaseException("库存盘点数据严重异常：无法计算实时大盘货值，为防止账目错乱，请联系技术人员排查底层数据！");
         }
-        return BigDecimal.ZERO;
     }
 }

@@ -59,32 +59,23 @@ const handleGoodsClear = () => {
     props.moneyCrud.doQuery();
 };
 
-// 🌟 导出全库商品的逻辑 (Blob 二进制流无缝下载)
 const handleExportGoods = async () => {
     ElMessage.success("正在生成 Excel 数据，请稍候...");
     try {
-        // 1. 使用系统自带的 req 发起请求，自动处理所有 context-path 和 Token
         const res = await req({
             url: '/gms/goods/export',
             method: 'GET',
-            responseType: 'blob' // 🌟 极其关键：告诉浏览器接收的是文件流，不是 JSON
+            responseType: 'blob'
         });
 
-        // 2. 将返回的二进制流转换成可下载的 Blob 对象
-        const blob = new Blob([res.data || res], {
-            type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        });
-
-        // 3. 利用浏览器原生能力，模拟点击下载
+        const blob = new Blob([res.data || res], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
         const downloadUrl = window.URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.style.display = 'none';
         link.href = downloadUrl;
-        link.download = `门店商品全量档案_${new Date().getTime()}.xlsx`; // 动态带上时间戳
+        link.download = `门店商品全量档案_${new Date().getTime()}.xlsx`;
         document.body.appendChild(link);
         link.click();
-
-        // 4. 打扫战场，释放内存
         window.URL.revokeObjectURL(downloadUrl);
         document.body.removeChild(link);
 

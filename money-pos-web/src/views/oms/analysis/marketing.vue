@@ -69,7 +69,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, onMounted, nextTick, onUnmounted } from 'vue'
 import PageWrapper from "@/components/PageWrapper.vue"
 import { req } from "@/api/index.js"
 import analysisApi from "@/api/oms/analysis.js"
@@ -84,8 +84,6 @@ const loading = ref(false)
 
 const chartRef = ref(null)
 const categoryChartRef = ref(null)
-let myChart = null
-let categoryChart = null
 
 const fetchData = async () => {
     loading.value = true
@@ -101,6 +99,7 @@ const fetchData = async () => {
         tableData.value = roiRes?.data || []
         categoryData.value = catRes?.data || []
 
+        // 数据更新后，通知图表重绘
         nextTick(() => {
             initRoiChart()
             initCategoryChart()
@@ -114,9 +113,19 @@ const fetchData = async () => {
 
 const formatMoney = (val) => Number(val || 0).toFixed(2)
 
+// 🌟 重构：ROI 走势图 (兼容空数据)
 const initRoiChart = () => {
-    if (!chartRef.value || tableData.value.length === 0) return
+    if (!chartRef.value) return
+    let myChart = echarts.getInstanceByDom(chartRef.value)
     if (!myChart) myChart = echarts.init(chartRef.value)
+
+    if (tableData.value.length === 0) {
+        myChart.clear()
+        myChart.setOption({
+            title: { text: '暂无营销活动数据', left: 'center', top: 'center', textStyle: { color: '#9ca3af', fontSize: 14, fontWeight: 'normal' } }
+        }, true)
+        return
+    }
 
     const names = tableData.value.map(d => d.ruleName)
     const rois = tableData.value.map(d => d.roiMultiplier)
@@ -130,13 +139,22 @@ const initRoiChart = () => {
             { name: 'ROI 倍数', type: 'line', data: rois, smooth: true, lineStyle: { width: 4 } },
             { name: '投入成本', type: 'bar', data: costs, yAxisIndex: 1, barWidth: 20 }
         ]
-    })
+    }, true)
 }
 
-// 渲染分类销售饼图
+// 🌟 重构：分类销售饼图 (兼容空数据)
 const initCategoryChart = () => {
-    if (!categoryChartRef.value || categoryData.value.length === 0) return
+    if (!categoryChartRef.value) return
+    let categoryChart = echarts.getInstanceByDom(categoryChartRef.value)
     if (!categoryChart) categoryChart = echarts.init(categoryChartRef.value)
+
+    if (categoryData.value.length === 0) {
+        categoryChart.clear()
+        categoryChart.setOption({
+            title: { text: '暂无分类销售数据', left: 'center', top: 'center', textStyle: { color: '#9ca3af', fontSize: 14, fontWeight: 'normal' } }
+        }, true)
+        return
+    }
 
     const pieData = categoryData.value.map(item => ({
         name: item.categoryName,
@@ -160,27 +178,29 @@ const initCategoryChart = () => {
                 type: 'pie',
                 radius: ['40%', '70%'],
                 avoidLabelOverlap: false,
-                itemStyle: {
-                    borderRadius: 10,
-                    borderColor: '#fff',
-                    borderWidth: 2
-                },
+                itemStyle: { borderRadius: 10, borderColor: '#fff', borderWidth: 2 },
                 label: { show: false, position: 'center' },
-                emphasis: {
-                    label: { show: true, fontSize: '20', fontWeight: 'bold' }
-                },
+                emphasis: { label: { show: true, fontSize: 20, fontWeight: 'bold' } },
                 labelLine: { show: false },
                 data: pieData
             }
         ]
-    })
+    }, true)
+}
+
+const handleResize = () => {
+    if (chartRef.value) echarts.getInstanceByDom(chartRef.value)?.resize()
+    if (categoryChartRef.value) echarts.getInstanceByDom(categoryChartRef.value)?.resize()
 }
 
 onMounted(() => {
     fetchData()
-    window.addEventListener('resize', () => {
-        myChart?.resize()
-        categoryChart?.resize()
-    })
+    window.addEventListener('resize', handleResize)
+})
+
+onUnmounted(() => {
+    window.removeEventListener('resize', handleResize)
+    if (chartRef.value) echarts.getInstanceByDom(chartRef.value)?.dispose()
+    if (categoryChartRef.value) echarts.getInstanceByDom(categoryChartRef.value)?.dispose()
 })
 </script>

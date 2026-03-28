@@ -1,6 +1,5 @@
 package com.money.controller;
 
-import com.money.dto.OmsOrder.OmsOrderVO;
 import com.money.dto.pos.PosGoodsVO;
 import com.money.dto.pos.PosMemberVO;
 import com.money.dto.pos.SettleAccountsDTO;

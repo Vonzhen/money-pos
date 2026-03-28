@@ -4566,7 +4566,7 @@ CREATE TABLE `sys_user`  (
 -- ----------------------------
 -- Records of sys_user
 -- ----------------------------
-INSERT INTO `sys_user` VALUES (1, 'money', '$2a$10$W6oaOSARIA3DsZy1DkdfUuqI3L7a885Ci7AYvpQK.9NGbeVhcZihi', 'money', 'https://i.postimg.cc/1RjgG5w3/batman.png', '18120800000', 'money@qq.com', '俺是一个超级管理员！', 1, 1, '2026-03-21 22:49:20', '', '2022-03-03 23:12:57', 'money', '2026-03-20 00:23:36', 0);
+INSERT INTO `sys_user` VALUES (1, 'vana', '$2a$10$W6oaOSARIA3DsZy1DkdfUuqI3L7a885Ci7AYvpQK.9NGbeVhcZihi', 'vana', 'https://i.postimg.cc/1RjgG5w3/batman.png', '18120800000', 'money@qq.com', '俺是一个超级管理员！', 1, 1, '2026-03-21 22:49:20', '', '2022-03-03 23:12:57', 'money', '2026-03-20 00:23:36', 0);
 INSERT INTO `sys_user` VALUES (1502254138862391297, 'admin', '$2a$10$uSSaBcZ94huyNdYS6D5swOGLcBtjdWEtbhfyhD7OziaCLCkxbo5Se', 'admin', 'https://i.postimg.cc/Hny7JfS2/superhero.png', '18120803972', 'admin@qq.com', '', 1, 1, '2026-03-15 16:25:49', 'admin', '2022-03-11 20:04:32', 'money', '2022-03-25 23:41:06', 0);
 INSERT INTO `sys_user` VALUES (1504612500111388673, 'guest', '$2a$10$Nj/4Tn.cj2SEdoIUqMz7FOczatNV/AltEu07ieTpAO.5hEGV7lZqC', 'guest', 'https://i.postimg.cc/Hny7JfS2/superhero.png', '18120800002', 'guest@qq.com', '', 1, 1, '2022-09-03 12:07:24', '001', '2022-03-18 08:15:49', 'money', '2022-03-25 23:41:00', 0);
 

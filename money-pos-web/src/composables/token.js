@@ -1,18 +1,15 @@
-// const tokenKey = 'accessToken'
-// 弃用不兼容 file:// 协议的 cookie 方案
-// import { useCookies } from '@vueuse/integrations/useCookies'
-
 const tokenKey = 'accessToken'
 
-// 🌟 核心修复：改用 HTML5 标准的 localStorage，完美兼容 Electron 的本地加载模式
+// 🌟 核心修复：将 localStorage 改为 sessionStorage
+// 做到“阅后即焚”：只要关闭软件/刷新页面，必须重新输入密码，保障 POS 资金安全！
 export const setToken = (token) => {
-    localStorage.setItem(tokenKey, token)
+    sessionStorage.setItem(tokenKey, token)
 }
 
 export const getToken = () => {
-    return localStorage.getItem(tokenKey)
+    return sessionStorage.getItem(tokenKey)
 }
 
 export const removeToken = () => {
-    localStorage.removeItem(tokenKey)
+    sessionStorage.removeItem(tokenKey)
 }

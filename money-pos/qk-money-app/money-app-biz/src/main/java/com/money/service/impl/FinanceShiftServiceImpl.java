@@ -7,6 +7,7 @@ import com.money.mapper.OmsOrderPayMapper;
 import com.money.service.FinanceShiftService;
 import com.money.util.MoneyUtil;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -15,6 +16,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class FinanceShiftServiceImpl implements FinanceShiftService {
@@ -22,6 +24,17 @@ public class FinanceShiftServiceImpl implements FinanceShiftService {
     private final OmsOrderMapper omsOrderMapper;
     private final OmsOrderPayMapper omsOrderPayMapper;
     private final OmsOrderDetailMapper omsOrderDetailMapper;
+
+    // 🌟 新增安全解析方法，防止脏数据或空指针导致交接班界面崩溃
+    private BigDecimal parseAmt(Object val) {
+        if (val == null) return BigDecimal.ZERO;
+        try {
+            return new BigDecimal(String.valueOf(val));
+        } catch (Exception e) {
+            log.error("💥 交接班金额解析异常! 出现疑似脏数据: [{}]", val, e);
+            return BigDecimal.ZERO;
+        }
+    }
 
     @Override
     public ShiftHandoverVO getShiftHandover(String startTime, String cashierName) {
@@ -46,7 +59,11 @@ public class FinanceShiftServiceImpl implements FinanceShiftService {
 
         for (Map<String, Object> stat : payStats) {
             String method = (String) stat.get("methodCode");
-            BigDecimal amt = (BigDecimal) stat.get("totalAmount");
+
+            // 🌟 核心修复：将老代码的 totalAmount 彻底替换为净额 netAmount
+            // 完美剥离全额退款带来的虚高账目！
+            BigDecimal amt = parseAmt(stat.get("netAmount"));
+
             if ("CASH".equals(method)) {
                 cashPay = MoneyUtil.add(cashPay, amt);
             } else if ("BALANCE".equals(method)) {

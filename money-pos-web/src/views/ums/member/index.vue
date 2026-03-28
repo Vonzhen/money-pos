@@ -98,7 +98,7 @@ const moneyCrud = ref(new MoneyCrud({
         {prop: 'phone', label: '手机号码', width: 130},
         {prop: 'brandLevels', label: '品牌身份', minWidth: 260},
         {prop: 'balance', label: '余额', width: 100},
-        {prop: 'coupon', label: '券额', width: 100},
+        {prop: 'coupon', label: '会员券', width: 100},
         {prop: 'voucherCount', label: '满减券', width: 80},
         {prop: 'opt', label: '操作', width: 220, align: 'center', fixed: 'right', isMoneyUD: true},
     ],

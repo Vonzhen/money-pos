@@ -42,7 +42,8 @@ public interface FinanceReportMapper {
             "      " + FinancialMetric.NET_SALES_FORMULA + " AS netIncome, " +
             "      0 AS procurementAmount " +
             "    FROM oms_order " +
-            "    WHERE status IN (" + FinancialMetric.VALID_STATUS_SQL + ") " +
+            // 🌟 修复：不再使用可能藏有旧代码的常量，直接强行注入标准三态！
+            "    WHERE status IN ('PAID', 'PARTIAL_REFUNDED', 'REFUNDED') " +
             "    <if test='startTime != null'> AND create_time &gt;= #{startTime} </if>" +
             "    <if test='endTime != null'> AND create_time &lt;= #{endTime} </if>" +
             "    " +
@@ -77,7 +78,8 @@ public interface FinanceReportMapper {
             "  IFNULL(SUM(actual_coupon_deduct), 0) as todayAssetDeduct " +
             "FROM oms_order " +
             "WHERE DATE(create_time) = CURDATE() " +
-            "AND status IN ('PAID', 'COMPLETED', 'PARTIAL_REFUNDED')")
+            // 🌟 修复：统一标准状态集
+            "AND status IN ('PAID', 'PARTIAL_REFUNDED', 'REFUNDED')")
     FinanceDataVO.AssetDashboardVO getTodayAssetSummary();
 
     /** 查询全店会员资产存量占比 */

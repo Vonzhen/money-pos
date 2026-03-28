@@ -15,6 +15,7 @@ import com.money.service.OmsOrderDetailService;
 import com.money.service.GmsGoodsCategoryService;
 import com.money.web.exception.BaseException;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 
@@ -26,6 +27,7 @@ import java.util.Map;
 /**
  * 🌟 结算流水线第三关：档案员 (已移除冗余的审计日志逻辑)
  */
+@Slf4j // 🌟 补全了日志注解
 @Service
 @RequiredArgsConstructor
 public class CheckoutOrderService {
@@ -34,8 +36,6 @@ public class CheckoutOrderService {
     private final OmsOrderMapper omsOrderMapper;
     private final OmsOrderDetailMapper omsOrderDetailMapper;
     private final GmsGoodsCategoryService gmsGoodsCategoryService;
-
-    // 🌟 修复：移除了 OmsOrderLogService 的注入，不再重复越权记日志
 
     public boolean loadExistingOrder(CheckoutContext context) {
         String reqId = context.getRequest().getReqId();
@@ -87,7 +87,13 @@ public class CheckoutOrderService {
         try {
             omsOrderMapper.insert(order);
         } catch (DuplicateKeyException e) {
-            throw new BaseException("【订单处理异常】请刷新页面后重试！");
+            // 🌟 修复问题8：明确捕获幂等键重复（重复点击/重试请求）
+            log.warn("⚠️ 拦截到重复的下单请求，ReqID已被占用: {}", orderNo);
+            throw new BaseException("订单已生成，请勿重复点击下单！");
+        } catch (Exception e) {
+            // 🌟 新增：对真实的数据库未知故障进行明确界定
+            log.error("💥 订单落库发生未知系统故障，单号: {}", orderNo, e);
+            throw new BaseException("系统开小差了，订单可能未保存，请联系管理员核实单号：" + orderNo);
         }
 
         java.util.List<OmsOrderDetail> details = new ArrayList<>();
@@ -117,9 +123,6 @@ public class CheckoutOrderService {
             details.add(detail);
         }
         omsOrderDetailService.saveBatch(details);
-
-        // 🌟 修复核心：彻底删除了这里组装 JSON 并调用 omsOrderLogService.save() 的代码
-        // 把记日志的神圣职责，完全交由专门处理支付落地的管家去执行。
 
         context.setOrder(order);
         context.setOrderDetails(details);

@@ -96,11 +96,6 @@ public class UmsMemberProfileService {
     }
 
     public void add(UmsMemberDTO addDTO) {
-        boolean exists = umsMemberMapper.exists(new LambdaQueryWrapper<UmsMember>().eq(UmsMember::getPhone, addDTO.getPhone()));
-        if (exists) {
-            throw new BaseException("手机号码已存在");
-        }
-
         UmsMember umsMember = new UmsMember();
         BeanUtil.copyProperties(addDTO, umsMember);
         String newCode;
@@ -120,13 +115,6 @@ public class UmsMemberProfileService {
         UmsMember umsMember = umsMemberMapper.selectById(updateDTO.getId());
         if (umsMember == null) {
             throw new BaseException(BizErrorStatus.MEMBER_NOT_FOUND, "会员不存在或已被删除");
-        }
-
-        boolean exists = umsMemberMapper.exists(new LambdaQueryWrapper<UmsMember>()
-                .ne(UmsMember::getId, updateDTO.getId())
-                .eq(UmsMember::getPhone, updateDTO.getPhone()));
-        if (exists) {
-            throw new BaseException("手机号码已与他人冲突");
         }
 
         BeanUtil.copyProperties(updateDTO, umsMember);
@@ -161,9 +149,31 @@ public class UmsMemberProfileService {
 
     public void delete(Set<Long> ids) {
         if (ids == null || ids.isEmpty()) return;
-        UmsMember updateEntity = new UmsMember();
-        updateEntity.setDeleted(true);
-        umsMemberMapper.update(updateEntity, new LambdaQueryWrapper<UmsMember>().in(UmsMember::getId, ids));
+
+        List<UmsMember> membersToDelete = umsMemberMapper.selectBatchIds(ids);
+        if (membersToDelete == null || membersToDelete.isEmpty()) return;
+
+        for (UmsMember member : membersToDelete) {
+            UmsMember updateEntity = new UmsMember();
+            updateEntity.setId(member.getId());
+
+            // 1. 软删除
+            updateEntity.setDeleted(true);
+
+            // 2. 资产清零
+            updateEntity.setBalance(BigDecimal.ZERO);
+            updateEntity.setCoupon(BigDecimal.ZERO);
+
+            // 3. 身份脱敏 (取消手机号修改，仅修改名称，防止超过数据库VARCHAR限制)
+            String oldName = member.getName() != null ? member.getName() : "未知";
+            // 截取名字防止加了前缀后超过长度
+            if (oldName.length() > 20) {
+                oldName = oldName.substring(0, 20);
+            }
+            updateEntity.setName("[注销]" + oldName);
+
+            umsMemberMapper.updateById(updateEntity);
+        }
     }
 
     public void saveBrandLevels(Long memberId, Map<String, String> brandLevels) {

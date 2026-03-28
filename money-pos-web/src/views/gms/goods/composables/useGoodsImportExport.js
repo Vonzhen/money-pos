@@ -1,43 +1,56 @@
 import { ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import goodsApi, { importGoods } from '@/api/gms/goods.js';
+import { req } from '@/api/index.js'; // 🌟 引入万能的 req
 
 export function useGoodsImportExport(onImportSuccess) {
     const importing = ref(false);
 
-    // 模板下载原生实现
+    // 🌟 核心升级：标准的 Blob 二进制流下载，杜绝文件损坏！
     const handleDownloadTemplate = async () => {
         try {
+            ElMessage.info("正在生成最新版导入模板...");
+
+            // 假设 goodsApi.downloadTemplate 底层是纯净的路径调用，若报错，可直接替换为 req 调用
             const res = await goodsApi.downloadTemplate();
-            const blob = new Blob([res]);
+
+            // 强制转换为 Excel 专属的 Blob 类型
+            const blob = new Blob([res.data || res], {
+                type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            });
+
             const link = document.createElement('a');
-            link.href = window.URL.createObjectURL(blob);
-            link.download = '商品导入模板.xlsx';
+            const downloadUrl = window.URL.createObjectURL(blob);
+            link.href = downloadUrl;
+            link.download = `商品极速导入模板_${new Date().getTime()}.xlsx`; // 加上时间戳防浏览器缓存
+            document.body.appendChild(link);
             link.click();
+
+            // 释放内存
+            window.URL.revokeObjectURL(downloadUrl);
+            document.body.removeChild(link);
+
+            ElMessage.success("✅ 模板下载成功！");
         } catch (e) {
-            ElMessage.error('模板下载失败');
+            console.error("模板下载异常:", e);
+            ElMessage.error('模板下载失败，请检查网络或后端服务');
         }
     };
 
-    // 批量导入原生实现 (已打通后端真实战报展示)
     const handleImport = async (options) => {
         importing.value = true;
         try {
-            // 接收后端的完整响应
             const res = await importGoods(options.file);
 
-            // 🌟 核心兼容解析：提取后端传回的那个漂亮的 String
-            // 如果拦截器剥离了外壳，拿到的直接就是 string；否则去 data 里找
             let resultMsg = '导入成功';
             if (typeof res === 'string' && res.includes('导入完成')) {
                 resultMsg = res;
             } else if (res && res.data && typeof res.data === 'string') {
                 resultMsg = res.data;
             } else if (res && res.msg) {
-                resultMsg = res.msg; // 兼容部分标准结构体
+                resultMsg = res.msg;
             }
 
-            // 弹出包含详细战报的消息框 (设置显示时间稍长一点，方便店长看清)
             ElMessage({
                 message: resultMsg,
                 type: 'success',
@@ -45,7 +58,7 @@ export function useGoodsImportExport(onImportSuccess) {
             });
 
             if (onImportSuccess) {
-                onImportSuccess(); // 触发回调，刷新表格
+                onImportSuccess();
             }
         } catch (e) {
             ElMessage.error(e.message || '导入失败，请检查文件格式或数据合法性');

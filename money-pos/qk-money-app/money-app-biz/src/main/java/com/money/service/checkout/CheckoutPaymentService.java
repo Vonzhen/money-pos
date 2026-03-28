@@ -3,8 +3,11 @@ package com.money.service.checkout;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.money.dto.pos.NormalizedPaymentResult;
 import com.money.entity.OmsOrderPay;
+import com.money.entity.SysDictDetail;
 import com.money.mapper.OmsOrderPayMapper;
+import com.money.service.SysDictDetailService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -14,19 +17,17 @@ import java.util.List;
 /**
  * 🌟 结算流水线第六关：出纳员 (增加真实流水回显能力)
  */
+@Slf4j // 🌟 补全了日志注解
 @Service
 @RequiredArgsConstructor
 public class CheckoutPaymentService {
 
     private final OmsOrderPayMapper omsOrderPayMapper;
+    // 🌟 注入字典服务
+    private final SysDictDetailService sysDictDetailService;
 
-    /**
-     * 🌟 P1-2 核心修复：时空回放逻辑。
-     * 从数据库中提取支付胶囊，100% 还原当时的实收、找零和净额。
-     */
     public void loadExistingPayments(CheckoutContext context) {
         String orderNo = context.getOrder().getOrderNo();
-
         List<OmsOrderPay> pays = omsOrderPayMapper.selectList(
                 new LambdaQueryWrapper<OmsOrderPay>().eq(OmsOrderPay::getOrderNo, orderNo)
         );
@@ -42,42 +43,32 @@ public class CheckoutPaymentService {
             item.setMethodName(pay.getPayMethodName());
             item.setPayTag(pay.getPayTag());
 
-            // 兼容老数据：如果新字段为空，则回退使用老字段
             BigDecimal net = pay.getNetAmount() != null ? pay.getNetAmount() : pay.getPayAmount();
             BigDecimal orig = pay.getOriginalAmount() != null ? pay.getOriginalAmount() : net;
             BigDecimal change = pay.getChangeAllocated() != null ? pay.getChangeAllocated() : BigDecimal.ZERO;
 
             item.setNetAmount(net);
-            // 假设 StandardPayItem 中有这两个 setter (如果没有请自行补充)
             item.setOriginalAmount(orig);
             item.setChangeAmount(change);
 
             result.getValidItems().add(item);
-
-            // 累加计算小票大盘数据
             netTotal = netTotal.add(net);
             originalTotal = originalTotal.add(orig);
             changeTotal = changeTotal.add(change);
         }
 
-        // 🌟 完美还原：将历史的真实统计数据注回 Result，供前端无损回显
         result.setNetReceived(netTotal);
         result.setTotalPaid(originalTotal);
         result.setChangeAmount(changeTotal);
-
         context.setPaymentResult(result);
     }
 
-    /**
-     * 🌟 P1-2 核心修复：入库时将快照数据全面落盘。
-     */
     public void handlePayment(CheckoutContext context) {
         NormalizedPaymentResult payResult = context.getPaymentResult();
         String orderNo = context.getOrder().getOrderNo();
         LocalDateTime now = LocalDateTime.now();
 
         for (NormalizedPaymentResult.StandardPayItem item : payResult.getValidItems()) {
-            // 如果实收和净额都为0，则忽略
             if ((item.getNetAmount() == null || item.getNetAmount().compareTo(BigDecimal.ZERO) == 0) &&
                     (item.getOriginalAmount() == null || item.getOriginalAmount().compareTo(BigDecimal.ZERO) == 0)) {
                 continue;
@@ -86,20 +77,47 @@ public class CheckoutPaymentService {
             OmsOrderPay payRecord = new OmsOrderPay();
             payRecord.setOrderNo(orderNo);
             payRecord.setPayMethodCode(item.getMethodCode());
-            payRecord.setPayMethodName(item.getMethodName());
+
+            // ==========================================
+            // 🌟 修复问题5：【payMethodName 过度信任前端】
+            // 摒弃前端传入的 Name，采用后台动态字典安全查询匹配！
+            // ==========================================
+            payRecord.setPayMethodName(getSafeMethodName(item.getMethodCode()));
+
             payRecord.setPayTag(item.getPayTag());
-
-            // 遗留字段兼容
             payRecord.setPayAmount(item.getNetAmount());
-
-            // 🌟 真实快照落盘 (兜底防止空指针)
             payRecord.setNetAmount(item.getNetAmount());
             payRecord.setOriginalAmount(item.getOriginalAmount() != null ? item.getOriginalAmount() : item.getNetAmount());
             payRecord.setChangeAllocated(item.getChangeAmount() != null ? item.getChangeAmount() : BigDecimal.ZERO);
-
             payRecord.setCreateTime(now);
 
             omsOrderPayMapper.insert(payRecord);
         }
+    }
+
+    // 🌟 终极安全映射引擎：查字典，既绝对零信任前端，又保留系统的动态配置能力！
+    private String getSafeMethodName(String code) {
+        if (code == null || code.trim().isEmpty()) {
+            return "未知支付";
+        }
+
+        try {
+            // ⚠️ 注意：这里的 "pay_method" 请确保是您在后台实际配置的支付方式【字典类型编码】
+            List<SysDictDetail> dictList = sysDictDetailService.listByDict("pay_method");
+
+            if (dictList != null) {
+                for (SysDictDetail detail : dictList) {
+                    // 🌟 核心修复：完美对接您的实体类！用 getValue() 对比，用 getCnDesc() 拿中文名
+                    if (code.equalsIgnoreCase(detail.getValue())) {
+                        return detail.getCnDesc();
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.error("💥 动态匹配支付方式字典失败，降级到安全兜底模式。代码: {}", code, e);
+        }
+
+        // 🌟 核心兜底：如果在字典里没查到（非法或未知的 Code），使用代码兜底防黑客！
+        return "其他渠道(" + code + ")";
     }
 }

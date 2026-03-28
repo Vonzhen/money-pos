@@ -15,6 +15,12 @@ const trialResult = ref(null);
 const reqId = ref('');
 const isTrialing = ref(false);
 
+// ==========================================
+// 🌟 核心新增：全局字典内存区 (方案B)
+// ==========================================
+const globalBrandsKv = ref({});    // 存储品牌 KV (例如 {1: '绿叶'})
+const globalMemberTypes = ref([]); // 存储会员等级字典数组
+
 // 🌟 安全红线 1：请求版本锁。防止并发修改导致旧请求覆盖新请求
 let currentTrialVersion = 0;
 // 🌟 高级异步防抖控制器 (P1-1 修复)
@@ -22,6 +28,12 @@ let trialTimer = null;
 let trialResolvers = [];
 
 export function usePosStore() {
+
+    // 🌟 写入全局字典的方法
+    const initGlobalDicts = (brandsKv, memberTypes) => {
+        globalBrandsKv.value = brandsKv;
+        globalMemberTypes.value = memberTypes;
+    };
 
     // 🌟 【影子计算底座】获取本地预估单价 (使用 Big.js 修复 P2-2)
     const getCartItemPrices = (item, member) => {
@@ -192,7 +204,7 @@ export function usePosStore() {
 
         const totalInputs = tendered.plus(aggregate);
         const change = totalInputs.gt(targetPay) ? totalInputs.minus(targetPay) : new Big(0);
-        const unpaid = targetPay.gt(totalInputs) ? targetPay.minus(totalInputs) : new Big(0);
+        const unpaid = targetPay.gt(totalInputs) ? targetPay.minus(targetPay) : new Big(0);
 
         return {
             targetPay: targetPay.toNumber(),
@@ -253,11 +265,31 @@ export function usePosStore() {
         return await req({ url: '/pos/settleAccounts', method: 'POST', data: orderData });
     };
 
+    // 🌟 核心新增：暴露按条码搜索并加入购物车的能力，供外部扫码枪接管
+    const scanAndAddToCart = async (barcode) => {
+        try {
+            const res = await req({ url: '/pos/goods', method: 'GET', params: { barcode: barcode } });
+            const items = res.data || [];
+            if (items.length === 1) {
+                addToCart(items[0]);
+                return { success: true, goods: items[0] };
+            } else if (items.length > 1) {
+                return { success: false, reason: 'multiple', items };
+            } else {
+                return { success: false, reason: 'not_found', barcode };
+            }
+        } catch (e) {
+            return { success: false, reason: 'error', error: e };
+        }
+    };
+
     return {
         cartList, enrichedCartList, currentMember, isWaiveCoupon, manualDiscount, selectedCouponRule, usedCouponCount, paymentList,
         totalCount, totalAmount, memberAmount, actualCouponUsed, waivedCouponAmount, finalPayAmount, theoreticalCouponUsed, participatingAmount, paymentStats,
         reqId, trialResult, isTrialing,
         addToCart, removeItem, bindMember, clearMember, clearAll, restoreOrder, submitOrder, runTrial, prepareCheckout, getCartItemPrices,
-        getTrialItemInfo
+        getTrialItemInfo,
+        scanAndAddToCart,
+        globalBrandsKv, globalMemberTypes, initGlobalDicts // 🌟 暴露出全局字典和写入方法
     };
 }
