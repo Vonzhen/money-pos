@@ -34,7 +34,8 @@ public interface OmsOrderAuditMapper {
             "       ELSE 0 END AS profitMargin, " +
             "  CASE WHEN (purchase_price IS NULL OR purchase_price &lt;= 0) THEN 1 ELSE 0 END AS isMissingCost " +
             "FROM oms_order_detail " +
-            "WHERE status IN ('PAID', 'COMPLETED', 'PARTIAL_REFUNDED') " +
+            // 🌟 修复：统一标准状态集
+            "WHERE status IN ('PAID', 'PARTIAL_REFUNDED', 'REFUNDED') " +
             "  <if test='orderNo != null and orderNo != \"\"'> " +
             "    AND order_no = #{orderNo} " +
             "  </if> " +

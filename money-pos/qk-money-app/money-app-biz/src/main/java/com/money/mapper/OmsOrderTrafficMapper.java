@@ -20,7 +20,8 @@ public interface OmsOrderTrafficMapper {
             "  SUM(IFNULL(final_sales_amount, 0)) / #{divisor} as avgSalesAmount " +
             "FROM oms_order " +
             "WHERE create_time &gt;= #{startTime} AND create_time &lt;= #{endTime} " +
-            "  AND status IN ('PAID', 'COMPLETED', 'PARTIAL_REFUNDED') " +
+            // 🌟 修复：统一标准状态集
+            "  AND status IN ('PAID', 'PARTIAL_REFUNDED', 'REFUNDED') " +
             "<if test='dayOfWeek != null'> AND DAYOFWEEK(create_time) = #{dayOfWeek} </if> " +
             "GROUP BY HOUR(create_time) " +
             "ORDER BY hour ASC" +
@@ -37,7 +38,8 @@ public interface OmsOrderTrafficMapper {
             "  SUM(IFNULL(final_sales_amount, 0)) / #{divisor} as avgSalesAmount " +
             "FROM oms_order " +
             "WHERE create_time >= #{startTime} AND create_time <= #{endTime} " +
-            "  AND status IN ('PAID', 'COMPLETED', 'PARTIAL_REFUNDED') " +
+            // 🌟 修复：统一标准状态集
+            "  AND status IN ('PAID', 'PARTIAL_REFUNDED', 'REFUNDED') " +
             "GROUP BY timeKey ORDER BY timeKey ASC")
     List<com.money.dto.OmsOrder.OmsSalesDataVO.TimeTrafficVO> getWeeklyTrafficAnalysis(
             @Param("startTime") LocalDateTime startTime,
@@ -50,7 +52,8 @@ public interface OmsOrderTrafficMapper {
             "  SUM(IFNULL(final_sales_amount, 0)) / #{divisor} as avgSalesAmount " +
             "FROM oms_order " +
             "WHERE create_time >= #{startTime} AND create_time <= #{endTime} " +
-            "  AND status IN ('PAID', 'COMPLETED', 'PARTIAL_REFUNDED') " +
+            // 🌟 修复：统一标准状态集
+            "  AND status IN ('PAID', 'PARTIAL_REFUNDED', 'REFUNDED') " +
             "GROUP BY timeKey ORDER BY timeKey ASC")
     List<com.money.dto.OmsOrder.OmsSalesDataVO.TimeTrafficVO> getMonthlyTrafficAnalysis(
             @Param("startTime") LocalDateTime startTime,

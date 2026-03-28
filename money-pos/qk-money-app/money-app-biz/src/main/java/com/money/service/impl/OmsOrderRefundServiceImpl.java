@@ -2,6 +2,7 @@ package com.money.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.money.constant.BizErrorStatus; // 🌟 引入新建立的标准业务错误码表
 import com.money.constant.OrderStatusEnum;
 import com.money.constant.PayMethodEnum;
 import com.money.dto.OmsOrder.ReturnGoodsDTO;
@@ -45,10 +46,12 @@ public class OmsOrderRefundServiceImpl implements OmsOrderRefundService {
     public void returnOrder(String orderNo) {
         OmsOrder order = omsOrderMapper.selectOne(new LambdaQueryWrapper<OmsOrder>().eq(OmsOrder::getOrderNo, orderNo));
         if (order == null) {
-            throw new BaseException("订单不存在");
+            // 🌟 修复8：全域标准化错误码，透传故障单号
+            throw new BaseException(BizErrorStatus.POS_REFUND_NOT_FOUND).withData(orderNo);
         }
         if (OrderStatusEnum.REFUNDED.name().equals(order.getStatus())) {
-            throw new BaseException("订单已全额退款，请勿重复操作");
+            // 🌟 修复8：全域标准化错误码，防重提示
+            throw new BaseException(BizErrorStatus.POS_REFUND_REPEAT).withData(orderNo);
         }
 
         boolean isLocked = omsOrderMapper.update(null, new LambdaUpdateWrapper<OmsOrder>()
@@ -58,7 +61,8 @@ public class OmsOrderRefundServiceImpl implements OmsOrderRefundService {
 
         if (!isLocked) {
             log.warn("拦截到重复的整单退款请求: {}", orderNo);
-            throw new BaseException("订单正在处理退款或已退款，请勿重复点击");
+            // 🌟 修复8：并发防重统一纳入错误码表
+            throw new BaseException(BizErrorStatus.POS_REFUND_REPEAT).withData(orderNo);
         }
 
         omsOrderMapper.updateRefundStatusToFull(orderNo, OrderStatusEnum.REFUNDED.name());
@@ -123,11 +127,15 @@ public class OmsOrderRefundServiceImpl implements OmsOrderRefundService {
     public void returnGoods(ReturnGoodsDTO dto) {
         OmsOrderDetail detail = omsOrderDetailMapper.selectById(dto.getDetailId());
         OmsOrder order = omsOrderMapper.selectOne(new LambdaQueryWrapper<OmsOrder>().eq(OmsOrder::getOrderNo, dto.getOrderNo()));
-        if (detail == null || order == null) throw new BaseException("数据异常");
+        if (detail == null || order == null) {
+            // 🌟 修复8：明细/主单找不到时，走标准退款错误码
+            throw new BaseException(BizErrorStatus.POS_REFUND_NOT_FOUND).withData(dto);
+        }
 
         if (!detail.getOrderNo().equals(order.getOrderNo())) {
             log.error("触发越权/串单退货拦截! 请求单号:{}, 实际明细归属单号:{}", dto.getOrderNo(), detail.getOrderNo());
-            throw new BaseException("退货明细与订单归属不匹配，疑似非法操作！");
+            // 🌟 修复8：防串单漏洞拦截接入标准状态码体系，透传作案现场数据
+            throw new BaseException(BizErrorStatus.POS_REFUND_NOT_FOUND).withData(dto.getOrderNo());
         }
 
         BigDecimal unitSalesPrice = detail.getGoodsPrice() != null ? detail.getGoodsPrice() : BigDecimal.ZERO;
@@ -172,7 +180,8 @@ public class OmsOrderRefundServiceImpl implements OmsOrderRefundService {
         int updatedRows = omsOrderDetailMapper.refundGoodsAtomically(detail.getId(), returnQty);
         if (updatedRows != 1) {
             log.error("明细退货数量更新失败(可能超退或并发)。明细ID:{}, 请求退数量:{}", detail.getId(), returnQty);
-            throw new BaseException("退货数量异常：超过可退数量或重复退货，请刷新订单！");
+            // 🌟 修复8：并发超退拦截接入标准码体系，透传请求数量
+            throw new BaseException(BizErrorStatus.POS_REFUND_QTY_INVALID).withData("请求退数量:" + returnQty);
         }
 
         BigDecimal impact = BigDecimal.ZERO;
@@ -180,7 +189,8 @@ public class OmsOrderRefundServiceImpl implements OmsOrderRefundService {
 
         if (goods == null) {
             log.error("退货异常：商品档案不存在，商品ID: {}", detail.getGoodsId());
-            throw new BaseException("退货失败：找不到对应的系统商品档案");
+            // 🌟 修复8：复用商品缺失标准码，透传故障商品ID
+            throw new BaseException(BizErrorStatus.GOODS_NOT_FOUND).withData(detail.getGoodsId());
         }
 
         if (goods.getIsCombo() != null && goods.getIsCombo() == 1) {
@@ -196,7 +206,6 @@ public class OmsOrderRefundServiceImpl implements OmsOrderRefundService {
                     impact = impact.add(cost.multiply(new BigDecimal(qty)));
                     recordStockLog(sub, qty, latestStock, orderNo, cost, "套餐回补");
 
-                    // 🌟 精准调用：传入单号和商品实体
                     saveDocItem(doc.getDocNo(), sub, qty, cost, latestStock);
                 }
             }
@@ -208,26 +217,23 @@ public class OmsOrderRefundServiceImpl implements OmsOrderRefundService {
             impact = cost.multiply(new BigDecimal(returnQty));
             recordStockLog(goods, returnQty, latestStock, orderNo, cost, "单品回补");
 
-            // 🌟 精准调用：传入单号和商品实体
             saveDocItem(doc.getDocNo(), goods, returnQty, cost, latestStock);
         }
 
         return impact;
     }
 
-    // 🌟 核心修复：完美对接真实的 GmsInventoryDocItem 实体类！
     private void saveDocItem(String docNo, GmsGoods g, int qty, BigDecimal cost, int latestStock) {
         GmsInventoryDocItem item = new GmsInventoryDocItem();
-        item.setDocNo(docNo);                  // 对应您的 private String docNo
-        item.setGoodsId(g.getId());            // 对应您的 private Long goodsId
-        item.setGoodsName(g.getName());        // 对应您的 private String goodsName
-        item.setBarcode(g.getBarcode());       // 对应您的 private String barcode
-        item.setChangeQty(qty);                // 对应您的 private Integer changeQty
-        item.setCostPrice(cost);               // 对应您的 private BigDecimal costPrice
+        item.setDocNo(docNo);
+        item.setGoodsId(g.getId());
+        item.setGoodsName(g.getName());
+        item.setBarcode(g.getBarcode());
+        item.setChangeQty(qty);
+        item.setCostPrice(cost);
 
-        // 智能推算变动前库存：最新库存(已加回退货量) - 本次退货量 = 变动前库存
-        item.setPreStock((long) (latestStock - qty));   // 对应您的 private Long preStock
-        item.setAfterStock((long) latestStock);         // 对应您的 private Long afterStock
+        item.setPreStock((long) (latestStock - qty));
+        item.setAfterStock((long) latestStock);
 
         gmsInventoryDocItemMapper.insert(item);
     }
