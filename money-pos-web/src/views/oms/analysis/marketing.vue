@@ -4,9 +4,9 @@
             <div class="flex items-center justify-between mb-6">
                 <div>
                     <h2 class="text-2xl font-bold text-gray-800 flex items-center">
-                        <el-icon class="text-orange-500 mr-2"><TrendCharts /></el-icon> 5.4 经营大盘：分类占比与活动复盘
+                        <el-icon class="text-orange-500 mr-2"><TrendCharts /></el-icon> 经营大盘：商品结构与爆品排榜
                     </h2>
-                    <p class="text-sm text-gray-500 mt-1">洞察各品类销售结构，分析让利带来的真实收益与 ROI 杠杆</p>
+                    <p class="text-sm text-gray-500 mt-1">从品类宏观结构到细分爆品，精准定位门店利润引流引擎</p>
                 </div>
                 <div class="flex gap-4">
                     <el-date-picker
@@ -21,55 +21,82 @@
                 </div>
             </div>
 
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-                <el-card shadow="hover" class="rounded-lg" header="📊 品类销售额占比结构">
-                    <div ref="categoryChartRef" style="height: 350px; width: 100%;"></div>
-                </el-card>
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
 
-                <el-card shadow="hover" class="rounded-lg" header="📈 营销活动 ROI 杠杆率走势">
-                    <div ref="chartRef" style="height: 350px; width: 100%;"></div>
-                </el-card>
+                <div class="flex flex-col gap-6 lg:col-span-5">
+
+                    <el-card shadow="hover" class="rounded-lg" header="📊 品类销售额占比结构">
+                        <div ref="categoryChartRef" style="height: 380px; width: 100%;"></div>
+                    </el-card>
+
+                    <el-card shadow="hover" class="rounded-lg" header="🏆 门店品类创收排行榜">
+                        <el-table :data="sortedCategoryData" height="420" stripe style="width: 100%" v-loading="loading">
+                            <el-table-column type="index" label="排名" width="55" align="center">
+                                <template #default="scope">
+                                    <span v-if="scope.$index < 3" class="text-lg text-red-500 font-black">{{ scope.$index + 1 }}</span>
+                                    <span v-else class="text-gray-500 font-bold">{{ scope.$index + 1 }}</span>
+                                </template>
+                            </el-table-column>
+
+                            <el-table-column prop="categoryName" label="品类名称" min-width="100" show-overflow-tooltip>
+                                <template #default="{row}">
+                                    <span class="font-bold text-gray-800">{{ row.categoryName }}</span>
+                                </template>
+                            </el-table-column>
+
+                            <el-table-column prop="salesQty" label="售出件数" width="90" align="center">
+                                <template #default="{row}">
+                                    <span class="font-bold text-gray-600">{{ row.salesQty }} 件</span>
+                                </template>
+                            </el-table-column>
+
+                            <el-table-column prop="salesAmount" label="拉动营业额" min-width="110" align="right">
+                                <template #default="{row}">
+                                    <span class="font-bold text-blue-600">¥ {{ formatMoney(row.salesAmount) }}</span>
+                                </template>
+                            </el-table-column>
+                        </el-table>
+                    </el-card>
+                </div>
+
+                <div class="lg:col-span-7">
+                    <el-card shadow="hover" class="rounded-lg h-full" header="🔥 Top 50 门店畅销爆品榜单 (按动销件数)">
+                        <el-table :data="topGoodsRanking" height="850" stripe style="width: 100%" v-loading="loading">
+                            <el-table-column type="index" label="热度" width="70" align="center">
+                                <template #default="scope">
+                                    <span v-if="scope.$index < 3" class="text-xl text-red-500 font-black">🔥 {{ scope.$index + 1 }}</span>
+                                    <span v-else class="text-gray-500 font-bold">{{ scope.$index + 1 }}</span>
+                                </template>
+                            </el-table-column>
+
+                            <el-table-column prop="goodsName" label="商品名称" min-width="150" show-overflow-tooltip>
+                                <template #default="{row}">
+                                    <span class="font-bold text-gray-800">{{ row.goodsName }}</span>
+                                </template>
+                            </el-table-column>
+
+                            <el-table-column prop="salesQty" label="净售出数量" width="110" align="center" sortable>
+                                <template #default="{row}">
+                                    <el-tag type="danger" effect="dark" class="font-bold">{{ row.salesQty }} 件</el-tag>
+                                </template>
+                            </el-table-column>
+
+                            <el-table-column prop="salesAmount" label="拉动营业额" width="130" align="right" sortable>
+                                <template #default="{row}">
+                                    <span class="font-bold text-blue-600">¥ {{ formatMoney(row.salesAmount) }}</span>
+                                </template>
+                            </el-table-column>
+                        </el-table>
+                    </el-card>
+                </div>
+
             </div>
-
-            <el-card shadow="hover" class="rounded-lg" header="📋 营销战绩明细 (ROI 降序)">
-                <el-table :data="tableData" stripe border v-loading="loading">
-                    <el-table-column prop="ruleName" label="营销活动/券名称" min-width="180">
-                        <template #default="{row}">
-                            <div class="font-bold">{{ row.ruleName }}</div>
-                            <div class="text-xs text-gray-400">{{ row.ruleType }}</div>
-                        </template>
-                    </el-table-column>
-                    <el-table-column prop="usedCount" label="核销张数" width="100" align="center" />
-                    <el-table-column prop="totalDiscountGived" label="成本 (总让利)" width="150" align="right">
-                        <template #default="{row}">
-                            <span class="text-red-500 font-bold">¥ {{ formatMoney(row.totalDiscountGived) }}</span>
-                        </template>
-                    </el-table-column>
-                    <el-table-column prop="totalRevenueBrought" label="拉动营业额" width="150" align="right">
-                        <template #default="{row}">
-                            <span class="text-green-600 font-bold">¥ {{ formatMoney(row.totalRevenueBrought) }}</span>
-                        </template>
-                    </el-table-column>
-                    <el-table-column prop="avgOrderValue" label="活动客单价" width="120" align="right">
-                        <template #default="{row}">
-                            <span class="text-gray-700">¥ {{ formatMoney(row.avgOrderValue) }}</span>
-                        </template>
-                    </el-table-column>
-                    <el-table-column prop="roiMultiplier" label="ROI 杠杆" width="120" align="center" fixed="right">
-                        <template #default="{row}">
-                            <el-tag :type="row.roiMultiplier > 5 ? 'success' : 'danger'" effect="dark" class="font-black">
-                                {{ row.roiMultiplier }} x
-                            </el-tag>
-                        </template>
-                    </el-table-column>
-                </el-table>
-            </el-card>
         </div>
     </PageWrapper>
 </template>
 
 <script setup>
-import { ref, onMounted, nextTick, onUnmounted } from 'vue'
+import { ref, onMounted, nextTick, onUnmounted, computed } from 'vue'
 import PageWrapper from "@/components/PageWrapper.vue"
 import { req } from "@/api/index.js"
 import analysisApi from "@/api/oms/analysis.js"
@@ -78,30 +105,31 @@ import * as echarts from 'echarts'
 import dayjs from 'dayjs'
 
 const dateRange = ref([dayjs().subtract(29, 'day').format('YYYY-MM-DD'), dayjs().format('YYYY-MM-DD')])
-const tableData = ref([])
 const categoryData = ref([])
+const topGoodsRanking = ref([])
 const loading = ref(false)
 
-const chartRef = ref(null)
 const categoryChartRef = ref(null)
+
+// 排序
+const sortedCategoryData = computed(() => {
+    return [...categoryData.value].sort((a, b) => (b.salesAmount || 0) - (a.salesAmount || 0))
+})
 
 const fetchData = async () => {
     loading.value = true
     try {
         const [startDate, endDate] = dateRange.value
 
-        // 并发请求
-        const [roiRes, catRes] = await Promise.all([
-            req({ url: '/oms/analysis/marketing-roi', method: 'GET', params: { startDate, endDate } }),
-            analysisApi.getCategorySales(startDate, endDate)
+        const [catRes, dashboardRes] = await Promise.all([
+            analysisApi.getCategorySales(startDate, endDate),
+            req({ url: '/oms/analysis/dashboard', method: 'GET', params: { startDate, endDate } })
         ])
 
-        tableData.value = roiRes?.data || []
         categoryData.value = catRes?.data || []
+        topGoodsRanking.value = dashboardRes?.data?.topGoodsRanking || []
 
-        // 数据更新后，通知图表重绘
         nextTick(() => {
-            initRoiChart()
             initCategoryChart()
         })
     } catch (e) {
@@ -113,45 +141,15 @@ const fetchData = async () => {
 
 const formatMoney = (val) => Number(val || 0).toFixed(2)
 
-// 🌟 重构：ROI 走势图 (兼容空数据)
-const initRoiChart = () => {
-    if (!chartRef.value) return
-    let myChart = echarts.getInstanceByDom(chartRef.value)
-    if (!myChart) myChart = echarts.init(chartRef.value)
-
-    if (tableData.value.length === 0) {
-        myChart.clear()
-        myChart.setOption({
-            title: { text: '暂无营销活动数据', left: 'center', top: 'center', textStyle: { color: '#9ca3af', fontSize: 14, fontWeight: 'normal' } }
-        }, true)
-        return
-    }
-
-    const names = tableData.value.map(d => d.ruleName)
-    const rois = tableData.value.map(d => d.roiMultiplier)
-    const costs = tableData.value.map(d => d.totalDiscountGived)
-
-    myChart.setOption({
-        tooltip: { trigger: 'axis' },
-        xAxis: { type: 'category', data: names },
-        yAxis: [{ type: 'value', name: 'ROI 倍数' }, { type: 'value', name: '成本金额', position: 'right' }],
-        series: [
-            { name: 'ROI 倍数', type: 'line', data: rois, smooth: true, lineStyle: { width: 4 } },
-            { name: '投入成本', type: 'bar', data: costs, yAxisIndex: 1, barWidth: 20 }
-        ]
-    }, true)
-}
-
-// 🌟 重构：分类销售饼图 (兼容空数据)
 const initCategoryChart = () => {
     if (!categoryChartRef.value) return
-    let categoryChart = echarts.getInstanceByDom(categoryChartRef.value)
-    if (!categoryChart) categoryChart = echarts.init(categoryChartRef.value)
+    let chart = echarts.getInstanceByDom(categoryChartRef.value)
+    if (!chart) chart = echarts.init(categoryChartRef.value)
 
     if (categoryData.value.length === 0) {
-        categoryChart.clear()
-        categoryChart.setOption({
-            title: { text: '暂无分类销售数据', left: 'center', top: 'center', textStyle: { color: '#9ca3af', fontSize: 14, fontWeight: 'normal' } }
+        chart.clear()
+        chart.setOption({
+            title: { text: '暂无分类数据', left: 'center', top: 'center', textStyle: { color: '#9ca3af' } }
         }, true)
         return
     }
@@ -162,35 +160,33 @@ const initCategoryChart = () => {
         qty: item.salesQty
     }))
 
-    categoryChart.setOption({
+    chart.setOption({
         tooltip: {
             trigger: 'item',
-            formatter: function (params) {
-                return `${params.name} <br/>
-                        销售额：<b>¥${params.value}</b> (${params.percent}%) <br/>
-                        销售件数：<b>${params.data.qty} 件</b>`
-            }
+            appendToBody: true,
+            formatter: params =>
+                `${params.name}<br/>销售额：¥${params.value} (${params.percent}%)<br/>件数：${params.data.qty}`
         },
-        legend: { type: 'scroll', orient: 'vertical', right: 10, top: 20, bottom: 20 },
-        series: [
-            {
-                name: '分类销售',
-                type: 'pie',
-                radius: ['40%', '70%'],
-                avoidLabelOverlap: false,
-                itemStyle: { borderRadius: 10, borderColor: '#fff', borderWidth: 2 },
-                label: { show: false, position: 'center' },
-                emphasis: { label: { show: true, fontSize: 20, fontWeight: 'bold' } },
-                labelLine: { show: false },
-                data: pieData
-            }
-        ]
+        legend: {
+            type: 'scroll',
+            orient: 'vertical',
+            right: '5%',
+            top: 'middle'
+        },
+        series: [{
+            type: 'pie',
+            radius: ['45%', '70%'],
+            center: ['35%', '50%'],
+            label: { show: false },     // 🌟 隐藏文字
+            labelLine: { show: false }, // 🌟 彻底干掉引出线
+            itemStyle: { borderRadius: 5, borderColor: '#fff', borderWidth: 2 }, // 顺手加了个小圆角边框让饼图更好看
+            data: pieData
+        }]
     }, true)
 }
 
 const handleResize = () => {
-    if (chartRef.value) echarts.getInstanceByDom(chartRef.value)?.resize()
-    if (categoryChartRef.value) echarts.getInstanceByDom(categoryChartRef.value)?.resize()
+    echarts.getInstanceByDom(categoryChartRef.value)?.resize()
 }
 
 onMounted(() => {
@@ -200,7 +196,6 @@ onMounted(() => {
 
 onUnmounted(() => {
     window.removeEventListener('resize', handleResize)
-    if (chartRef.value) echarts.getInstanceByDom(chartRef.value)?.dispose()
-    if (categoryChartRef.value) echarts.getInstanceByDom(categoryChartRef.value)?.dispose()
+    echarts.getInstanceByDom(categoryChartRef.value)?.dispose()
 })
 </script>

@@ -6,7 +6,7 @@
                     <h2 class="text-2xl font-bold text-blue-700 flex items-center">
                         <el-icon class="mr-2"><DataAnalysis /></el-icon> 门店经营作战室 (销售大盘)
                     </h2>
-                    <p class="text-sm text-gray-500 mt-1">深度剖析门店商品流转效率、客单价走势与品牌贡献度</p>
+                    <p class="text-sm text-gray-500 mt-1">深度剖析门店商品流转效率与大盘营业走势</p>
                 </div>
                 <div class="flex gap-4">
                     <el-date-picker
@@ -48,38 +48,8 @@
                 </el-card>
             </div>
 
-            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-                <el-card shadow="hover" class="lg:col-span-2 rounded-lg" header="📈 期间营业额与单量双轨走势">
-                    <div ref="trendChartRef" style="height: 380px; width: 100%;"></div>
-                </el-card>
-
-                <el-card shadow="hover" class="rounded-lg" header="🏅 品牌阵营销售额贡献比">
-                    <div ref="brandPieChartRef" style="height: 380px; width: 100%;"></div>
-                </el-card>
-            </div>
-
-            <el-card shadow="hover" class="rounded-lg" header="🔥 Top 50 门店畅销爆品榜单 (按动销件数)">
-                <el-table :data="data.topGoodsRanking" height="500" stripe style="width: 100%" v-loading="loading">
-                    <el-table-column type="index" label="热度" width="80" align="center">
-                        <template #default="scope">
-                            <span v-if="scope.$index < 3" class="text-xl text-red-500 font-black">🔥 {{ scope.$index + 1 }}</span>
-                            <span v-else class="text-gray-500 font-bold">{{ scope.$index + 1 }}</span>
-                        </template>
-                    </el-table-column>
-                    <el-table-column prop="goodsName" label="商品名称" min-width="200" show-overflow-tooltip>
-                        <template #default="{row}"><span class="font-bold text-gray-800">{{ row.goodsName }}</span></template>
-                    </el-table-column>
-                    <el-table-column prop="salesQty" label="净售出数量" width="150" align="center" sortable>
-                        <template #default="{row}">
-                            <el-tag type="danger" effect="dark" class="font-bold">{{ row.salesQty }} 件</el-tag>
-                        </template>
-                    </el-table-column>
-                    <el-table-column prop="salesAmount" label="拉动营业额" width="150" align="right" sortable>
-                        <template #default="{row}">
-                            <span class="font-bold text-blue-600">¥ {{ formatMoney(row.salesAmount) }}</span>
-                        </template>
-                    </el-table-column>
-                </el-table>
+            <el-card shadow="hover" class="rounded-lg mb-6" header="📈 期间营业额与单量双轨走势">
+                <div ref="trendChartRef" style="height: 450px; width: 100%;"></div>
             </el-card>
         </div>
     </PageWrapper>
@@ -108,24 +78,20 @@ const shortcuts = [
 
 const data = ref({
     totalSalesAmount: 0, totalOrderCount: 0, totalGoodsCount: 0, avgOrderValue: 0,
-    topGoodsRanking: [], brandDistribution: [], trendDates: [], trendSales: [], trendOrders: []
+    trendDates: [], trendSales: [], trendOrders: []
 })
 
 const trendChartRef = ref(null)
-const brandPieChartRef = ref(null)
 let trendChart = null
-let brandPieChart = null
 
 const fetchData = async () => {
     loading.value = true
     try {
         const [startDate, endDate] = dateRange.value || ['', '']
-        // 🌟 核心：直接请求 oms/analysis 接口
         const res = await req({ url: '/oms/analysis/dashboard', method: 'GET', params: { startDate, endDate } })
         data.value = res?.data || res || {}
         nextTick(() => {
             initTrendChart()
-            initBrandPieChart()
         })
     } catch (error) {
         ElMessage.error("获取销售大盘数据失败")
@@ -168,29 +134,8 @@ const initTrendChart = () => {
     })
 }
 
-const initBrandPieChart = () => {
-    if (!brandPieChartRef.value) return
-    if (!brandPieChart) brandPieChart = echarts.init(brandPieChartRef.value)
-
-    const pieData = (data.value.brandDistribution || []).map(b => ({ name: b.brandName, value: b.salesAmount }))
-
-    brandPieChart.setOption({
-        tooltip: { trigger: 'item', formatter: '{b}: ¥ {c} ({d}%)', appendToBody: true },
-        legend: { type: 'scroll', orient: 'horizontal', bottom: '0' },
-        series: [{
-            name: '品牌业绩贡献', type: 'pie', radius: ['35%', '65%'],
-            center: ['50%', '45%'],
-            avoidLabelOverlap: true,
-            itemStyle: { borderRadius: 4, borderColor: '#fff', borderWidth: 2 },
-            label: { show: false },
-            data: pieData
-        }]
-    })
-}
-
 const handleResize = () => {
     if (trendChart) trendChart.resize()
-    if (brandPieChart) brandPieChart.resize()
 }
 
 onMounted(() => {
@@ -201,6 +146,5 @@ onMounted(() => {
 onBeforeUnmount(() => {
     window.removeEventListener('resize', handleResize)
     if (trendChart) trendChart.dispose()
-    if (brandPieChart) brandPieChart.dispose()
 })
 </script>

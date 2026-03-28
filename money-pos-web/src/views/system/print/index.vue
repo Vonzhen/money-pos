@@ -29,7 +29,7 @@
                     <el-divider content-position="left" class="!mt-8">小票排版内容</el-divider>
 
                     <el-form-item label="店铺名称 (抬头)">
-                        <el-input v-model="form.shopName" placeholder="例如：麦尼收银" maxlength="20" show-word-limit />
+                        <el-input v-model="form.shopName" placeholder="例如：万象收银" maxlength="20" show-word-limit />
                     </el-form-item>
 
                     <el-form-item label="头部欢迎语">
@@ -152,7 +152,7 @@ const saving = ref(false)
 const testOrderNo = ref('')
 
 const form = ref({
-    shopName: '麦尼收银',
+    shopName: '万象收银',
     shopPhone: '',
     shopAddress: '',
     headerMsg: '',

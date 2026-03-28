@@ -57,12 +57,12 @@
             </el-card>
 
             <el-card shadow="hover" :body-style="{ padding: '15px 20px' }">
-                <div class="flex items-center justify-between">
-                    <div class="flex items-center gap-4 w-1/2">
+                <div class="flex items-center justify-between gap-8">
+                    <div class="flex items-center gap-4 flex-1">
                         <span class="text-gray-600 whitespace-nowrap">进货备注：</span>
                         <el-input v-model="remark" placeholder="如：中秋节旺旺大礼包补货" />
                     </div>
-                    <div class="flex items-center gap-6">
+                    <div class="flex items-center gap-6 shrink-0 whitespace-nowrap">
                         <div class="text-lg">
                             共计进货 <span class="text-blue-600 font-bold text-2xl mx-1">{{ totalQty }}</span> 件商品
                         </div>
@@ -87,7 +87,7 @@ import { Aim } from '@element-plus/icons-vue';
 import goodsApi from "@/api/gms/goods.js";
 import inventoryApi from "@/api/gms/inventory.js";
 
-import SmartGoodsSelector from "@/components/common/SmartGoodsSelector.vue" // 🌟 引入
+import SmartGoodsSelector from "@/components/common/SmartGoodsSelector.vue"
 
 const scanInputRef = ref(null);
 const scanBarcode = ref('');
@@ -98,7 +98,6 @@ const submitLoading = ref(false);
 const totalQty = computed(() => inboundList.value.reduce((sum, item) => sum + item.qty, 0));
 const totalAmount = computed(() => inboundList.value.reduce((sum, item) => sum + (item.price * item.qty), 0));
 
-// 🌟 核心：抽象出添加逻辑
 const addGoodsToList = (goods) => {
     const existItem = inboundList.value.find(item => item.barcode === goods.barcode || item.goodsId === goods.id);
     if (existItem) {
@@ -116,22 +115,19 @@ const addGoodsToList = (goods) => {
     scanInputRef.value?.resetScanner();
 };
 
-let isSelecting = false; // 防重复双杀拦截器
+let isSelecting = false;
 
-// 鼠标点选联想列表触发
 const handleSelectGoods = (item) => {
     isSelecting = true;
     addGoodsToList(item);
     setTimeout(() => { isSelecting = false; }, 200);
 };
 
-// 扫码枪回车触发
 const handleScan = async (val) => {
     if (isSelecting) return;
     const barcode = typeof val === 'string' ? val : scanBarcode.value;
     if (!barcode) return;
 
-    // 先查本地列表，存在直接加一
     const existItem = inboundList.value.find(item => item.barcode === barcode);
     if (existItem) {
         existItem.qty += 1;

@@ -26,7 +26,7 @@ public class SysBackupTask {
     private final SysBackupService sysBackupService;
 
     /**
-     * 🌟 每天凌晨 2:00 准时触发自动全量热备
+     * 🌟 每天凌晨 21:00 准时触发自动全量热备
      * cron 表达式解析：秒 分 时 日 月 星期
      */
     @Scheduled(cron = "0 0 21 * * ?")
