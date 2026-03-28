@@ -178,7 +178,9 @@ public class SysBackupService {
     private void checkManifestStrictly(String restoreDir) {
         File manifest = new File(restoreDir + File.separator + MANIFEST_FILE);
         if (!manifest.exists()) {
-            throw new RuntimeException("非法备份包：缺失 manifest 清单文件，拒绝恢复！");
+            // 🌟 核心修复：向下兼容老版备份包！如果没有清单，只发警告不报错，允许强行导入
+            sendLog("WARN", "⚠️ 检测到旧版备份包：缺失 manifest 清单文件，将跳过安全校验强制执行恢复...");
+            return;
         }
 
         JSONObject json = JSONUtil.readJSONObject(manifest, StandardCharsets.UTF_8);

@@ -42,7 +42,7 @@ public class GmsTurnoverServiceImpl implements GmsTurnoverService {
         }
 
         for (WarningItemVO item : rawList) {
-            // 算法 1：僵尸库存判定引擎 (动态参数)
+            // 算法 1：积压库存判定引擎 (动态参数)
             if (item.getCurrentStock() > 0 && item.getSales90Days() == 0) {
                 item.setWarningType("DEAD_STOCK");
                 if (item.getLastSaleTime() != null) {
@@ -52,7 +52,7 @@ public class GmsTurnoverServiceImpl implements GmsTurnoverService {
                     item.setDeadDays(999);
                 }
 
-                // 🌟 使用前端配好的僵尸天数
+                // 🌟 使用前端配好的积压天数
                 if (item.getDeadDays() >= deadStockThreshold) {
                     deadStockList.add(item);
                 }

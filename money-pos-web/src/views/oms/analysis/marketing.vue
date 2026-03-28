@@ -96,7 +96,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, nextTick, onUnmounted, computed } from 'vue'
+import { ref, onMounted, nextTick, onBeforeUnmount, computed } from 'vue' // 🌟 修复1：引入 onBeforeUnmount
 import PageWrapper from "@/components/PageWrapper.vue"
 import { req } from "@/api/index.js"
 import analysisApi from "@/api/oms/analysis.js"
@@ -110,8 +110,8 @@ const topGoodsRanking = ref([])
 const loading = ref(false)
 
 const categoryChartRef = ref(null)
+let categoryChart = null // 🌟 修复2：缓存 ECharts 实例，拒绝通过 DOM 现查
 
-// 排序
 const sortedCategoryData = computed(() => {
     return [...categoryData.value].sort((a, b) => (b.salesAmount || 0) - (a.salesAmount || 0))
 })
@@ -143,12 +143,15 @@ const formatMoney = (val) => Number(val || 0).toFixed(2)
 
 const initCategoryChart = () => {
     if (!categoryChartRef.value) return
-    let chart = echarts.getInstanceByDom(categoryChartRef.value)
-    if (!chart) chart = echarts.init(categoryChartRef.value)
+
+    // 🌟 修复3：优先使用缓存的实例
+    if (!categoryChart) {
+        categoryChart = echarts.init(categoryChartRef.value)
+    }
 
     if (categoryData.value.length === 0) {
-        chart.clear()
-        chart.setOption({
+        categoryChart.clear()
+        categoryChart.setOption({
             title: { text: '暂无分类数据', left: 'center', top: 'center', textStyle: { color: '#9ca3af' } }
         }, true)
         return
@@ -160,7 +163,7 @@ const initCategoryChart = () => {
         qty: item.salesQty
     }))
 
-    chart.setOption({
+    categoryChart.setOption({
         tooltip: {
             trigger: 'item',
             appendToBody: true,
@@ -177,16 +180,16 @@ const initCategoryChart = () => {
             type: 'pie',
             radius: ['45%', '70%'],
             center: ['35%', '50%'],
-            label: { show: false },     // 🌟 隐藏文字
-            labelLine: { show: false }, // 🌟 彻底干掉引出线
-            itemStyle: { borderRadius: 5, borderColor: '#fff', borderWidth: 2 }, // 顺手加了个小圆角边框让饼图更好看
+            label: { show: false },
+            labelLine: { show: false },
+            itemStyle: { borderRadius: 5, borderColor: '#fff', borderWidth: 2 },
             data: pieData
         }]
     }, true)
 }
 
 const handleResize = () => {
-    echarts.getInstanceByDom(categoryChartRef.value)?.resize()
+    if (categoryChart) categoryChart.resize() // 🌟 修复4：直接使用实例对象
 }
 
 onMounted(() => {
@@ -194,8 +197,12 @@ onMounted(() => {
     window.addEventListener('resize', handleResize)
 })
 
-onUnmounted(() => {
+// 🌟 修复5：改用 onBeforeUnmount，此时 DOM 尚未被物理销毁
+onBeforeUnmount(() => {
     window.removeEventListener('resize', handleResize)
-    echarts.getInstanceByDom(categoryChartRef.value)?.dispose()
+    if (categoryChart) {
+        categoryChart.dispose() // 优雅释放内存
+        categoryChart = null    // 彻底切断引用
+    }
 })
 </script>

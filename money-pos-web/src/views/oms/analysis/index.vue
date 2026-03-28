@@ -56,7 +56,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, nextTick, onBeforeUnmount } from 'vue'
+import { ref, onMounted, nextTick, onBeforeUnmount } from 'vue' // 必须是 onBeforeUnmount
 import PageWrapper from "@/components/PageWrapper.vue"
 import { req } from "@/api/index.js"
 import { DataAnalysis, Aim } from '@element-plus/icons-vue'
@@ -82,7 +82,7 @@ const data = ref({
 })
 
 const trendChartRef = ref(null)
-let trendChart = null
+let trendChart = null // 缓存实例
 
 const fetchData = async () => {
     loading.value = true
@@ -145,6 +145,9 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
     window.removeEventListener('resize', handleResize)
-    if (trendChart) trendChart.dispose()
+    if (trendChart) {
+        trendChart.dispose()
+        trendChart = null
+    }
 })
 </script>

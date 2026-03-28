@@ -48,7 +48,7 @@
       <el-tab-pane name="dead">
         <template #label>
           <span class="font-bold flex items-center gap-1 text-gray-500">
-            🧊 僵尸库存 <el-badge :value="deadStockList.length" class="ml-1" type="info" />
+            🧊 积压库存 <el-badge :value="deadStockList.length" class="ml-1" type="info" />
           </span>
         </template>
 
@@ -112,7 +112,7 @@ const loadData = async () => {
 
 const exportExcel = async (type) => {
   const url = type === 'replenish' ? '/gms/analysis/export-replenish' : '/gms/analysis/export-deadstock';
-  const fileName = type === 'replenish' ? '智能采购建议单.xlsx' : '僵尸库存清仓单.xlsx';
+  const fileName = type === 'replenish' ? '智能采购建议单.xlsx' : '积压库存清仓单.xlsx';
 
   if (type === 'replenish') exportingReplenish.value = true;
   else exportingDead.value = true;

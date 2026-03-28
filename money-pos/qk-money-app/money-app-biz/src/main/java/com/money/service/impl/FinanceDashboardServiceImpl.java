@@ -45,7 +45,6 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
         return value == null ? BigDecimal.ZERO : value;
     }
 
-    // 🌟 核心修复 7：拒绝静默归零！遇到脏数据直接抛异常，强制报错阻断！
     private BigDecimal parseAmt(Object val) {
         if (val == null) return BigDecimal.ZERO;
         try {
@@ -155,12 +154,11 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
 
         BigDecimal rechargeAmount = dailyRecharges.stream().map(log -> null2Zero(log.getRealAmount())).reduce(BigDecimal.ZERO, BigDecimal::add);
 
+        // ==========================================
+        // 🌟 终极修复：直接将底层的净扫码金额和现金金额相加！绝对禁止重复按比例扣减退款！
+        // ==========================================
         BigDecimal externalPayTotal = scanIncomeTotal.add(cashIncome);
-        BigDecimal externalRefund = BigDecimal.ZERO;
-        if (payAmount.compareTo(BigDecimal.ZERO) > 0) {
-            externalRefund = refundAmount.multiply(externalPayTotal).divide(payAmount, 2, RoundingMode.HALF_UP);
-        }
-        BigDecimal realExternalIncome = externalPayTotal.subtract(externalRefund).add(rechargeAmount);
+        BigDecimal realExternalIncome = externalPayTotal.add(rechargeAmount);
         vo.setExternalIncome(realExternalIncome);
 
         List<Object> balanceObjs = umsMemberService.listObjs(new LambdaQueryWrapper<UmsMember>().select(UmsMember::getBalance).isNotNull(UmsMember::getBalance));
@@ -266,20 +264,15 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
         return vo;
     }
 
-    // ==================================================
-    // 🌟 营业成分“挤水分”穿透分析引擎 (真实数据版)
-    // ==================================================
     @Override
     public ChannelMixAnalysisVO getChannelMixAnalysis(String startDate, String endDate) {
         ChannelMixAnalysisVO vo = new ChannelMixAnalysisVO();
 
-        // 1. 处理时间范围 (默认近7天)
         LocalDate start = (startDate != null && !startDate.isEmpty()) ? LocalDate.parse(startDate) : LocalDate.now().minusDays(6);
         LocalDate end = (endDate != null && !endDate.isEmpty()) ? LocalDate.parse(endDate) : LocalDate.now();
         LocalDateTime startTime = LocalDateTime.of(start, LocalTime.MIN);
         LocalDateTime endTime = LocalDateTime.of(end, LocalTime.MAX);
 
-        // 2. 初始化日期横坐标轴
         List<String> trendDates = new ArrayList<>();
         LocalDate temp = start;
         while (!temp.isAfter(end)) {
@@ -288,36 +281,30 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
         }
         vo.setTrendDates(trendDates);
 
-        // 3. 查数据库：获取期间内每天的【支付流水】聚合数据 (真金白银 + 预收款)
         List<Map<String, Object>> paySummary = omsOrderPayMapper.getDailyPaySummary(startTime, endTime);
 
-        // 4. 查数据库：获取期间内每天的【订单让利】聚合数据 (单品券 + 满减券)
         List<Map<String, Object>> orderStats = omsOrderMapper.selectMaps(new QueryWrapper<OmsOrder>()
                 .select("DATE_FORMAT(create_time, '%Y-%m-%d') AS dateStr",
                         "SUM(IFNULL(actual_coupon_deduct, 0)) AS couponAmt",
                         "SUM(IFNULL(use_voucher_amount, 0)) AS voucherAmt")
                 .ge("create_time", startTime).le("create_time", endTime)
-                .in("status", "PAID", "PARTIAL_REFUNDED", "REFUNDED") // 严格遵守有效三态
+                .in("status", "PAID", "PARTIAL_REFUNDED", "REFUNDED")
                 .groupBy("DATE(create_time)"));
 
-        // 5. 准备组装前端需要的图表队列
         List<BigDecimal> scanList = new ArrayList<>();
         List<BigDecimal> cashList = new ArrayList<>();
         List<BigDecimal> balanceList = new ArrayList<>();
         List<BigDecimal> couponList = new ArrayList<>();
         List<BigDecimal> voucherList = new ArrayList<>();
 
-        // 饼图需要的全局累计池
         BigDecimal totalCash = BigDecimal.ZERO;
         BigDecimal totalBalance = BigDecimal.ZERO;
         BigDecimal totalCoupon = BigDecimal.ZERO;
         BigDecimal totalVoucher = BigDecimal.ZERO;
         Map<String, BigDecimal> scanTagMap = new HashMap<>();
 
-        // 6. 开始按天对齐并填充水分数据
         for (String dateStr : trendDates) {
 
-            // --- 6.1 扫荡当天的支付流水 ---
             BigDecimal dailyScan = BigDecimal.ZERO;
             BigDecimal dailyCash = BigDecimal.ZERO;
             BigDecimal dailyBalance = BigDecimal.ZERO;
@@ -337,7 +324,6 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
                         totalBalance = totalBalance.add(amt);
                     } else {
                         dailyScan = dailyScan.add(amt);
-                        // 为饼图的精细化切片做准备 (TAG:WECHAT 等)
                         String tag = (String) pay.get("payTag");
                         tag = (tag != null && !tag.trim().isEmpty()) ? "TAG:" + tag : "TAG:UNKNOWN";
                         scanTagMap.put(tag, scanTagMap.getOrDefault(tag, BigDecimal.ZERO).add(amt));
@@ -348,7 +334,6 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
             cashList.add(dailyCash);
             balanceList.add(dailyBalance);
 
-            // --- 6.2 扫荡当天的营销让利 (挤水分) ---
             BigDecimal dailyCoupon = BigDecimal.ZERO;
             BigDecimal dailyVoucher = BigDecimal.ZERO;
             for (Map<String, Object> stat : orderStats) {
@@ -364,22 +349,18 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
             totalVoucher = totalVoucher.add(dailyVoucher);
         }
 
-        // 把组装好的列队挂载到对象上返回给前端
         vo.setScanList(scanList);
         vo.setCashList(cashList);
         vo.setBalanceList(balanceList);
         vo.setCouponList(couponList);
         vo.setVoucherList(voucherList);
 
-        // 7. 组装右侧的“成分切片”饼图数据
         List<PayPieData> pieDataList = new ArrayList<>();
-        // 扫码成分先入列
         for (Map.Entry<String, BigDecimal> entry : scanTagMap.entrySet()) {
             if (entry.getValue().compareTo(BigDecimal.ZERO) > 0) {
                 pieDataList.add(new PayPieData(entry.getKey(), entry.getValue()));
             }
         }
-        // 现金、余额、让利等接续入列
         if (totalCash.compareTo(BigDecimal.ZERO) > 0) pieDataList.add(new PayPieData("现金收银(真金)", totalCash));
         if (totalBalance.compareTo(BigDecimal.ZERO) > 0) pieDataList.add(new PayPieData("余额消耗(预收)", totalBalance));
         if (totalCoupon.compareTo(BigDecimal.ZERO) > 0) pieDataList.add(new PayPieData("单品会员券(让利)", totalCoupon));
