@@ -3,7 +3,7 @@
     <div class="mb-6 flex justify-between items-center">
       <h2 class="text-xl font-bold text-gray-800 flex items-center gap-2">
         <svg-icon name="data-line" class="w-6 h-6 text-indigo-500" />
-        营业潮汐趋势分析 (宏观休假罗盘)
+        营业潮汐趋势分析
       </h2>
       <div class="text-sm text-gray-500">
         * 采样参数由【全局策略中心】大脑统一控制
@@ -13,12 +13,12 @@
     <el-tabs v-model="activeTab" class="bg-white p-4 rounded-lg shadow-sm" @tab-change="initChart" v-loading="loading">
 
       <el-tab-pane name="week">
-        <template #label><span class="font-bold text-lg px-4">📅 每周规律 (决断固定休息日)</span></template>
+        <template #label><span class="font-bold text-lg px-4">📅 每周规律趋势分析</span></template>
         <div ref="weekChartRef" class="w-full h-[500px] mt-4"></div>
       </el-tab-pane>
 
       <el-tab-pane name="month">
-        <template #label><span class="font-bold text-lg px-4">🗓️ 月度潮汐 (决断连休旅行日)</span></template>
+        <template #label><span class="font-bold text-lg px-4">🗓️ 月度潮汐趋势分析</span></template>
         <div ref="monthChartRef" class="w-full h-[500px] mt-4"></div>
       </el-tab-pane>
 

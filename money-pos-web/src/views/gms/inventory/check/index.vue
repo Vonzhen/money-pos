@@ -56,7 +56,7 @@
             <el-card shadow="hover" :body-style="{ padding: '15px 20px' }">
                 <div class="flex items-center justify-between">
                     <div class="flex items-center gap-4 w-1/2">
-                        <span class="text-gray-600 whitespace-nowrap">盘点备注：</span>
+                        <span class="text-gray-600 whitespace-nowrap">备注：</span>
                         <el-input v-model="remark" placeholder="如：2026年3月月底例行盘点" />
                     </div>
                     <div class="flex items-center gap-6">

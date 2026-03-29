@@ -30,7 +30,10 @@
                     <template #default="{row}"><span class="font-mono">{{ row.phone }}</span></template>
                 </el-table-column>
                 <el-table-column prop="lastVisitTime" label="最后到店时间" width="180">
-                    <template #default="{row}"><span class="text-red-500 font-bold">{{ row.lastVisitTime }}</span></template>
+                    <template #default="{row}">
+                        <span v-if="row.lastVisitTime" class="text-red-500 font-bold">{{ row.lastVisitTime }}</span>
+                        <el-tag v-else type="info" effect="plain" size="small">从未到店/仅导入</el-tag>
+                    </template>
                 </el-table-column>
                 <el-table-column prop="consumeAmount" label="历史贡献总额(LTV)" width="180" align="right">
                     <template #default="{row}"><span class="text-blue-600 font-black text-lg">￥{{ row.consumeAmount.toFixed(2) }}</span></template>

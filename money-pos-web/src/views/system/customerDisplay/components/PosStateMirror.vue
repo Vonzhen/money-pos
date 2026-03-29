@@ -35,8 +35,10 @@
                         <el-carousel height="100%" :interval="settings.interval * 1000" arrow="never" indicator-position="none" class="w-full h-full">
                             <el-carousel-item v-for="(url, index) in settings.playlist" :key="index"><img :src="url" class="w-full h-full object-cover" /></el-carousel-item>
                         </el-carousel>
-                        <div class="absolute bottom-0 left-0 right-0 h-8 bg-black/70 backdrop-blur-md flex items-center px-3 z-20 overflow-hidden">
-                            <div class="animate-marquee whitespace-nowrap text-yellow-400 text-xs font-bold tracking-wide">{{ settings.welcomeText || '欢迎光临！' }}</div>
+                        <div class="absolute bottom-0 left-0 right-0 h-8 bg-black/70 backdrop-blur-md flex items-center z-20 overflow-hidden">
+                            <div class="animate-marquee absolute whitespace-nowrap text-yellow-400 text-xs font-bold tracking-wide">
+                                {{ settings.welcomeText || '欢迎光临！' }}
+                            </div>
                         </div>
                     </template>
 
@@ -155,8 +157,15 @@ watch(() => props.realCart, async () => {
 </script>
 
 <style scoped>
-@keyframes marquee { 0% { transform: translateX(100%); } 100% { transform: translateX(-100%); } }
-.animate-marquee { display: inline-block; padding-left: 100%; animation: marquee 15s linear infinite; }
+/* 🌟 修复：基于绝对定位的精准跑马灯动画 */
+@keyframes marquee {
+    0% { left: 100%; transform: translateX(0); }
+    100% { left: 0%; transform: translateX(-100%); }
+}
+.animate-marquee {
+    animation: marquee 15s linear infinite;
+}
+
 .scrollbar-hide::-webkit-scrollbar { display: none; }
 .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
 .scroll-smooth { scroll-behavior: smooth; }

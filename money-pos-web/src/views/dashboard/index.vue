@@ -72,7 +72,7 @@
 
             <el-card shadow="hover" class="border-none shadow-sm rounded-xl">
                 <template #header>
-                    <span class="font-black text-gray-700 flex items-center gap-2 tracking-wider">🍩 品牌矩阵营收贡献比</span>
+                    <span class="font-black text-gray-700 flex items-center gap-2 tracking-wider">🍩 品牌销售额(折前)</span>
                 </template>
                 <div ref="brandPieChartRef" class="w-full h-[320px]"></div>
             </el-card>

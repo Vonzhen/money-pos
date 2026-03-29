@@ -28,7 +28,7 @@
                     <el-table-column type="index" label="序号" width="60" align="center" />
                     <el-table-column prop="barcode" label="条码" width="160" />
                     <el-table-column prop="name" label="商品名称" min-width="200" />
-                    <el-table-column label="当前账面库存" width="120" align="center">
+                    <el-table-column label="当前库存" width="120" align="center">
                         <template #default="{row}">
                             <el-tag type="info">{{ row.currentStock }}</el-tag>
                         </template>
@@ -59,15 +59,15 @@
             <el-card shadow="hover" :body-style="{ padding: '15px 20px' }">
                 <div class="flex items-center justify-between gap-8">
                     <div class="flex items-center gap-4 flex-1">
-                        <span class="text-gray-600 whitespace-nowrap">进货备注：</span>
+                        <span class="text-gray-600 whitespace-nowrap">备注：</span>
                         <el-input v-model="remark" placeholder="如：中秋节旺旺大礼包补货" />
                     </div>
                     <div class="flex items-center gap-6 shrink-0 whitespace-nowrap">
                         <div class="text-lg">
-                            共计进货 <span class="text-blue-600 font-bold text-2xl mx-1">{{ totalQty }}</span> 件商品
+                            共计进货 <span class="text-blue-600 font-bold text-2xl mx-1">{{ totalQty }}</span> 件
                         </div>
                         <div class="text-lg">
-                            本次进货总额：<span class="text-red-600 font-bold text-3xl ml-2">￥{{ totalAmount.toFixed(2) }}</span>
+                            总额：<span class="text-red-600 font-bold text-3xl ml-2">￥{{ totalAmount.toFixed(2) }}</span>
                         </div>
                         <el-button type="primary" size="large" class="!px-10 !text-lg" :loading="submitLoading" :disabled="inboundList.length === 0" @click="submitOrder">
                             确认入库
