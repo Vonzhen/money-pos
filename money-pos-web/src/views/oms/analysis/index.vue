@@ -4,7 +4,7 @@
             <div class="flex items-center justify-between mb-6">
                 <div>
                     <h2 class="text-2xl font-bold text-blue-700 flex items-center">
-                        <el-icon class="mr-2"><DataAnalysis /></el-icon> 门店经营作战室 (销售大盘)
+                        <el-icon class="mr-2"><DataAnalysis /></el-icon> 门店经营销售大盘
                     </h2>
                     <p class="text-sm text-gray-500 mt-1">深度剖析门店商品流转效率与大盘营业走势</p>
                 </div>

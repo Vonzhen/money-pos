@@ -134,7 +134,7 @@ const comboGoodsApi = {
 
 const columns = [
     {prop: 'name', label: '组合套餐名字', width: 180},
-    {prop: 'comboDesc', label: '包含的商品 (配方明细)', minWidth: 220},
+    {prop: 'comboDesc', label: '包含的商品 (组合明细)', minWidth: 220},
     {prop: 'salePrice', label: '套餐价格'},
     {prop: 'stock', label: '剩余库存', width: 100, sortable: 'custom'}, // 🌟 把库存列加出来，方便老板监控
     {prop: 'status', label: '状态', width: 100},
