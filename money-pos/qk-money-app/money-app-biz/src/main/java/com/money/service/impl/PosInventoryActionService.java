@@ -22,13 +22,11 @@ public class PosInventoryActionService {
     private final GmsGoodsMapper gmsGoodsMapper;
     private final GmsGoodsComboMapper gmsGoodsComboMapper;
     private final GmsGoodsService gmsGoodsService;
-    // 🌟 任务 8：换用 Service 层来实现高性能的 saveBatch
     private final GmsStockLogService gmsStockLogService;
 
     public void deduct(List<OmsOrderDetail> orderDetails, Map<Long, GmsGoods> goodsMap, String orderNo) {
         LocalDateTime now = LocalDateTime.now();
 
-        // 🌟 任务 9：增加 distinct()，防止订单中有多个相同套餐导致 ID 重复，放大查询范围
         List<Long> comboGoodsIds = goodsMap.values().stream()
                 .filter(g -> g.getIsCombo() != null && g.getIsCombo() == 1)
                 .map(GmsGoods::getId)
@@ -57,11 +55,16 @@ public class PosInventoryActionService {
                 List<GmsGoodsCombo> combos = comboMap.get(goods.getId());
                 if (combos == null || combos.isEmpty()) throw new BaseException("【库存拦截】套餐商品未配置子明细: " + goods.getName());
 
+                // 🌟 核心收口 1：先原子扣减套餐自身的逻辑配额，快速拦截超卖！
+                int comboRows = gmsGoodsMapper.deductStockAtomically(goods.getId(), new BigDecimal(detail.getQuantity()));
+                if (comboRows == 0) throw new BaseException("【库存不足】套餐「" + goods.getName() + "」可售配额不足");
+                pendingLogs.add(buildLog(goods, -detail.getQuantity(), orderNo, "售出扣除套餐配额", now));
+
+                // 🌟 然后穿透扣减子商品的物理库存
                 for (GmsGoodsCombo combo : combos) {
                     GmsGoods subGoods = subGoodsMap.get(combo.getSubGoodsId());
                     if (subGoods == null) throw new BaseException("【数据异常】套餐子商品不存在: " + combo.getSubGoodsId());
 
-                    // 🌟 任务 7：Math.multiplyExact 严格防御大订单 int 乘法溢出变负数的致命漏洞
                     int deductQty;
                     try {
                         deductQty = Math.multiplyExact(detail.getQuantity(), combo.getSubGoodsQty());
@@ -70,8 +73,8 @@ public class PosInventoryActionService {
                     }
 
                     int rows = gmsGoodsMapper.deductStockAtomically(subGoods.getId(), new BigDecimal(deductQty));
-                    if (rows == 0) throw new BaseException("【库存不足】套餐子商品「" + subGoods.getName() + "」抢购失败");
-                    pendingLogs.add(buildLog(subGoods, -deductQty, orderNo, "售出联动扣除", now));
+                    if (rows == 0) throw new BaseException("【库存不足】套餐子商品「" + subGoods.getName() + "」库存不足");
+                    pendingLogs.add(buildLog(subGoods, -deductQty, orderNo, "套餐售出联动扣除实物", now));
                 }
             } else {
                 int rows = gmsGoodsMapper.deductStockAtomically(goods.getId(), new BigDecimal(detail.getQuantity()));
@@ -88,7 +91,6 @@ public class PosInventoryActionService {
                 log.setAfterQuantity(latest != null && latest.getStock() != null ? latest.getStock().intValue() : 0);
             }
 
-            // 🌟 任务 8：一次数据库交互完成批量插入，拒绝 N 次连接开销
             gmsStockLogService.saveBatch(pendingLogs);
         }
     }

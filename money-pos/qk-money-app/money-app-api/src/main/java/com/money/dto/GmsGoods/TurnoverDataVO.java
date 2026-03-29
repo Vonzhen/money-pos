@@ -11,7 +11,7 @@ public class TurnoverDataVO {
     @Data
     public static class TurnoverDashboardVO {
         private List<WarningItemVO> replenishList; // 急需补货清单
-        private List<WarningItemVO> deadStockList; // 僵尸库存清单
+        private List<WarningItemVO> deadStockList; // 积压库存清单
     }
 
     // 每一条预警商品的数据结构

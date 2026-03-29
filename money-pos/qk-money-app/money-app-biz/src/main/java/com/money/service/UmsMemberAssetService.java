@@ -29,6 +29,9 @@ public class UmsMemberAssetService {
     private static final String TYPE_COUPON = "COUPON";
     private static final String TYPE_VOUCHER = "VOUCHER";
 
+    // ==========================================
+    // 正向交易：严格校验，找不到会员必须阻断！
+    // ==========================================
     public void consume(Long id, BigDecimal amount, BigDecimal couponAmount, String orderNo) {
         if (amount != null && amount.compareTo(BigDecimal.ZERO) < 0) throw new BaseException("扣款金额不能为负数");
 
@@ -78,11 +81,17 @@ public class UmsMemberAssetService {
         umsMemberLogMapper.insert(createLog(member, TYPE_BALANCE, "CONSUME", amount.negate(), BigDecimal.ZERO, beforeBalance.subtract(amount), orderNo, remark));
     }
 
+    // ==========================================
+    // 逆向退款：优雅降级，放过散客与死号，保全退款主流程！
+    // ==========================================
     public void addBalance(Long memberId, BigDecimal amount, String orderNo, String remark) {
-        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) return;
+        if (memberId == null || memberId <= 0 || amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) return; // 🌟 容错 1：散客拦截
 
         UmsMember member = umsMemberMapper.selectById(memberId);
-        if (member == null) throw new BaseException(BizErrorStatus.MEMBER_NOT_FOUND, "找不到会员信息");
+        if (member == null) {
+            log.warn("【优雅降级】退还余额时未找到会员(ID:{})，可能为散客或已被删除，跳过资产回退...", memberId);
+            return; // 🌟 容错 2：无声放行
+        }
 
         BigDecimal beforeBalance = member.getBalance() != null ? member.getBalance() : BigDecimal.ZERO;
 
@@ -93,18 +102,25 @@ public class UmsMemberAssetService {
         umsMemberLogMapper.insert(createLog(member, TYPE_BALANCE, "REFUND", amount, BigDecimal.ZERO, beforeBalance.add(amount), orderNo, remark));
     }
 
-    // 🌟 核心修复：接收变动后的真实张数 (afterAmount)
     public void logVoucherRefund(Long memberId, BigDecimal amount, BigDecimal afterAmount, String orderNo) {
-        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) return;
+        if (memberId == null || memberId <= 0 || amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) return; // 🌟 容错 1：散客拦截
+
         UmsMember member = umsMemberMapper.selectById(memberId);
         if (member != null) {
             umsMemberLogMapper.insert(createLog(member, TYPE_VOUCHER, "REFUND", amount, BigDecimal.ZERO, afterAmount, orderNo, "整单退款:满减券退回"));
+        } else {
+            log.warn("【优雅降级】退还满减券时未找到会员(ID:{})，跳过...", memberId);
         }
     }
 
     public void processReturn(Long id, BigDecimal amount, BigDecimal coupon, boolean increaseCancelTimes, String orderNo) {
+        if (id == null || id <= 0) return; // 🌟 容错 1：散客拦截
+
         UmsMember member = umsMemberMapper.selectById(id);
-        if (member == null) throw new BaseException("退货时会员不存在");
+        if (member == null) {
+            log.warn("【优雅降级】退货时未找到会员(ID:{})，跳过资产回退，保障资金与库存退库顺畅！", id);
+            return; // 🌟 容错 2：拒绝抛出异常阻断退款主流程！
+        }
 
         BigDecimal beforeCoupon = member.getCoupon() == null ? BigDecimal.ZERO : member.getCoupon();
 
@@ -119,7 +135,9 @@ public class UmsMemberAssetService {
                 .setSql(increaseCancelTimes, "cancel_times = cancel_times + 1")
                 .eq(UmsMember::getId, id));
 
-        if (rows == 0) throw new BaseException("资产退回失败");
+        if (rows == 0) {
+            log.warn("【数据预警】会员(ID:{})资产退回 SQL 未命中任何行", id);
+        }
     }
 
     private UmsMemberLog createLog(UmsMember m, String type, String opType, BigDecimal amt, BigDecimal realAmt, BigDecimal afterAmt, String orderNo, String remark) {

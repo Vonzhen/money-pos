@@ -36,7 +36,8 @@
                         <el-icon v-else class="avatar-uploader-icon !w-24 !h-24"><Plus /></el-icon>
                     </el-upload>
                 </el-form-item>
-                <div class="md:flex justify-between gap-2">
+
+                <div class="md:flex justify-between gap-4">
                     <el-form-item label="套餐条码" prop="barcode" class="!w-full">
                         <el-input v-model.trim="moneyCrud.form.barcode" placeholder="请输入或用扫码枪扫入" />
                     </el-form-item>
@@ -44,14 +45,24 @@
                         <el-input v-model.trim="moneyCrud.form.name" placeholder="如：中秋特惠大礼包" />
                     </el-form-item>
                 </div>
-                <div class="flex justify-between gap-2">
+
+                <div class="md:flex justify-between gap-4">
                     <el-form-item label="套餐售价" prop="salePrice" class="!w-full">
                         <el-input v-model="moneyCrud.form.salePrice" placeholder="直接填一口价" />
                     </el-form-item>
+                    <el-form-item label="可售库存" prop="stock" class="!w-full">
+                        <el-input-number v-model="moneyCrud.form.stock" :min="0" :step="1" class="!w-full" placeholder="输入预先打包好的数量" />
+                    </el-form-item>
+                </div>
+
+                <div class="md:flex justify-between gap-4">
                     <el-form-item label="套餐状态" prop="status" class="!w-full">
                         <el-select v-model="moneyCrud.form.status" placeholder="请选择" class="w-full">
                             <el-option v-for="item in dict.goodsStatus" :key="item.value" :label="item.desc" :value="item.value" />
                         </el-select>
+                    </el-form-item>
+                    <el-form-item label="参与满减" prop="isDiscountParticipable" class="!w-full">
+                        <el-switch v-model="moneyCrud.form.isDiscountParticipable" :active-value="1" :inactive-value="0" active-text="允许参与" inactive-text="禁止参与" />
                     </el-form-item>
                 </div>
 
@@ -112,7 +123,6 @@ import { Plus } from '@element-plus/icons-vue'
 const userStore = useUserStore()
 const normalGoodsList = ref([])
 
-// 🌟 终极必杀技：劫持底层查询 API，强行注入套餐标记，无视重置按钮的清空！
 const comboGoodsApi = {
     ...goodsApi,
     list: (params) => {
@@ -126,6 +136,7 @@ const columns = [
     {prop: 'name', label: '组合套餐名字', width: 180},
     {prop: 'comboDesc', label: '包含的商品 (配方明细)', minWidth: 220},
     {prop: 'salePrice', label: '套餐价格'},
+    {prop: 'stock', label: '剩余库存', width: 100, sortable: 'custom'}, // 🌟 把库存列加出来，方便老板监控
     {prop: 'status', label: '状态', width: 100},
     {prop: 'sales', label: '已售出', width: 100, sortable: 'custom'},
     {
@@ -146,12 +157,12 @@ const rules = {
         {required: true, message: '请输入售价'},
         {pattern: /^[1-9]\d*(\.\d+)?$/, message: '仅支持正数'}
     ],
+    stock: [{required: true, message: '请输入初始库存'}], // 🌟 加入必填校验
     status: [{required: true, message: '请选择状态'}]
 }
 
 const moneyCrud = ref(new MoneyCrud({
     columns,
-    // 🌟 替换掉原本的 goodsApi
     crudMethod: comboGoodsApi,
     optShow: {
         checkbox: userStore.hasPermission(['gmsGoods:edit', 'gmsGoods:del']),
@@ -165,15 +176,14 @@ const moneyCrud = ref(new MoneyCrud({
     defaultForm: {
         status: 'SALE',
         isCombo: 1,
-        stock: 999999,
+        stock: 50, // 🌟 修改默认库存为一个合理值，而不是 999999
         purchasePrice: 0,
         vipPrice: 0,
         coupon: 0,
-        isDiscountParticipable: 1
+        isDiscountParticipable: 0 // 🌟 核心：默认禁止套餐参与满减折上折！
     }
 }))
 
-// 🌟 幽灵清洗机：监听表单 ID 变化，彻底隔离内存污染
 watch(() => moneyCrud.value.form.id, (newId) => {
     if (!newId) {
         moneyCrud.value.form.subGoodsList = []

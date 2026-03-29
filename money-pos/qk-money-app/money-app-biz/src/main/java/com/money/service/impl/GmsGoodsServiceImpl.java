@@ -146,6 +146,7 @@ public class GmsGoodsServiceImpl extends ServiceImpl<GmsGoodsMapper, GmsGoods> i
         if (exists) throw new BaseException("条码已存在");
 
         GmsGoods gmsGoods = this.getById(updateDTO.getId());
+        Integer originalIsCombo = gmsGoods.getIsCombo(); // 🌟 抓取商品在数据库里最真实的原始身份
 
         // 1. 处理分类/品牌商品计数调整
         if (!Objects.equals(gmsGoods.getBrandId(), updateDTO.getBrandId())) {
@@ -158,7 +159,25 @@ public class GmsGoodsServiceImpl extends ServiceImpl<GmsGoodsMapper, GmsGoods> i
         }
 
         BeanUtil.copyProperties(updateDTO, gmsGoods);
-        if (gmsGoods.getIsCombo() == null) gmsGoods.setIsCombo(0);
+
+        // ==========================================
+        // 🌟 方案 A：极致坚固的后端防降级与防篡改护城河
+        // ==========================================
+        boolean skipComboWipeout = false;
+
+        if (originalIsCombo != null && originalIsCombo == 1) {
+            // 铁律 1：曾经是套餐，永远是套餐。无视前端瞎传的 isCombo 参数，强制锁死！
+            gmsGoods.setIsCombo(1);
+
+            // 铁律 2：如果传过来的子商品配方为空，说明这是个“修改库存/名称”的快捷动作
+            if (updateDTO.getSubGoodsList() == null || updateDTO.getSubGoodsList().isEmpty()) {
+                skipComboWipeout = true; // 打上保护标记：禁止清空配方！
+            }
+        } else {
+            // 原来不是套餐，走普通商品逻辑
+            if (gmsGoods.getIsCombo() == null) gmsGoods.setIsCombo(0);
+        }
+
         if (StrUtil.isNotBlank(gmsGoods.getName())) {
             gmsGoods.setMnemonicCode(PinyinUtil.getFirstLetter(gmsGoods.getName()));
         }
@@ -166,11 +185,17 @@ public class GmsGoodsServiceImpl extends ServiceImpl<GmsGoodsMapper, GmsGoods> i
         // 更新核心主档
         this.updateById(gmsGoods);
 
-        // 🌟 2. 委托【价格子域】执行策略融合 (Upsert)
+        // 2. 委托【价格子域】执行策略融合 (Upsert)
         goodsPriceService.saveLevelPrices(gmsGoods.getId(), updateDTO.getLevelPrices(), updateDTO.getLevelCoupons());
 
-        // 🌟 3. 委托【套餐子域】执行 BOM 重构
-        goodsComboService.saveComboDetails(gmsGoods.getId(), updateDTO.getIsCombo(), updateDTO.getSubGoodsList());
+        // 3. 委托【套餐子域】执行 BOM 重构
+        if (!skipComboWipeout) {
+            // 正常携带了配方数据，放行重构
+            goodsComboService.saveComboDetails(gmsGoods.getId(), gmsGoods.getIsCombo(), updateDTO.getSubGoodsList());
+        } else {
+            // 拦截清空操作，保护底层资产！
+            log.info("【系统防卫】拦截到套餐「{}」的快捷信息更新，已智能跳过底层配方覆写，防止幽灵降级！", gmsGoods.getName());
+        }
     }
 
     @Override
@@ -180,7 +205,7 @@ public class GmsGoodsServiceImpl extends ServiceImpl<GmsGoodsMapper, GmsGoods> i
         // 1. 删除主商品
         this.removeByIds(ids);
 
-        // 🌟 2. 级联委托销毁
+        // 2. 级联委托销毁
         goodsPriceService.deleteByGoodsIds(ids);
         goodsComboService.deleteByGoodsIds(ids);
     }
@@ -192,13 +217,11 @@ public class GmsGoodsServiceImpl extends ServiceImpl<GmsGoodsMapper, GmsGoods> i
 
     @Override
     public void updateStock(Long goodsId, Integer qty) {
-        // 🌟 完全委托给【库存子域】处理防超发与联动扣减
         goodsStockService.updateStock(goodsId, qty);
     }
 
     @Override
     public BigDecimal getCurrentStockValue() {
-        // 🌟 完全委托给【库存子域】进行全盘大盘扫描
         return goodsStockService.getCurrentStockValue();
     }
 }

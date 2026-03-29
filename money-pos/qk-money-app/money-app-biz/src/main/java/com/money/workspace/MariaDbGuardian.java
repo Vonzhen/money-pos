@@ -1,5 +1,6 @@
 package com.money.workspace;
 
+import cn.hutool.core.date.DateUtil;
 import cn.hutool.core.io.FileUtil;
 import cn.hutool.core.util.RandomUtil;
 import cn.hutool.core.util.StrUtil;
@@ -23,7 +24,6 @@ public class MariaDbGuardian {
 
     public static final int DB_PORT = 9102;
     public static final String DB_NAME = "money_pos";
-    private static final String PWD_FILE = WorkspaceEnv.getAppHome() + File.separator + "mariadb" + File.separator + ".sys_secret.key";
 
     private static String dbPassword = "";
     private static boolean isFirstRun = false;
@@ -37,7 +37,9 @@ public class MariaDbGuardian {
     }
 
     private static void prepareSecretKey() {
-        File pwdFile = new File(PWD_FILE);
+        // 🌟 直接向 WorkspaceEnv 要安全区路径
+        String pwdFilePath = WorkspaceEnv.getAppData() + File.separator + ".sys_secret.key";
+        File pwdFile = new File(pwdFilePath);
         if (pwdFile.exists()) {
             dbPassword = FileUtil.readString(pwdFile, StandardCharsets.UTF_8).trim();
             isFirstRun = false;
@@ -47,38 +49,47 @@ public class MariaDbGuardian {
         }
     }
 
-    private static void bootEngine() {
-        String mariadbPath = WorkspaceEnv.getAppHome() + "/mariadb";
-        File mysqldExe = new File(mariadbPath + "/bin/mysqld.exe");
-        File installDbExe = new File(mariadbPath + "/bin/mysql_install_db.exe");
-        File dataDir = new File(mariadbPath + "/data");
+    private static void writeMetaLock() {
+        File metaFile = new File(WorkspaceEnv.getAppData(), ".wx_meta");
+        if (!metaFile.exists()) {
+            String metaContent = "{\n  \"app\": \"WanXiangPOS\",\n  \"version\": \"1.0\",\n  \"createdAt\": \"" + DateUtil.now() + "\"\n}";
+            FileUtil.writeString(metaContent, metaFile, StandardCharsets.UTF_8);
+            log.info("🔐 [Guardian] 账本防伪基因锁 (.wx_meta) 写入完成。");
+        }
+    }
 
-        // 🌟 核心：路径标准化，用于后续“主权校验”比对
+    private static void bootEngine() {
+        // 程序区
+        String mariadbEnginePath = WorkspaceEnv.getAppHome() + "/mariadb";
+        File mysqldExe = new File(mariadbEnginePath + "/bin/mysqld.exe");
+        File installDbExe = new File(mariadbEnginePath + "/bin/mysql_install_db.exe");
+
+        // 🌟 数据区 (向 WorkspaceEnv 获取)
+        File dataDir = new File(WorkspaceEnv.getAppData() + "/db_data");
         String expectedDataDir = FileUtil.normalize(dataDir.getAbsolutePath());
 
         if (!mysqldExe.exists()) {
             throw new RuntimeException("❌ [Guardian] 致命错误：缺失数据库引擎文件!");
         }
 
-        // 🌟 1. 启动前“主权探测”
         if (isPortInUse(DB_PORT)) {
-            log.warn("⚠️ [Guardian] 检测到端口 {} 已被占用，启动血缘鉴定...", DB_PORT);
             if (verifyInstanceIdentity(expectedDataDir)) {
-                log.info("✅ [Guardian] 鉴定成功：该实例为本程序关联实例，直接复用。");
-                return; // 已在运行，直接复用
+                log.info("✅ [Guardian] 鉴定成功：该实例为本程序关联账本，直接复用。");
+                return;
             } else {
-                throw new RuntimeException("❌ [Guardian] 端口 " + DB_PORT + " 被非关联数据库占用！为保护数据安全，程序已拦截启动。请关闭其他 MySQL/MariaDB 实例。");
+                throw new RuntimeException("❌ [Guardian] 端口被非关联数据库占用！");
             }
         }
 
         try {
             if (isFirstRun && (!dataDir.exists() || FileUtil.isEmpty(dataDir))) {
-                log.info("⏳ [Guardian] 正在初始化数据库内核...");
-                FileUtil.mkdir(dataDir);
+                log.info("⏳ [Guardian] 正在安全区 [{}] 初始化数据库内核...", dataDir.getAbsolutePath());
                 Process initProcess = new ProcessBuilder(installDbExe.getAbsolutePath(), "--datadir=" + dataDir.getAbsolutePath())
                         .redirectErrorStream(true).start();
                 drainStream(initProcess.getInputStream());
                 initProcess.waitFor();
+
+                writeMetaLock();
             }
 
             log.info("⚙️ [Guardian] 正在拉起私有 MariaDB 服务...");
@@ -87,7 +98,7 @@ public class MariaDbGuardian {
                     "--port=" + DB_PORT,
                     "--datadir=" + dataDir.getAbsolutePath(),
                     "--character-set-server=utf8mb4"
-            ).directory(new File(mariadbPath)).redirectErrorStream(true).start();
+            ).directory(new File(mariadbEnginePath)).redirectErrorStream(true).start();
 
             drainStream(dbProcess.getInputStream());
             Runtime.getRuntime().addShutdownHook(new Thread(MariaDbGuardian::gracefulShutdown));
@@ -102,30 +113,22 @@ public class MariaDbGuardian {
         }
     }
 
-    /**
-     * 🌟 核心：血缘鉴定 (身份核验)
-     * 通过 SQL 查询验证当前端口后的数据库是否指向我们的安装目录
-     */
     private static boolean verifyInstanceIdentity(String expectedDir) {
         String currentPwd = isFirstRun ? "" : dbPassword;
         String url = "jdbc:mysql://127.0.0.1:" + DB_PORT + "/mysql?useSSL=false";
         try (Connection conn = DriverManager.getConnection(url, "root", currentPwd);
              Statement stmt = conn.createStatement()) {
 
-            // 1. 校验数据目录 (@@datadir)
             ResultSet rs = stmt.executeQuery("SELECT @@datadir");
             if (rs.next()) {
                 String actualDir = FileUtil.normalize(rs.getString(1));
-                // 数据库路径最后通常带 / 或 \，需要去除后比对
                 if (!StrUtil.removeSuffix(actualDir, "/").equalsIgnoreCase(StrUtil.removeSuffix(expectedDir, "/")) &&
                         !StrUtil.removeSuffix(actualDir, "\\").equalsIgnoreCase(StrUtil.removeSuffix(expectedDir, "\\"))) {
-                    log.error("❌ [Guardian] 数据目录不匹配! 期望: {}, 实际: {}", expectedDir, actualDir);
                     return false;
                 }
             }
             return true;
         } catch (Exception e) {
-            log.error("❌ [Guardian] 无法连接到正在运行的实例进行身份核验: {}", e.getMessage());
             return false;
         }
     }
@@ -140,13 +143,11 @@ public class MariaDbGuardian {
     }
 
     private static boolean waitForDatabaseReady(String expectedDir) {
-        log.info("📡 [Guardian] 正在验证实例就绪状态...");
         String currentPwd = isFirstRun ? "" : dbPassword;
         String sysUrl = "jdbc:mysql://127.0.0.1:" + DB_PORT + "/mysql?useSSL=false&serverTimezone=GMT%2B8";
 
         for (int i = 0; i < 15; i++) {
             try (Connection conn = DriverManager.getConnection(sysUrl, "root", currentPwd)) {
-                // 再次执行身份核验
                 if (!verifyInstanceIdentity(expectedDir)) return false;
 
                 if (isFirstRun) {
@@ -154,10 +155,9 @@ public class MariaDbGuardian {
                         stmt.execute("ALTER USER 'root'@'localhost' IDENTIFIED BY '" + dbPassword + "'");
                         stmt.execute("CREATE DATABASE IF NOT EXISTS `" + DB_NAME + "` CHARACTER SET utf8mb4");
 
-                        // 🌟 架构净化：建表权已 100% 移交 Flyway，此处不再插入任何业务或签名表
-
-                        FileUtil.writeString(dbPassword, new File(PWD_FILE), StandardCharsets.UTF_8);
-                        log.info("🛡️ [Guardian] 数据库内核加固与空库创建完毕（结构初始化已移交 Flyway）。");
+                        File pwdFile = new File(WorkspaceEnv.getAppData() + File.separator + ".sys_secret.key");
+                        FileUtil.writeString(dbPassword, pwdFile, StandardCharsets.UTF_8);
+                        log.info("🛡️ [Guardian] 数据库内核加固与空库创建完毕。");
                     }
                 }
                 return true;

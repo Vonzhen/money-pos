@@ -1,7 +1,10 @@
 name: Build WanXiangPOS EXE Installer
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - main      # 🌟 核心：只要有代码推送到 main 分支，立刻自动打包！
+  workflow_dispatch: # 🌟 保留这个，意味着您依然可以随时在网页上手动点打包
 
 jobs:
   build:

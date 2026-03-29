@@ -15,28 +15,16 @@ public class AppConfigInjector {
         System.setProperty("spring.datasource.password", MariaDbGuardian.getDbPassword());
         System.setProperty("spring.datasource.driver-class-name", "com.mysql.cj.jdbc.Driver");
 
-        // 2. 注入动态物理存储路径
-        System.setProperty("local.bucket", WorkspaceEnv.getAppHome() + "/assets/");
+        // ==========================================
+        // 🌟 2. 注入动态物理存储路径 (核心修复：图片资产移入安全区)
+        // ==========================================
+        // 将上传的附件、图片全部指向持久化的 AppData 数据区，与程序区彻底解耦！
+        System.setProperty("local.bucket", WorkspaceEnv.getAppData() + "/assets/");
         System.setProperty("money.cache.local.provider", "hutool");
 
-        // ==========================================
-        // 🌟 3. Flyway 工业级数据库迁移与版本控制机制
-        // ==========================================
+        // 3. Flyway 等配置目前已在 application-money.yml 中托管，此处保持注释即可
+        // ...
 
-        // 彻底禁用旧的 Spring SQL 初始化脚本机制
-        //System.setProperty("spring.sql.init.mode", "never");
-
-        // 激活 Flyway
-        //System.setProperty("spring.flyway.enabled", "true");
-        // 指定扫描的脚本目录 (刚好对应我们刚才建的文件夹)
-        //System.setProperty("spring.flyway.locations", "classpath:db/migration");
-        // 核心：当遇到已经有数据的旧库时，自动以当前状态作为基准线 (防老库报错报错)
-        //System.setProperty("spring.flyway.baseline-on-migrate", "true");
-        // 基准线版本设为 1.0.0 (如果原来有库，就默认它已经是 1.0.0 了)
-        //System.setProperty("spring.flyway.baseline-version", "0");
-        // 开发环境容错：允许 SQL 脚本被修改或乱序执行 (正式发版可关)
-        //System.setProperty("spring.flyway.out-of-order", "true");
-
-        //log.info("💉 [Injector] 运行时环境与 Flyway 版本控制策略注入完毕！将控制权移交 Spring Boot...");
+        log.info("💉 [Injector] 数据库挂载点与静态资源隧道 (Assets) 注入完毕！");
     }
 }

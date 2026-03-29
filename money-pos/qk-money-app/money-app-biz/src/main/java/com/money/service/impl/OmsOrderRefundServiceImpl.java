@@ -2,7 +2,7 @@ package com.money.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
-import com.money.constant.BizErrorStatus; // 🌟 引入新建立的标准业务错误码表
+import com.money.constant.BizErrorStatus;
 import com.money.constant.OrderStatusEnum;
 import com.money.constant.PayMethodEnum;
 import com.money.dto.OmsOrder.ReturnGoodsDTO;
@@ -45,12 +45,9 @@ public class OmsOrderRefundServiceImpl implements OmsOrderRefundService {
     @Transactional(rollbackFor = Exception.class)
     public void returnOrder(String orderNo) {
         OmsOrder order = omsOrderMapper.selectOne(new LambdaQueryWrapper<OmsOrder>().eq(OmsOrder::getOrderNo, orderNo));
-        if (order == null) {
-            // 🌟 修复8：全域标准化错误码，透传故障单号
-            throw new BaseException(BizErrorStatus.POS_REFUND_NOT_FOUND).withData(orderNo);
-        }
+        if (order == null) throw new BaseException(BizErrorStatus.POS_REFUND_NOT_FOUND).withData(orderNo);
+
         if (OrderStatusEnum.REFUNDED.name().equals(order.getStatus())) {
-            // 🌟 修复8：全域标准化错误码，防重提示
             throw new BaseException(BizErrorStatus.POS_REFUND_REPEAT).withData(orderNo);
         }
 
@@ -61,7 +58,6 @@ public class OmsOrderRefundServiceImpl implements OmsOrderRefundService {
 
         if (!isLocked) {
             log.warn("拦截到重复的整单退款请求: {}", orderNo);
-            // 🌟 修复8：并发防重统一纳入错误码表
             throw new BaseException(BizErrorStatus.POS_REFUND_REPEAT).withData(orderNo);
         }
 
@@ -90,9 +86,7 @@ public class OmsOrderRefundServiceImpl implements OmsOrderRefundService {
             umsMemberAssetService.processReturn(order.getMemberId(), order.getFinalSalesAmount(), order.getCouponAmount(), true, orderNo);
 
             if (order.getUseVoucherAmount() != null && order.getUseVoucherAmount().compareTo(BigDecimal.ZERO) > 0) {
-                Long voucherCount = posMemberCouponMapper.selectCount(new LambdaQueryWrapper<PosMemberCoupon>()
-                        .eq(PosMemberCoupon::getOrderNo, orderNo));
-
+                Long voucherCount = posMemberCouponMapper.selectCount(new LambdaQueryWrapper<PosMemberCoupon>().eq(PosMemberCoupon::getOrderNo, orderNo));
                 if (voucherCount != null && voucherCount > 0) {
                     posMemberCouponMapper.update(null, new LambdaUpdateWrapper<PosMemberCoupon>()
                             .eq(PosMemberCoupon::getOrderNo, orderNo)
@@ -103,7 +97,6 @@ public class OmsOrderRefundServiceImpl implements OmsOrderRefundService {
                     Long totalUnusedVouchers = posMemberCouponMapper.selectCount(new LambdaQueryWrapper<PosMemberCoupon>()
                             .eq(PosMemberCoupon::getMemberId, order.getMemberId())
                             .eq(PosMemberCoupon::getStatus, "UNUSED"));
-
                     umsMemberAssetService.logVoucherRefund(order.getMemberId(), new BigDecimal(voucherCount), new BigDecimal(totalUnusedVouchers), orderNo);
                 }
             }
@@ -128,13 +121,11 @@ public class OmsOrderRefundServiceImpl implements OmsOrderRefundService {
         OmsOrderDetail detail = omsOrderDetailMapper.selectById(dto.getDetailId());
         OmsOrder order = omsOrderMapper.selectOne(new LambdaQueryWrapper<OmsOrder>().eq(OmsOrder::getOrderNo, dto.getOrderNo()));
         if (detail == null || order == null) {
-            // 🌟 修复8：明细/主单找不到时，走标准退款错误码
             throw new BaseException(BizErrorStatus.POS_REFUND_NOT_FOUND).withData(dto);
         }
 
         if (!detail.getOrderNo().equals(order.getOrderNo())) {
             log.error("触发越权/串单退货拦截! 请求单号:{}, 实际明细归属单号:{}", dto.getOrderNo(), detail.getOrderNo());
-            // 🌟 修复8：防串单漏洞拦截接入标准状态码体系，透传作案现场数据
             throw new BaseException(BizErrorStatus.POS_REFUND_NOT_FOUND).withData(dto.getOrderNo());
         }
 
@@ -180,7 +171,6 @@ public class OmsOrderRefundServiceImpl implements OmsOrderRefundService {
         int updatedRows = omsOrderDetailMapper.refundGoodsAtomically(detail.getId(), returnQty);
         if (updatedRows != 1) {
             log.error("明细退货数量更新失败(可能超退或并发)。明细ID:{}, 请求退数量:{}", detail.getId(), returnQty);
-            // 🌟 修复8：并发超退拦截接入标准码体系，透传请求数量
             throw new BaseException(BizErrorStatus.POS_REFUND_QTY_INVALID).withData("请求退数量:" + returnQty);
         }
 
@@ -189,11 +179,20 @@ public class OmsOrderRefundServiceImpl implements OmsOrderRefundService {
 
         if (goods == null) {
             log.error("退货异常：商品档案不存在，商品ID: {}", detail.getGoodsId());
-            // 🌟 修复8：复用商品缺失标准码，透传故障商品ID
             throw new BaseException(BizErrorStatus.GOODS_NOT_FOUND).withData(detail.getGoodsId());
         }
 
         if (goods.getIsCombo() != null && goods.getIsCombo() == 1) {
+            // 🌟 核心收口 2：先回补套餐自身的逻辑配额
+            gmsGoodsMapper.addStockAtomically(goods.getId(), new BigDecimal(returnQty));
+            GmsGoods updatedCombo = gmsGoodsMapper.selectById(goods.getId());
+            int latestComboStock = (updatedCombo != null && updatedCombo.getStock() != null) ? updatedCombo.getStock().intValue() : 0;
+
+            // 注意：套餐配额的库存成本强制按 0 计算！真实的货值让子商品承担，防止对账时财务大盘虚高
+            recordStockLog(goods, returnQty, latestComboStock, orderNo, BigDecimal.ZERO, "退款回补套餐配额");
+            saveDocItem(doc.getDocNo(), goods, returnQty, BigDecimal.ZERO, latestComboStock);
+
+            // 🌟 然后穿透回补子商品的物理库存
             List<GmsGoodsCombo> combos = gmsGoodsComboMapper.selectList(new LambdaQueryWrapper<GmsGoodsCombo>().eq(GmsGoodsCombo::getComboGoodsId, goods.getId()));
             for (GmsGoodsCombo c : combos) {
                 GmsGoods sub = gmsGoodsMapper.selectById(c.getSubGoodsId());
@@ -203,20 +202,21 @@ public class OmsOrderRefundServiceImpl implements OmsOrderRefundService {
                     GmsGoods updatedSub = gmsGoodsMapper.selectById(sub.getId());
                     int latestStock = (updatedSub != null && updatedSub.getStock() != null) ? updatedSub.getStock().intValue() : 0;
                     BigDecimal cost = sub.getAvgCostPrice() != null ? sub.getAvgCostPrice() : (sub.getPurchasePrice() != null ? sub.getPurchasePrice() : BigDecimal.ZERO);
-                    impact = impact.add(cost.multiply(new BigDecimal(qty)));
-                    recordStockLog(sub, qty, latestStock, orderNo, cost, "套餐回补");
 
+                    impact = impact.add(cost.multiply(new BigDecimal(qty)));
+                    recordStockLog(sub, qty, latestStock, orderNo, cost, "套餐退款联动回补实物");
                     saveDocItem(doc.getDocNo(), sub, qty, cost, latestStock);
                 }
             }
         } else {
+            // 普通单品直接回补
             gmsGoodsMapper.addStockAtomically(goods.getId(), new BigDecimal(returnQty));
             GmsGoods updatedGoods = gmsGoodsMapper.selectById(goods.getId());
             int latestStock = (updatedGoods != null && updatedGoods.getStock() != null) ? updatedGoods.getStock().intValue() : 0;
             BigDecimal cost = detail.getPurchasePrice() != null ? detail.getPurchasePrice() : BigDecimal.ZERO;
-            impact = cost.multiply(new BigDecimal(returnQty));
-            recordStockLog(goods, returnQty, latestStock, orderNo, cost, "单品回补");
 
+            impact = cost.multiply(new BigDecimal(returnQty));
+            recordStockLog(goods, returnQty, latestStock, orderNo, cost, "单品退货回补");
             saveDocItem(doc.getDocNo(), goods, returnQty, cost, latestStock);
         }
 
@@ -231,10 +231,8 @@ public class OmsOrderRefundServiceImpl implements OmsOrderRefundService {
         item.setBarcode(g.getBarcode());
         item.setChangeQty(qty);
         item.setCostPrice(cost);
-
         item.setPreStock((long) (latestStock - qty));
         item.setAfterStock((long) latestStock);
-
         gmsInventoryDocItemMapper.insert(item);
     }
 

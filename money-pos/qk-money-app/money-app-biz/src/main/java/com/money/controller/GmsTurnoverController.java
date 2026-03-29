@@ -58,7 +58,7 @@ public class GmsTurnoverController {
         ExcelUtil.export(response, "智能采购建议单", "采购明细", TurnoverReplenishExcelDTO.class, list);
     }
 
-    @Operation(summary = "一键导出：僵尸库存清仓单")
+    @Operation(summary = "一键导出：积压库存清仓单")
     @GetMapping("/export-deadstock")
     public void exportDeadStock(HttpServletResponse response) throws IOException {
         // 1. 获取大脑算出的实时预警数据
@@ -80,6 +80,6 @@ public class GmsTurnoverController {
         }
 
         // 3. 调用通用引擎，一键下载！
-        ExcelUtil.export(response, "僵尸库存清仓单", "清仓明细", TurnoverDeadStockExcelDTO.class, list);
+        ExcelUtil.export(response, "积压库存清仓单", "清仓明细", TurnoverDeadStockExcelDTO.class, list);
     }
 }
