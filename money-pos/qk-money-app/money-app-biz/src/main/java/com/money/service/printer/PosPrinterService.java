@@ -27,8 +27,6 @@ import java.math.RoundingMode;
 public class PosPrinterService {
 
     private final SysPrintConfigMapper sysPrintConfigMapper;
-
-    // 🌟 新增：注入字典和满减券的查询能力
     private final SysDictDetailMapper sysDictDetailMapper;
     private final PosMemberCouponMapper posMemberCouponMapper;
 
@@ -71,7 +69,6 @@ public class PosPrinterService {
             writeText(bos, "--------------------------------\n");
 
             // ================= 3. 商品明细 =================
-            // 🌟 核心修复：让表头也严格通过格式化工具，保证和下面的数据列达到像素级完美对齐！
             writeText(bos, formatItemLine("原价", "现价", "数量", "优惠", "小计") + "\n");
 
             int totalQty = 0;
@@ -103,17 +100,16 @@ public class PosPrinterService {
             writeText(bos, "--------------------------------\n");
 
             // ================= 5. 支付与会员相关信息 =================
+            // 🌟 修复1：完全动态的支付列表遍历
             if (orderVO.getPayments() != null) {
                 for (OrderDetailVO.OrderPayVO pay : orderVO.getPayments()) {
-                    if ("BALANCE".equals(pay.getPayMethodCode()) && isVip) {
-                        String payName = StringUtils.hasText(pay.getPayMethodName()) ? pay.getPayMethodName() : "会员支付";
-                        writeText(bos, payName + ": " + fmt(pay.getPayAmount()) + "\n");
-                    }
-                    else if (!"BALANCE".equals(pay.getPayMethodCode())) {
-                        // 🌟 核心修复：聚合支付动态读取字典真实标签
-                        writeText(bos, resolvePayName(pay) + ": " + fmt(pay.getPayAmount()) + "\n");
-                    }
+                    writeText(bos, resolvePayName(pay) + ": " + fmt(pay.getPayAmount()) + "\n");
                 }
+            }
+
+            // 🌟 修复2：独立的找零打印逻辑
+            if (orderVO.getChangeAmount() != null && orderVO.getChangeAmount().compareTo(BigDecimal.ZERO) > 0) {
+                writeText(bos, "找零: " + fmt(orderVO.getChangeAmount()) + "\n");
             }
 
             if (isVip) {
@@ -130,7 +126,6 @@ public class PosPrinterService {
                     if (orderVO.getMemberInfo().getCoupon() != null) {
                         writeText(bos, "会员券余额: " + fmt(orderVO.getMemberInfo().getCoupon()) + "\n");
                     }
-                    // 🌟 核心修复：实时查询该会员账户里剩余的未使用满减券张数
                     if (orderVO.getMemberId() != null) {
                         Long vCount = posMemberCouponMapper.selectCount(
                                 new LambdaQueryWrapper<PosMemberCoupon>()
@@ -145,9 +140,9 @@ public class PosPrinterService {
             }
 
             // ================= 6. 尾部信息 =================
-            if (isVip) {
-                writeText(bos, "--------------------------------\n");
-            }
+            // 🌟 修复3：将分割线移出 isVip 判定，所有人都有分割线
+            writeText(bos, "--------------------------------\n");
+
             bos.write(EscPosUtil.ALIGN_LEFT);
             if (StringUtils.hasText(config.getShopPhone())) {
                 writeText(bos, "门店热线: " + config.getShopPhone() + "\n");
@@ -170,24 +165,49 @@ public class PosPrinterService {
         }
     }
 
-    // 🌟 动态翻译引擎：抛弃写死，完全读库字典！
+    // ==========================================
+    // 🌟 全自动字典驱动翻译引擎
+    // ==========================================
     private String resolvePayName(OrderDetailVO.OrderPayVO pay) {
-        // 如果有支付子标签（如 WECHAT, ALIPAY），去字典里查中文
+        // 第一优先级：解析子标签 (如把聚合支付进一步细化为 微信、支付宝)
         if (StringUtils.hasText(pay.getPayTag())) {
-            SysDictDetail detail = sysDictDetailMapper.selectOne(
+            SysDictDetail subDetail = sysDictDetailMapper.selectOne(
                     new LambdaQueryWrapper<SysDictDetail>()
                             .eq(SysDictDetail::getDict, "paySubTag")
                             .eq(SysDictDetail::getValue, pay.getPayTag())
                             .last("LIMIT 1")
             );
-            if (detail != null && StringUtils.hasText(detail.getCnDesc())) {
-                return detail.getCnDesc(); // 返回如：微信支付、支付宝
+            if (subDetail != null && StringUtils.hasText(subDetail.getCnDesc())) {
+                return subDetail.getCnDesc();
             }
         }
-        // 如果没有子标签，或者字典没配，就降级使用主名称(如：聚合扫码、现金支付)
-        return StringUtils.hasText(pay.getPayMethodName()) ? pay.getPayMethodName() : "扫码支付";
+
+        // 第二优先级：解析主支付方式 (读取 pos_payment_method 字典)
+        if (StringUtils.hasText(pay.getPayMethodCode())) {
+            SysDictDetail mainDetail = sysDictDetailMapper.selectOne(
+                    new LambdaQueryWrapper<SysDictDetail>()
+                            .eq(SysDictDetail::getDict, "pos_payment_method")
+                            .eq(SysDictDetail::getValue, pay.getPayMethodCode())
+                            .last("LIMIT 1")
+            );
+            if (mainDetail != null && StringUtils.hasText(mainDetail.getCnDesc())) {
+                return mainDetail.getCnDesc();
+            }
+        }
+
+        // 第三优先级 (终极兜底)：脱敏清洗
+        String fallbackName = pay.getPayMethodName();
+        if (StringUtils.hasText(fallbackName)) {
+            // 剔除脏数据前缀，如将 "其他渠道(CASH)" 变成 "CASH"
+            return fallbackName.replace("其他渠道", "").replace("(", "").replace(")", "").trim();
+        }
+
+        return "扫码支付";
     }
 
+    // ==========================================
+    // 基础工具方法 (保持原样)
+    // ==========================================
     private String fmt(BigDecimal amt) {
         if (amt == null) return "0.00";
         return amt.setScale(2, RoundingMode.HALF_UP).toString();

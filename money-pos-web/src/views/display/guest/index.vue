@@ -317,8 +317,17 @@ onUnmounted(() => {
 .empty-icon { font-size: 72px; margin-bottom: 18px; color: #6b7280; }
 .empty-title { font-size: 36px; font-weight: 900; margin-bottom: 10px; }
 .empty-subtitle { font-size: 18px; color: #9ca3af; }
-.marquee-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 56px; background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(8px); display: flex; align-items: center; overflow: hidden; z-index: 10; }
-.marquee-text { white-space: nowrap; color: #facc15; font-size: 20px; font-weight: 800; letter-spacing: 1px; padding-left: 100%; animation: marquee 18s linear infinite; }
+
+/* 🌟 核心修复：跑马灯容器与文字绝对定位，配合动画引擎 */
+.marquee-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 64px; background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(8px); display: flex; align-items: center; overflow: hidden; z-index: 10; }
+.marquee-text { position: absolute; white-space: nowrap; color: #facc15; font-size: 28px; font-weight: 800; letter-spacing: 2px; animation: marquee 15s linear infinite; }
+
+/* 🌟 核心修复：跑马灯专属关键帧动画 */
+@keyframes marquee {
+    0% { left: 100%; transform: translateX(0); }
+    100% { left: 0%; transform: translateX(-100%); }
+}
+
 .cashier-stage { position: absolute; inset: 0; display: flex; background: #fff; }
 .left-panel { width: 56%; height: 100%; display: flex; flex-direction: column; background: #f9fafb; border-right: 1px solid #e5e7eb; position: relative; }
 .left-header { min-height: 64px; background: #2563eb; color: #fff; padding: 0 20px; display: flex; align-items: center; justify-content: space-between; font-size: 22px; font-weight: 800; flex-shrink: 0; }
@@ -341,8 +350,9 @@ onUnmounted(() => {
 .primary-money { color: #2563eb; }
 .pay-tip { font-size: 18px; font-weight: 800; color: #6b7280; background: #f9fafb; border-radius: 12px; padding: 12px 16px; width: 100%; max-width: 520px; margin-top: 8px; }
 .warning-tip { color: #ea580c; background: #fff7ed; }
+
 /* ==========================================
-   🌟 终极修复：完美“一行两个，多余换行”的流式二维码矩阵
+   🌟 流式二维码矩阵
 ========================================== */
 .qr-group {
     margin-top: 24px;
@@ -350,7 +360,6 @@ onUnmounted(() => {
     display: flex;
     justify-content: center;
     gap: 20px;
-    /* 🌟 恢复您的原意：允许自动换行 */
     flex-wrap: wrap;
 }
 
@@ -362,11 +371,7 @@ onUnmounted(() => {
     display: flex;
     flex-direction: column;
     align-items: center;
-
-    /* 🌟 核心魔法：宽度严格设定为 50% 减去间隙的一半。绝对保证一行刚好装下两个！ */
     width: calc(50% - 10px);
-
-    /* 限制一个极限最大值，防止在 4K 巨屏上二维码大得吓人 */
     max-width: 200px;
 }
 
@@ -376,11 +381,8 @@ onUnmounted(() => {
     border: 1px solid #e5e7eb;
     border-radius: 16px;
     box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-
-    /* 宽充满父级，高度自动按 1:1 保持完美正方形，无需再写死 height */
     width: 100%;
     aspect-ratio: 1 / 1;
-
     display: flex;
     align-items: center;
     justify-content: center;

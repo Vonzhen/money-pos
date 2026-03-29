@@ -137,13 +137,25 @@ public class UmsMemberProfileService {
 
     public List<UmsMemberVO> getDormantMembers(Integer days) {
         if (days == null || days <= 0) throw new BaseException("天数参数异常");
+
+        // 计算沉睡阈值时间：当前时间往前推 days 天
         LocalDateTime threshold = LocalDateTime.now().minusDays(days);
+
+        // 🌟 核心修复：双维度沉睡判定逻辑
         List<UmsMember> list = umsMemberMapper.selectList(new LambdaQueryWrapper<UmsMember>()
                 .eq(UmsMember::getDeleted, false)
-                .isNotNull(UmsMember::getLastVisitTime)
-                .le(UmsMember::getLastVisitTime, threshold)
+                .and(wrapper -> wrapper
+                        // 维度 1：【流失老客】有访问记录，且最后访问时间早于阈值
+                        .and(w1 -> w1.isNotNull(UmsMember::getLastVisitTime)
+                                .le(UmsMember::getLastVisitTime, threshold))
+                        // 维度 2：【沉水死粉】无访问记录（如刚导入），且账号创建/导入时间早于阈值
+                        .or(w2 -> w2.isNull(UmsMember::getLastVisitTime)
+                                .le(UmsMember::getCreateTime, threshold))
+                )
+                // 排序：优先唤醒曾经消费过的大客户，其次是普通客户
                 .orderByDesc(UmsMember::getConsumeAmount)
                 .last("LIMIT 100"));
+
         return BeanUtil.copyToList(list, UmsMemberVO.class);
     }
 
