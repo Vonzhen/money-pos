@@ -66,9 +66,12 @@ public class SysBackupService {
     }
 
     public File createBackupZip(String prefix) {
-        String baseDir = WorkspaceEnv.getAppHome();
-        String backupDir = baseDir + File.separator + "backups";
-        String mariadbBin = baseDir + File.separator + "mariadb" + File.separator + "bin";
+        // 🌟 核心修复 1：动静分离，引擎拿 Home，数据拿 Data
+        String appHome = WorkspaceEnv.getAppHome(); // 程序区
+        String appData = WorkspaceEnv.getAppData(); // 数据区 (安全区)
+
+        String backupDir = appData + File.separator + "backups"; // 备份文件夹在数据区
+        String mariadbBin = appHome + File.separator + "mariadb" + File.separator + "bin"; // 引擎在程序区
         String tempBatchDir = backupDir + File.separator + "temp_" + IdUtil.fastSimpleUUID();
 
         FileUtil.mkdir(tempBatchDir);
@@ -85,7 +88,7 @@ public class SysBackupService {
 
             // 🌟 跨平台自适应执行程序后缀
             String exeSuffix = System.getProperty("os.name").toLowerCase().contains("win") ? ".exe" : "";
-            File mysqldumpExe = new File(mariadbBin + File.separator + "mysqldump" + exeSuffix);
+            File mysqldumpExe = new File(mariadbBin + File.separator + "mysqldump" + exeSuffix); // 这里用 appHome
 
             ProcessBuilder pb = new ProcessBuilder(
                     mysqldumpExe.getAbsolutePath(), "--host=127.0.0.1", "--port=" + MariaDbGuardian.DB_PORT,
@@ -106,11 +109,11 @@ public class SysBackupService {
             }
 
             // 2. 备份静态资源
-            File assetsDir = new File(baseDir + File.separator + "assets");
+            File assetsDir = new File(appData + File.separator + "assets"); // 🌟 核心修复：找数据区的 assets
             if (assetsDir.exists()) FileUtil.copy(assetsDir, new File(tempBatchDir), true);
 
             // 3. 打包 ZIP
-            String zipFileName = prefix + "MoneyPOS_" + DateUtil.format(DateUtil.date(), "yyyyMMdd_HHmmss") + ".zip";
+            String zipFileName = prefix + "VanaPOS_" + DateUtil.format(DateUtil.date(), "yyyyMMdd_HHmmss") + ".zip";
             File zipFile = new File(backupDir + File.separator + zipFileName);
             cn.hutool.core.util.ZipUtil.zip(tempBatchDir, zipFile.getAbsolutePath(), true);
             return zipFile;
@@ -123,8 +126,9 @@ public class SysBackupService {
     }
 
     public void restoreFromZip(MultipartFile backupFile) {
-        String baseDir = WorkspaceEnv.getAppHome();
-        String tempRestoreDir = baseDir + File.separator + "backups" + File.separator + "restore_" + IdUtil.fastSimpleUUID();
+        // 🌟 核心修复 2：还原文件统一走数据安全区
+        String appData = WorkspaceEnv.getAppData();
+        String tempRestoreDir = appData + File.separator + "backups" + File.separator + "restore_" + IdUtil.fastSimpleUUID();
         File zipFile = new File(tempRestoreDir + ".zip");
 
         try {
@@ -159,7 +163,8 @@ public class SysBackupService {
             atomicSwitchDatabase();
             sendLog("SUCCESS", "数据库切换完美达成，无残留旧表！");
 
-            restoreAssetsAtomically(tempRestoreDir, baseDir);
+            // 🌟 核心修复 3：将静态资源还原到数据安全区
+            restoreAssetsAtomically(tempRestoreDir, appData);
 
             sendLog("SUCCESS", "=== 还原全流程安全收官 ===");
 
@@ -178,14 +183,12 @@ public class SysBackupService {
     private void checkManifestStrictly(String restoreDir) {
         File manifest = new File(restoreDir + File.separator + MANIFEST_FILE);
         if (!manifest.exists()) {
-            // 🌟 核心修复：向下兼容老版备份包！如果没有清单，只发警告不报错，允许强行导入
             sendLog("WARN", "⚠️ 检测到旧版备份包：缺失 manifest 清单文件，将跳过安全校验强制执行恢复...");
             return;
         }
 
         JSONObject json = JSONUtil.readJSONObject(manifest, StandardCharsets.UTF_8);
 
-        // 强校验应用和数据库归属，防止乱包导入
         if (!"MoneyPOS".equals(json.getStr("appName"))) {
             throw new RuntimeException("非法备份包：应用名称不匹配");
         }
@@ -193,7 +196,6 @@ public class SysBackupService {
             throw new RuntimeException("非法备份包：数据库名称不匹配 (" + json.getStr("dbName") + ")");
         }
 
-        // 版本不一致允许降级/升级导入，但发出警告
         String version = json.getStr("appVersion");
         if (!APP_VERSION.equals(version)) {
             sendLog("WARN", "⚠️ 备份版本(" + version + ")与当前系统(" + APP_VERSION + ")不一致，将尝试跨版本兼容导入...");
@@ -207,6 +209,7 @@ public class SysBackupService {
 
     private void importSqlToDb(File sqlFile, String dbName) throws Exception {
         String exeSuffix = System.getProperty("os.name").toLowerCase().contains("win") ? ".exe" : "";
+        // 🌟 只有引擎执行文件 (mysql.exe) 依然在程序区找，保持不变
         String mysqlExe = WorkspaceEnv.getAppHome() + "/mariadb/bin/mysql" + exeSuffix;
 
         ProcessBuilder pb = new ProcessBuilder(
@@ -215,7 +218,6 @@ public class SysBackupService {
         );
         pb.redirectInput(sqlFile);
 
-        // 🌟 核心捕获：记录导入时底层 MySQL 报错
         File errorLogFile = new File(sqlFile.getParent() + File.separator + "import_error.log");
         pb.redirectError(errorLogFile);
 
@@ -227,7 +229,6 @@ public class SysBackupService {
         }
     }
 
-    // 🌟 核心防线 3：影子库深度探活校验
     private void verifyShadowDatabase() throws Exception {
         String url = "jdbc:mysql://127.0.0.1:" + MariaDbGuardian.DB_PORT + "/" + SHADOW_DB + "?useSSL=false";
         try (Connection conn = DriverManager.getConnection(url, "root", MariaDbGuardian.getDbPassword());
@@ -238,14 +239,12 @@ public class SysBackupService {
             ResultSet rs = stmt.executeQuery("SHOW TABLES");
             while (rs.next()) actualTables.add(rs.getString(1));
 
-            // 1. 验证核心表是否齐全
             for (String reqTable : requiredTables) {
                 if (!actualTables.contains(reqTable)) {
                     throw new RuntimeException("影子库校验失败：缺失系统级核心表 `" + reqTable + "`，备份文件已损坏或不完整！");
                 }
             }
 
-            // 2. 验证核心表数据可读性 (防止结构毁坏)
             for (String reqTable : requiredTables) {
                 try {
                     stmt.executeQuery("SELECT COUNT(1) FROM `" + reqTable + "`");
@@ -256,53 +255,41 @@ public class SysBackupService {
         }
     }
 
-    // 🌟 核心防线 4：表集绝对一致性的无损原子切换
     private void atomicSwitchDatabase() throws Exception {
         String url = "jdbc:mysql://127.0.0.1:" + MariaDbGuardian.DB_PORT + "/mysql?useSSL=false";
         try (Connection conn = DriverManager.getConnection(url, "root", MariaDbGuardian.getDbPassword());
              Statement stmt = conn.createStatement()) {
 
-            // 1. 获取影子库所有表
             List<String> shadowTables = new ArrayList<>();
             ResultSet rsShadow = stmt.executeQuery("SHOW TABLES FROM `" + SHADOW_DB + "`");
             while (rsShadow.next()) shadowTables.add(rsShadow.getString(1));
             if (shadowTables.isEmpty()) throw new RuntimeException("影子库表结构为空，安全机制已拦截切换");
 
-            // 🌟 核心补丁：在获取生产库表单之前，确保生产库存在！
-            // 防止在“纯新环境”或“生产库被手工误删”的空白场景下，SHOW TABLES 触发 Unknown database 报错！
             stmt.execute("CREATE DATABASE IF NOT EXISTS `" + MariaDbGuardian.DB_NAME + "` CHARACTER SET utf8mb4");
 
-            // 2. 获取当前生产库所有表
             List<String> prodTables = new ArrayList<>();
             ResultSet rsProd = stmt.executeQuery("SHOW TABLES FROM `" + MariaDbGuardian.DB_NAME + "`");
             while (rsProd.next()) prodTables.add(rsProd.getString(1));
 
-            // 3. 创建旧库的收容所
             String bakDbName = MariaDbGuardian.DB_NAME + "_bak_" + DateUtil.format(DateUtil.date(), "yyyyMMdd_HHmmss");
             stmt.execute("CREATE DATABASE `" + bakDbName + "` CHARACTER SET utf8mb4");
 
-            // 4. 单句组合 RENAME，保证绝对原子性和表集一致性
             StringBuilder renameSql = new StringBuilder("RENAME TABLE ");
             boolean isFirst = true;
 
-            // 动作 A：把当前生产库里的【所有旧表】扫进 bak 库 (彻底腾空，防幽灵残留)
             for (String pt : prodTables) {
                 if (!isFirst) renameSql.append(", ");
                 renameSql.append(String.format("`%s`.`%s` TO `%s`.`%s`", MariaDbGuardian.DB_NAME, pt, bakDbName, pt));
                 isFirst = false;
             }
 
-            // 动作 B：把影子库的【所有新表】平移到生产库
             for (String st : shadowTables) {
                 if (!isFirst) renameSql.append(", ");
                 renameSql.append(String.format("`%s`.`%s` TO `%s`.`%s`", SHADOW_DB, st, MariaDbGuardian.DB_NAME, st));
                 isFirst = false;
             }
 
-            // 一键执行，要么全部成功替换，要么立刻回滚，生产库毫发无损！
             stmt.execute(renameSql.toString());
-
-            // 清理已立功的影子库
             stmt.execute("DROP DATABASE IF EXISTS `" + SHADOW_DB + "`");
 
             if (!prodTables.isEmpty()) {
@@ -313,18 +300,18 @@ public class SysBackupService {
         }
     }
 
-    private void restoreAssetsAtomically(String tempDir, String baseDir) {
+    // 🌟 此处传入的 dataDir 已经是安全区路径了
+    private void restoreAssetsAtomically(String tempDir, String dataDir) {
         File assetsInZip = new File(tempDir + File.separator + "assets");
         if (!assetsInZip.exists()) return;
 
-        File targetAssets = new File(baseDir + File.separator + "assets");
-        File bakAssets = new File(baseDir + File.separator + "assets_bak_" + IdUtil.fastSimpleUUID());
+        File targetAssets = new File(dataDir + File.separator + "assets");
+        File bakAssets = new File(dataDir + File.separator + "assets_bak_" + IdUtil.fastSimpleUUID());
 
         try {
             if (targetAssets.exists()) FileUtil.move(targetAssets, bakAssets, true);
             FileUtil.copyContent(assetsInZip, targetAssets, true);
 
-            // 简单线程延迟清理备份资源，单机场景够用
             new Thread(() -> {
                 try { Thread.sleep(5000); FileUtil.del(bakAssets); } catch (Exception ignore) {}
             }).start();
