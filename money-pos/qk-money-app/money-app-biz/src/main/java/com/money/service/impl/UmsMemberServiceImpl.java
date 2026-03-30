@@ -134,4 +134,10 @@ public class UmsMemberServiceImpl extends ServiceImpl<UmsMemberMapper, UmsMember
     public String importMembers(MultipartFile file) {
         return UmsMemberImportService.importMembers(file); // 🌟 加上 return
     }
+
+    // 🌟 找到引入 UmsMemberProfileService 的地方，加上这段实现
+    @Override
+    public UmsMemberVO getDetail(Long id) {
+        return UmsMemberProfileService.getDetail(id); // 直接把活儿派给档案子域
+    }
 }

@@ -37,10 +37,18 @@ public class UmsMemberController {
     }
 
     @Operation(summary = "获取会员画像商品排行")
-    @GetMapping("/top10Goods")
+    @GetMapping("/top20Goods")
     @PreAuthorize("@rbac.hasPermission('umsMember:list')")
-    public List<MemberGoodsRankVO> top10Goods(@RequestParam Long memberId) {
+    public List<MemberGoodsRankVO> top20Goods(@RequestParam Long memberId) {
         return umsMemberService.getTop20Goods(memberId);
+    }
+
+    // 🌟 新增：标准的单条会员详情查询接口
+    @Operation(summary = "获取单个会员详情")
+    @GetMapping("/{id}")
+    @PreAuthorize("@rbac.hasPermission('umsMember:list')")
+    public UmsMemberVO getInfo(@PathVariable("id") Long id) {
+        return umsMemberService.getDetail(id);
     }
 
     @Operation(summary = "添加会员")

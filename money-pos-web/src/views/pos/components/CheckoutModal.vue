@@ -42,7 +42,7 @@
                                 <span class="text-xs text-green-600 font-bold">最多可用 {{ maxUsableCoupons }} 张</span>
                                 <div class="flex items-center gap-2">
                                     <span class="text-xs text-gray-500 whitespace-nowrap">使用:</span>
-                                    <el-input-number v-model="usedCouponCount" :min="1" :max="maxUsableCoupons" :step="1" class="!w-[90px]" size="small" @change="handleDiscountChange" />
+                                    <el-input-number v-model="usedCouponCount" :min="1" :max="maxUsableCoupons" :step="1" class="!w-[90px]" size="small" @change="handleDiscountChange" @focus="handleFocus" />
                                 </div>
                             </template>
                         </div>
@@ -54,7 +54,7 @@
                     <div class="flex flex-col mt-2">
                         <div class="flex justify-between items-center text-blue-600 border-t border-gray-200 pt-3">
                             <span class="font-bold whitespace-nowrap">🏷️ 整单优惠:</span>
-                            <el-input-number v-model="manualDiscount" :min="0" :max="totalAmount" :precision="2" :step="1" class="!w-[130px]" placeholder="直减" @change="handleDiscountChange" />
+                            <el-input-number v-model="manualDiscount" :min="0" :max="totalAmount" :precision="2" :step="1" class="!w-[130px]" placeholder="直减" @change="handleDiscountChange" @focus="handleFocus" />
                         </div>
 
                         <div class="flex flex-col border-t border-dashed border-gray-300 pt-3 mt-3 min-h-[45px]" v-show="currentMember.id && theoreticalCouponUsed > 0">
@@ -106,6 +106,7 @@
                                     :controls="false"
                                     placeholder="0"
                                     @update:model-value="(val) => handlePaymentChange(index, val)"
+                                    @focus="handleFocus"
                                 />
                             </div>
                             <div v-if="pay.code === 'AGGREGATE' && payTagDict && payTagDict.length > 0" class="flex flex-wrap gap-2 mt-2 ml-[5.5rem]">
@@ -130,8 +131,8 @@
                     <el-button type="danger" size="large" class="!text-2xl font-black tracking-widest shadow-md px-8"
                         @click="submitOrderAction"
                         :loading="submitLoading"
-                        :disabled="isTrialing || unpaidAmount > 0 || (!isWaiveCoupon && currentMember.id && currentMember.coupon < theoreticalCouponUsed)">
-                        {{ isTrialing ? '计价中...' : '确认收款' }}
+                        :disabled="isSubmitDisabled">
+                        {{ isTrialing ? '计价中...' : '确认收款 [空格]' }}
                     </el-button>
                 </div>
             </div>
@@ -140,7 +141,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { UserFilled, Ticket, PriceTag } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { usePosStore } from '../hooks/usePosStore'
@@ -168,6 +169,32 @@ const {
     reqId, prepareCheckout, clearAll, submitOrder, runTrial, isTrialing
 } = usePosStore();
 
+const isSubmitDisabled = computed(() => {
+    return isTrialing.value ||
+           unpaidAmount.value > 0 ||
+           (!isWaiveCoupon.value && currentMember.value.id && currentMember.value.coupon < theoreticalCouponUsed.value);
+})
+
+// 🌟 新增：全选处理函数 (event.target 即 input 元素)
+const handleFocus = (event) => {
+    event.target.select();
+}
+
+const handleKeyDown = (e) => {
+    if (!visible.value) return;
+    if (e.key === ' ' || e.code === 'Space') {
+        const target = e.target;
+        if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+        e.preventDefault();
+        if (!isSubmitDisabled.value && !submitLoading.value) {
+            submitOrderAction();
+        }
+    }
+}
+
+onMounted(() => { window.addEventListener('keydown', handleKeyDown); })
+onUnmounted(() => { window.removeEventListener('keydown', handleKeyDown); })
+
 const availableCoupons = computed(() => {
     if (!currentMember.value.id || !Array.isArray(currentMember.value.couponList)) return []
     return currentMember.value.couponList.filter(c => participatingAmount.value >= c.threshold)
@@ -179,7 +206,6 @@ const maxUsableCoupons = computed(() => {
     return Math.min(maxByAmount, selectedCouponRule.value.availableCount || 0);
 })
 
-// 🌟 使用 Big.js 修复精度计算
 const totalPaid = computed(() => paymentList.value.reduce((sum, item) => sum.plus(item.amount || 0), new Big(0)).toNumber())
 const unpaidAmount = computed(() => {
     const pay = new Big(finalPayAmount.value || 0);
@@ -192,11 +218,9 @@ const changeAmount = computed(() => {
     const cashPaid = new Big(cashItem ? (cashItem.amount || 0) : 0);
     const nonCashPaid = new Big(totalPaid.value).minus(cashPaid);
     const pay = new Big(finalPayAmount.value || 0);
-
     const remainToPay = pay.minus(nonCashPaid);
     const effectiveRemainToPay = remainToPay.gt(0) ? remainToPay : new Big(0);
     const diff = cashPaid.minus(effectiveRemainToPay);
-
     return diff.gt(0) ? diff.toNumber() : 0;
 })
 
@@ -205,7 +229,6 @@ watch(visible, (newVal) => {
         prepareCheckout();
         usedCouponCount.value = 0;
         const sourceDict = props.payMethodDict.length > 0 ? props.payMethodDict : [{value: 'AGGREGATE', desc: '聚合扫码'}, {value: 'CASH', desc: '现金支付'}]
-
         paymentList.value = sourceDict.map(dict => ({
             code: dict.value,
             name: dict.desc,
@@ -216,7 +239,6 @@ watch(visible, (newVal) => {
     }
 })
 
-// 🌟 P1-1: 废弃 setTimeout 延时猜测，严格 await 等待后端响应
 const handleDiscountChange = async () => {
     await runTrial();
     recalculatePayments();
@@ -242,7 +264,6 @@ const handlePaymentChange = (index, val) => {
         if (newVal.gt(maxBal)) { newVal = maxBal; ElMessage.warning('已限制为最大可用会员余额！'); }
     }
     paymentList.value[index].amount = newVal.toNumber();
-
     const aggIndex = paymentList.value.findIndex(p => p.code.includes('AGGREGATE'));
     if (aggIndex !== -1 && aggIndex !== index) {
         const otherSum = paymentList.value.reduce((sum, p, i) => i !== aggIndex ? sum.plus(p.amount || 0) : sum, new Big(0));
@@ -263,15 +284,12 @@ const handleClosed = () => {
 
 const submitOrderAction = async () => {
     if (unpaidAmount.value > 0) return ElMessage.error(`实付不足 ￥${unpaidAmount.value.toFixed(2)}`);
-
-    // 🌟 P1-2: 将原始收款和找零信息打包传给后端
     const validPayments = paymentList.value
         .filter(p => p.amount > 0)
         .map(p => {
             const original = new Big(p.amount);
             let net = original;
             let changeAlloc = new Big(0);
-
             if (p.code.includes('CASH')) {
                 const totalChange = new Big(changeAmount.value);
                 if (totalChange.gt(0)) {
@@ -279,23 +297,17 @@ const submitOrderAction = async () => {
                     net = original.minus(changeAlloc);
                 }
             }
-
             return {
                 payMethodCode: p.code,
                 payMethodName: p.name,
-                payAmount: net.toNumber(), // 兼容字段
+                payAmount: net.toNumber(),
                 originalAmount: original.toNumber(),
                 netAmount: net.toNumber(),
                 changeAmount: changeAlloc.toNumber(),
                 payTag: p.activeTag || null
             };
         });
-
-    const orderDetails = cartList.value.map(item => ({
-        goodsId: item.id,
-        quantity: Number(item.qty) || 1
-    }));
-
+    const orderDetails = cartList.value.map(item => ({ goodsId: item.id, quantity: Number(item.qty) || 1 }));
     submitLoading.value = true
     try {
         const payload = {
@@ -308,23 +320,15 @@ const submitOrderAction = async () => {
             orderDetail: orderDetails,
             payments: validPayments
         };
-
         const res = await submitOrder(payload)
         ElMessage.success('收款成功！订单已真实入库！')
-
         try {
             const orderNoToPrint = (res && res.data && res.data.orderNo) || (res && res.orderNo) || (typeof res === 'string' ? res : null);
             if (orderNoToPrint) {
                 req({ url: '/oms-order/hardware/print', method: 'GET', params: { orderNo: orderNoToPrint } }).catch(e=>console.log("硬件打印静默失败:", e));
             }
         } catch(e) { console.log(e) }
-
-        // 🌟 保留原版的传参
-        emit('checkout-success', {
-            total: totalAmount.value,
-            paid: totalPaid.value,
-            couponUsed: actualCouponUsed.value
-        })
+        emit('checkout-success', { total: totalAmount.value, paid: totalPaid.value, couponUsed: actualCouponUsed.value })
         visible.value = false;
     } catch (error) {
         console.error("结账异常", error);

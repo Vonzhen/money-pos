@@ -1,13 +1,13 @@
 <template>
     <el-dialog
         v-model="visible"
-        :title="`🌟 ${memberInfo.name || '加载中...'} 的全景画像`"
+        :title="`🌟 ${localMemberInfo.name || '加载中...'} 的全景画像`"
         width="550px"
         align-center
         destroy-on-close
         class="rounded-2xl member-profile-dialog"
     >
-        <div class="px-2 pb-2" v-loading="loading">
+        <div class="px-2 pb-2">
             <el-tabs v-model="activeTab" class="custom-tabs">
                 <el-tab-pane name="profile">
                     <template #label>
@@ -15,30 +15,30 @@
                     </template>
 
                     <div class="flex flex-col gap-5 mt-2">
-                        <div class="bg-gradient-to-br from-blue-50 to-indigo-50 p-5 rounded-xl border border-blue-100 shadow-sm relative overflow-hidden">
+                        <div class="bg-gradient-to-br from-blue-50 to-indigo-50 p-5 rounded-xl border border-blue-100 shadow-sm relative overflow-hidden" v-loading="profileLoading">
                             <div class="absolute right-[-10px] top-[-10px] opacity-10 text-6xl"><el-icon><Trophy /></el-icon></div>
                             <div class="text-sm text-gray-500 font-bold mb-1">历史累计消费金额</div>
-                            <div class="text-3xl font-black text-blue-600 mb-3">￥{{ (memberInfo.consumeAmount || 0).toFixed(2) }}</div>
+                            <div class="text-3xl font-black text-blue-600 mb-3">￥{{ (localMemberInfo.consumeAmount || 0).toFixed(2) }}</div>
 
                             <div class="flex flex-col gap-2 text-sm text-gray-600 border-t border-blue-100/50 pt-3">
                                 <div class="flex justify-between">
-                                    <span>📱 手机号码:</span> <span class="font-mono font-bold">{{ memberInfo.phone || '-' }}</span>
+                                    <span>📱 手机号码:</span> <span class="font-mono font-bold">{{ localMemberInfo.phone || '-' }}</span>
                                 </div>
                                 <div class="flex justify-between">
-                                    <span>💳 会员余额:</span> <span class="font-bold text-gray-800">￥{{ (memberInfo.balance || 0).toFixed(2) }}</span>
+                                    <span>💳 会员余额:</span> <span class="font-bold text-gray-800">￥{{ (localMemberInfo.balance || 0).toFixed(2) }}</span>
                                 </div>
                                 <div class="flex justify-between">
-                                    <span>🎫 会员券:</span> <span class="font-bold text-orange-500">￥{{ (memberInfo.coupon || 0).toFixed(2) }}</span>
+                                    <span>🎫 会员券:</span> <span class="font-bold text-orange-500">￥{{ (localMemberInfo.coupon || 0).toFixed(2) }}</span>
                                 </div>
                                 <div class="flex justify-between">
-                                    <span>🎟️ 剩余满减券:</span> <span class="font-bold text-red-500">{{ memberInfo.voucherCount || 0 }} 张</span>
+                                    <span>🎟️ 剩余满减券:</span> <span class="font-bold text-red-500">{{ localMemberInfo.voucherCount || 0 }} 张</span>
                                 </div>
 
                                 <div class="flex justify-between mt-2 pt-2 border-t border-blue-100/50 items-start">
                                     <span class="text-blue-500 font-bold whitespace-nowrap mt-1">特权版图:</span>
                                     <div class="flex flex-wrap gap-1 justify-end max-w-[220px]">
-                                        <template v-if="memberInfo.brandLevels && Object.keys(memberInfo.brandLevels).length > 0">
-                                            <el-tag v-for="(levelCode, brandId) in memberInfo.brandLevels" :key="brandId" size="small" effect="dark" type="success" class="border-0 shadow-sm">
+                                        <template v-if="localMemberInfo.brandLevels && Object.keys(localMemberInfo.brandLevels).length > 0">
+                                            <el-tag v-for="(levelCode, brandId) in localMemberInfo.brandLevels" :key="brandId" size="small" effect="dark" type="success" class="border-0 shadow-sm">
                                                 {{ getBrandName(brandId) }}: {{ getLevelName(levelCode) }}
                                             </el-tag>
                                         </template>
@@ -47,7 +47,7 @@
                                 </div>
                                 <div class="flex justify-between mt-2 pt-2 border-t border-blue-100/50">
                                     <span class="text-blue-500">最后到店时间:</span>
-                                    <span class="font-bold text-blue-600">{{ memberInfo.lastVisitTime || '暂无消费记录' }}</span>
+                                    <span class="font-bold text-blue-600">{{ localMemberInfo.lastVisitTime || '暂无消费记录' }}</span>
                                 </div>
                             </div>
                         </div>
@@ -56,7 +56,7 @@
                             <h3 class="font-bold text-gray-800 mb-3 flex items-center gap-2 text-base">
                                 <el-icon class="text-orange-500"><Histogram /></el-icon> 核心购物偏好 Top 20
                             </h3>
-                            <el-table :data="topList" size="small" height="250" stripe border class="w-full shadow-sm rounded-lg overflow-hidden">
+                            <el-table :data="topList" size="small" height="250" stripe border class="w-full shadow-sm rounded-lg overflow-hidden" v-loading="topLoading">
                                 <el-table-column type="index" label="排" width="45" align="center">
                                     <template #default="scope">
                                         <span :class="{'text-red-500 font-black': scope.$index === 0, 'text-orange-500 font-bold': scope.$index === 1, 'text-yellow-500 font-bold': scope.$index === 2, 'text-gray-400': scope.$index > 2}">
@@ -82,9 +82,7 @@
                             <el-table-column prop="createTime" label="变动时间" width="140" align="center" />
                             <el-table-column prop="type" label="资产" width="90" align="center">
                                 <template #default="{row}">
-                                    <el-tag size="small" :type="getAssetTagType(row.type)">
-                                        {{ getAssetTypeName(row.type) }}
-                                    </el-tag>
+                                    <el-tag size="small" :type="getAssetTagType(row.type)">{{ getAssetTypeName(row.type) }}</el-tag>
                                 </template>
                             </el-table-column>
                             <el-table-column prop="amount" label="变动金额" width="90" align="right">
@@ -123,7 +121,8 @@ import OrderDetailModal from "@/components/OrderDetailModal.vue"
 
 const props = defineProps({
     modelValue: { type: Boolean, default: false },
-    memberInfo: { type: Object, default: () => ({}) },
+    memberId: { type: [Number, String], default: null }, // 🌟 核心：现在对外只需要这个身份证号！
+    memberInfo: { type: Object, default: () => ({}) },   // 作为初始占位数据，防止刚打开时弹窗一片空白
     brandsDict: { type: Object, default: () => ({}) },
     levelsDict: { type: Object, default: () => ({}) }
 })
@@ -131,9 +130,14 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue'])
 
 const visible = ref(props.modelValue)
-const loading = ref(false)
-const logLoading = ref(false)
 const activeTab = ref('profile')
+
+// 🌟 组件内部维护的三大数据加载状态
+const profileLoading = ref(false)
+const topLoading = ref(false)
+const logLoading = ref(false)
+
+const localMemberInfo = ref({}) // 🌟 组件自己内聚的“胖模型”
 const topList = ref([])
 const logList = ref([])
 
@@ -141,7 +145,6 @@ const rechargeDetailVisible = ref(false)
 const salesDetailVisible = ref(false)
 const currentOrderNo = ref('')
 
-// 🌟 新增：资产流水名称映射器
 const getAssetTypeName = (type) => {
     if (type === 'BALANCE') return '会员余额';
     if (type === 'COUPON') return '会员券';
@@ -149,45 +152,72 @@ const getAssetTypeName = (type) => {
     return type || '未知';
 }
 
-// 🌟 新增：资产流水颜色映射器
 const getAssetTagType = (type) => {
-    if (type === 'BALANCE') return '';         // 默认蓝色
-    if (type === 'COUPON') return 'warning';   // 橙色
-    if (type === 'VOUCHER') return 'danger';   // 红色
-    return 'info';                             // 灰色兜底
+    if (type === 'BALANCE') return '';
+    if (type === 'COUPON') return 'warning';
+    if (type === 'VOUCHER') return 'danger';
+    return 'info';
 }
 
+// 🌟 监听弹窗打开，自主执行三大查询任务！
 watch(() => props.modelValue, (newVal) => {
     visible.value = newVal
-    if (newVal && props.memberInfo.id) {
+    if (newVal) {
         activeTab.value = 'profile'
-        fetchTopGoods(props.memberInfo.id)
+
+        // 1. 先把传进来的基础信息（名字、ID等）塞进去，让标题瞬间出来，不要发呆
+        localMemberInfo.value = { ...props.memberInfo }
+
+        // 2. 提取最核心的 targetId
+        const targetId = props.memberId || props.memberInfo?.id;
+
+        if (targetId) {
+            // 3. 兵分两路：自己去查档案和 Top 榜单！
+            fetchFullProfile(targetId);
+            fetchTopGoods(targetId);
+        }
     }
 })
 
 watch(activeTab, (val) => {
-    if (val === 'logs') fetchLogs()
+    const targetId = props.memberId || props.memberInfo?.id;
+    if (val === 'logs' && targetId) fetchLogs(targetId)
 })
 
 watch(visible, (newVal) => {
     emit('update:modelValue', newVal)
 })
 
-const fetchTopGoods = async (memberId) => {
-    loading.value = true
+// 🌟 新增：独立自主拉取完整会员档案
+const fetchFullProfile = async (memberId) => {
+    profileLoading.value = true
     try {
-        const res = await req({ url: '/ums/member/top10Goods', method: 'GET', params: { memberId } })
-        topList.value = res.data || res || []
+        // 注：这里假设后端的单条详情接口是 GET /ums/member/{id}
+        // 或者是 /ums/member/detail?id=xxx，请根据您的实际接口微调
+        const res = await req({ url: `/ums/member/${memberId}`, method: 'GET' })
+        // 合并数据：用后端返回的完整胖模型覆盖掉初始的残缺数据
+        localMemberInfo.value = Object.assign({}, localMemberInfo.value, res.data || res)
+    } catch (e) {
+        console.error("自主拉取会员完整档案失败", e)
     } finally {
-        loading.value = false
+        profileLoading.value = false
     }
 }
 
-const fetchLogs = async () => {
-    if (!props.memberInfo.id) return
+const fetchTopGoods = async (memberId) => {
+    topLoading.value = true
+    try {
+        const res = await req({ url: '/ums/member/top20Goods', method: 'GET', params: { memberId } })
+        topList.value = res.data || res || []
+    } finally {
+        topLoading.value = false
+    }
+}
+
+const fetchLogs = async (memberId) => {
     logLoading.value = true
     try {
-        const res = await req({ url: '/ums/member/logs', method: 'GET', params: { memberId: props.memberInfo.id } })
+        const res = await req({ url: '/ums/member/logs', method: 'GET', params: { memberId } })
         logList.value = res.data || res || []
     } finally {
         logLoading.value = false
@@ -204,7 +234,10 @@ const showOrderDetail = (orderNo) => {
     }
 }
 
-const refreshAfterVoid = () => { fetchLogs() }
+const refreshAfterVoid = () => {
+    const targetId = props.memberId || props.memberInfo?.id;
+    if (targetId) fetchLogs(targetId);
+}
 const getBrandName = (brandId) => props.brandsDict[brandId] || '未知品牌'
 const getLevelName = (levelCode) => props.levelsDict[levelCode] || levelCode
 </script>

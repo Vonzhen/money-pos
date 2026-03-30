@@ -132,18 +132,33 @@ watch(() => props.modelValue, (newVal) => {
 })
 
 const querySearch = async (query) => {
+    // 1. 如果输入被清空，立刻清空下拉列表
     if (!query) {
         options.value = [];
         return;
     }
-    loading.value = true
+
+    // 🌟 2. 核心性能锁：智能字数拦截
+    const isPureNumber = /^\d+$/.test(query); // 判断是不是纯数字
+
+    // 规则A：如果是纯数字（手机号/条码），少于 4 位绝对不向后端发请求！
+    if (isPureNumber && query.length < 4) {
+        return;
+    }
+    // 规则B：如果包含汉字或字母（搜名字），少于 1 个字不发请求！
+    if (!isPureNumber && query.length < 1) {
+        return;
+    }
+
+    // 3. 拦截通过，正式发起丝滑搜索
+    loading.value = true;
     try {
         const res = await memberApi.posSearch(query);
-        options.value = res.data || []
+        options.value = res.data || [];
     } catch (e) {
-        options.value = []
+        options.value = [];
     } finally {
-        loading.value = false
+        loading.value = false;
     }
 }
 

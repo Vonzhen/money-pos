@@ -1,13 +1,15 @@
 import { onMounted, onUnmounted } from 'vue';
 
-export function useScanner({ onEnter, onEscape }) {
+export function useScanner({ onEnter }) {
     // 🌟 核心防抖缓冲区
     let buffer = '';
     let lastKeyTime = Date.now();
 
     const handleKeydown = (e) => {
-        // 如果焦点在输入框，绝对不拦截，交由组件自带的逻辑处理
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+        // 如果焦点在输入框，并且里面有字，交由组件自带的逻辑处理
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+            if (e.target.value !== '') return;
+        }
 
         const currentTime = Date.now();
         const timeDiff = currentTime - lastKeyTime;
@@ -18,19 +20,14 @@ export function useScanner({ onEnter, onEscape }) {
             buffer = '';
         }
 
-        // 1. ESC 拦截防线
-        if (e.key === 'Escape' && typeof onEscape === 'function') {
-            e.preventDefault();
-            onEscape();
-            return;
-        }
+        // ⛔️ 删除了这里的 Escape 拦截！
+        // 把 Esc 键的控制权彻底还给浏览器和 Element Plus 弹窗！
 
-        // 2. Enter 拦截与分流
+        // Enter 拦截与分流 (仅针对扫码枪)
         if (e.key === 'Enter') {
             e.preventDefault();
 
             // 如果 buffer 里有多个字符，说明是扫码枪刚以极其狂暴的速度扫完一串条码触发的 Enter！
-            // 此时绝不能触发“结算”热键，直接丢弃（或未来触发特定 onScan）
             if (buffer.length > 3) {
                 buffer = '';
                 return;

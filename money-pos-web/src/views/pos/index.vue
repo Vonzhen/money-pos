@@ -45,7 +45,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
 import { useUserStore } from "@/store/index.js"
 import dictApi from "@/api/system/dict.js"
-import brandApi from '@/api/gms/brand.js' // 🌟 引入品牌 API
+import brandApi from '@/api/gms/brand.js'
 
 import { usePosStore } from './hooks/usePosStore'
 import { useScanner } from './hooks/useScanner'
@@ -67,8 +67,8 @@ import QuickAddGoodsModal from './components/dialogs/QuickAddGoodsModal.vue'
 
 const router = useRouter()
 const userStore = useUserStore()
-// 🌟 提取 initGlobalDicts 方法
-const { cartList, currentMember, totalAmount, clearAll, restoreOrder, scanAndAddToCart, addToCart, initGlobalDicts } = usePosStore();
+
+const { cartList, currentMember, totalAmount, clearAll, restoreOrder, scanAndAddToCart, addToCart, initGlobalDicts, quickAdjustActiveItem, moveActiveIndex } = usePosStore();
 
 const bottomConsoleRef = ref(null)
 const keepFocus = () => bottomConsoleRef.value?.focusInput()
@@ -88,6 +88,86 @@ const dialogs = reactive({
 const isAnyDialogOpen = computed(() => Object.values(dialogs).some(isOpen => isOpen === true));
 const { notifyPaySuccess, notifyIdle, notifyMemberBind } = useDisplaySync(computed(() => dialogs.checkout));
 
+// ==========================================
+// 🌟 终极事件捕获网 (完美解决 Esc 和 弹窗冲突)
+// ==========================================
+const handleGlobalKeyDown = (e) => {
+    // 1. 🌟 Esc 键的最高优先级绿灯通道！
+    if (e.key === 'Escape') {
+        // 如果有 Element Plus 的下拉浮层（比如自动联想提示）开着，就不拦截，让系统自己收起下拉。
+        const hasOpenPopper = document.querySelector('.el-popper:not([style*="display: none"])');
+        if (hasOpenPopper) return;
+
+        let closedAny = false;
+
+        // 强制关闭主页面的所有弹窗
+        for (const key in dialogs) {
+            if (dialogs[key]) {
+                dialogs[key] = false;
+                closedAny = true;
+            }
+        }
+
+        // 强制关闭底部控制台私有的弹窗
+        if (bottomConsoleRef.value && bottomConsoleRef.value.closeAllDialogs) {
+            if (bottomConsoleRef.value.closeAllDialogs()) {
+                closedAny = true;
+            }
+        }
+
+        // 如果真的关掉了某个弹窗，阻断事件并把焦点还给搜索框
+        if (closedAny) {
+            e.preventDefault();
+            e.stopPropagation();
+            keepFocus();
+        }
+        // Esc 逻辑结束，绝对不再触发清空购物车！
+        return;
+    }
+
+    // 2. 如果当前有任何弹窗打开着，主页面立刻“闭嘴”，绝不拦截内部按键
+    const isOverlayOpen = isAnyDialogOpen.value || (bottomConsoleRef.value && bottomConsoleRef.value.isDialogOpen);
+    if (isOverlayOpen) return;
+
+    // 以下为盲操快捷键拦截
+    const target = e.target;
+    const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA';
+    const isInputEmpty = isInput ? (!target.value || target.value.trim() === '') : true;
+
+    // 上下键 (切焦点)
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        if (isInputEmpty) {
+            e.preventDefault();
+            e.stopPropagation();
+            const step = e.key === 'ArrowUp' ? -1 : 1;
+            moveActiveIndex(step);
+            return;
+        }
+    }
+
+    // 加减键
+    if (e.key === '+' || e.key === '=' || e.key === '-' || e.key === '_') {
+        if (isInputEmpty) {
+            e.preventDefault();
+            e.stopPropagation();
+            const delta = (e.key === '+' || e.key === '=') ? 1 : -1;
+            quickAdjustActiveItem(delta);
+            return;
+        }
+    }
+
+    // 空格收款
+    if (e.key === ' ' || e.code === 'Space') {
+        if (isInputEmpty) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (cartList.value.length > 0) dialogs.checkout = true;
+            else ElMessage.warning('购物车是空的，请先扫码商品');
+            return;
+        }
+    }
+}
+
 const missingBarcode = ref('')
 
 const handleQuickAddTrigger = (barcode) => {
@@ -105,7 +185,7 @@ const handleQuickAddSuccess = (newGoods) => {
 
 useScanner({
     onEnter: async (buffer) => {
-        if (!isAnyDialogOpen.value) {
+        if (!isAnyDialogOpen.value && !(bottomConsoleRef.value && bottomConsoleRef.value.isDialogOpen)) {
             if (buffer && buffer.length > 0) {
                 const res = await scanAndAddToCart(buffer);
                 if (!res.success && res.reason === 'not_found') {
@@ -125,10 +205,6 @@ useScanner({
             }
             if (cartList.value.length > 0) { dialogs.checkout = true; }
         }
-    },
-    onEscape: () => {
-        if (dialogs.checkout) { dialogs.checkout = false; return; }
-        if (cartList.value.length > 0) { handleClearConfirm(); }
     }
 })
 
@@ -168,7 +244,6 @@ onMounted(async () => {
     let fetchedMemberTypes = [];
     let fetchedBrandsKv = {};
 
-    // 1. 获取系统字典
     try {
         const dict = await dictApi.loadDict(["memberType", "pos_payment_method", "paySubTag"])
         if (dict.memberType) {
@@ -179,14 +254,12 @@ onMounted(async () => {
         if (dict.paySubTag) payTagDict.value = dict.paySubTag;
     } catch (e) { }
 
-    // 2. 🌟 预加载所有品牌
     try {
         const brandRes = await (brandApi.list ? brandApi.list({ size: 1000 }) : brandApi.getSelect())
         const brandList = brandRes?.data?.records || brandRes?.data || brandRes?.records || brandRes || []
         brandList.forEach(e => { fetchedBrandsKv[e.id || e.value] = e.name || e.label })
     } catch (e) {}
 
-    // 3. 🌟 注入到全局 Store 中
     initGlobalDicts(fetchedBrandsKv, fetchedMemberTypes);
 
     try {
@@ -196,9 +269,14 @@ onMounted(async () => {
 
     keepFocus();
     clockTimer = setInterval(() => currentTime.value = dayjs().format('YYYY-MM-DD HH:mm:ss'), 1000)
+
+    window.addEventListener('keydown', handleGlobalKeyDown, true);
 })
 
-onUnmounted(() => { if (clockTimer) clearInterval(clockTimer); })
+onUnmounted(() => {
+    if (clockTimer) clearInterval(clockTimer);
+    window.removeEventListener('keydown', handleGlobalKeyDown, true);
+})
 
 watch(suspendedOrderList, (newVal) => { localStorage.setItem('pos_suspended_orders', JSON.stringify(newVal)); }, { deep: true });
 
@@ -220,7 +298,9 @@ const handleClearConfirm = () => {
     }).then(() => {
         handleClear();
         ElMessage.success('已清空订单');
-    }).catch(() => { keepFocus(); });
+    }).catch(() => {
+        keepFocus();
+    });
 }
 
 const handleClear = () => {

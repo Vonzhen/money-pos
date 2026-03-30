@@ -21,7 +21,8 @@
                 <el-option label="系统导入" value="IMPORT" />
                 <el-option label="充值赠送" value="GIFT" />
                 <el-option label="活动发放" value="ISSUE" />
-                <el-option label="红冲撤销" value="REVERSAL" /> </el-select>
+                <el-option label="红冲撤销" value="REVERSAL" />
+            </el-select>
         </MoneyRR>
 
         <MoneyCrudTable :money-crud="moneyCrud">
@@ -96,6 +97,7 @@
 
         <MemberProfileModal
             v-model="profileVisible"
+            :member-id="current360Member.id"
             :member-info="current360Member"
             :brands-dict="brandsKv"
             :levels-dict="dict.memberTypeKv"
@@ -111,13 +113,16 @@ import MoneyRR from "@/components/crud/MoneyRR.vue";
 import memberLogApi from "@/api/ums/memberLog.js";
 import { ref, onBeforeMount } from "vue";
 import { Document } from '@element-plus/icons-vue'
+
+// 🌟 核心：把我误删的这行 req 请求工具加回来了！
 import { req } from "@/api/index.js";
-import dictApi from "@/api/system/dict.js"
-import brandApi from "@/api/gms/brand.js"
 import { ElMessage } from 'element-plus'
 
+import dictApi from "@/api/system/dict.js"
+import brandApi from "@/api/gms/brand.js"
+
 import OrderDetailModal from "@/components/OrderDetailModal.vue";
-import RechargeOrderDetail from "@/views/ums/member/components/RechargeOrderDetail.vue"; // 🌟 引入新弹窗
+import RechargeOrderDetail from "@/views/ums/member/components/RechargeOrderDetail.vue";
 import MemberSmartSearch from "@/components/common/MemberSmartSearch.vue";
 import MemberProfileModal from "@/components/common/MemberProfileModal.vue";
 
@@ -169,17 +174,14 @@ const handleMemberClear = () => {
 }
 
 const getTypeName = (type) => {
-    // 🌟 增加 REVERSAL 的中文翻译
     const map = { 'RECHARGE': '充值', 'CONSUME': '消费', 'IMPORT': '系统导入', 'GIFT': '赠送', 'REFUND': '退货退款', 'ISSUE': '发券', 'REVERSAL': '红冲撤销' }
     return map[type] || type
 }
 const getTagType = (type) => {
-    // 🌟 REVERSAL 采用 info 灰色标签，代表冲正作废
     const map = { 'RECHARGE': 'success', 'CONSUME': 'danger', 'IMPORT': 'warning', 'GIFT': 'primary', 'ISSUE': 'warning', 'REFUND': 'info', 'REVERSAL': 'info' }
     return map[type] || ''
 }
 
-// 🌟 弹窗分流控制逻辑
 const salesDetailVisible = ref(false)
 const rechargeDetailVisible = ref(false)
 const currentSearchOrderNo = ref('')
@@ -187,12 +189,9 @@ const currentSearchOrderNo = ref('')
 const showOrderDetail = (orderNo) => {
     if (!orderNo) return;
     currentSearchOrderNo.value = orderNo;
-
-    // 智能路由
     if (orderNo.startsWith('RC')) {
         rechargeDetailVisible.value = true;
     } else {
-        // 如果是 RE 开头，或者是退款单号，交给销售弹窗处理
         salesDetailVisible.value = true;
     }
 }
@@ -200,19 +199,44 @@ const showOrderDetail = (orderNo) => {
 const profileVisible = ref(false)
 const current360Member = ref({})
 
+// 🌟 这里保留着您原本寻找真 ID 的逻辑，并配合弹窗特种兵使用
 const openMember360 = async (row) => {
+    if (!row.memberPhone) {
+        ElMessage.warning('该流水缺失手机号，无法溯源会员档案');
+        return;
+    }
+
     try {
-        const res = await req({ url: '/ums/member', method: 'GET', params: { phone: row.memberPhone, current: 1, size: 1 } })
-        const memberList = res.data?.records || res.records || res || [];
+        const res = await req({
+            url: '/ums/member',
+            method: 'GET',
+            params: { phone: row.memberPhone, current: 1, size: 1 }
+        });
+
+        let memberList = [];
+        if (res && res.data && res.data.records) {
+            memberList = res.data.records;
+        } else if (res && res.records) {
+            memberList = res.records;
+        } else if (Array.isArray(res)) {
+            memberList = res;
+        }
 
         if (memberList.length > 0) {
-            current360Member.value = memberList[0];
-            profileVisible.value = true;
+            const realMember = memberList[0];
+
+            current360Member.value = {
+                id: realMember.id, // 拿到真会员 ID！
+                name: realMember.name,
+                phone: realMember.phone
+            };
+            profileVisible.value = true; // 唤醒弹窗特种兵
         } else {
-            ElMessage.warning('未找到该会员的实时档案数据');
+            ElMessage.warning(`数据库中已无此会员档案`);
         }
     } catch (e) {
-        ElMessage.error('获取会员画像失败');
+        console.error("查无此人：", e);
+        ElMessage.error('调取会员档案失败，请检查网络');
     }
 }
 </script>
