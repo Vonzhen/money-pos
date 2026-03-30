@@ -76,7 +76,7 @@
                         ref="scannerInput"
                         v-model="scanKeyword"
                         :fetch-suggestions="querySearchAsync"
-                        placeholder="请将条码对准窗口 / 手输拼音联想"
+                        placeholder="扫码 / 空格收款 / 加减数量"
                         clearable
                         class="w-full scanner-input"
                         value-key="name"
@@ -88,11 +88,21 @@
                         <template #prefix><el-icon class="text-xl 2xl:text-2xl text-blue-500"><Search /></el-icon></template>
                         <template #default="{ item }">
                             <div class="flex justify-between items-center w-full">
-                                <div>
-                                    <span class="font-bold text-gray-800">{{ item.name }}</span>
-                                    <span class="text-gray-400 text-xs ml-2">({{ item.barcode }})</span>
+                                <div class="flex items-center truncate overflow-hidden pr-2">
+                                    <span class="font-bold text-gray-800 truncate">{{ item.name }}</span>
+                                    <span class="text-gray-400 text-xs ml-2 font-mono shrink-0">({{ item.barcode }})</span>
                                 </div>
-                                <span class="text-red-500 font-bold ml-4">￥{{ item.salePrice }}</span>
+                                <div class="flex items-center gap-3 shrink-0">
+                                    <span class="text-red-500 font-bold text-right">￥{{ item.salePrice?.toFixed(2) }}</span>
+                                    <span :class="[
+                                        'text-xs px-1.5 py-0.5 rounded font-bold border w-16 text-center',
+                                        (item.stock == null || item.stock <= 0)
+                                            ? 'bg-red-50 text-red-500 border-red-100'
+                                            : 'bg-emerald-50 text-emerald-600 border-emerald-100'
+                                    ]">
+                                        存: {{ item.stock || 0 }}
+                                    </span>
+                                </div>
                             </div>
                         </template>
                     </el-autocomplete>
@@ -138,7 +148,7 @@
 
             <button class="pos-btn bg-red-600 hover:bg-red-500 text-white row-span-2 shadow-[0_0_15px_rgba(239,68,68,0.3)] border border-red-500/50" @click="$emit('open-checkout')">
                 <span class="text-2xl 2xl:text-3xl font-black tracking-widest">收款</span>
-                <span class="text-[10px] 2xl:text-xs font-bold opacity-90 mt-1 bg-red-800/50 px-2 py-0.5 2xl:py-1 rounded-full">[Enter]</span>
+                <span class="text-[10px] 2xl:text-xs font-bold opacity-90 mt-1 bg-red-800/50 px-2 py-0.5 2xl:py-1 rounded-full">[空格键]</span>
             </button>
             <button class="pos-btn bg-emerald-600 hover:bg-emerald-500 text-white" @click="$emit('open-drawer')">
                 <el-icon class="text-xl 2xl:text-2xl mb-0.5 2xl:mb-1"><Unlock /></el-icon>
@@ -163,7 +173,7 @@
 </template>
 
 <script setup>
-import { ref, nextTick, onMounted } from 'vue'
+import { ref, computed, nextTick, onMounted } from 'vue'
 import { Search, Delete, User, Unlock, Tickets, Timer, Monitor } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { req } from '@/api/index.js'
@@ -186,6 +196,15 @@ const bindMemberId = ref(null)
 const memberSearchComp = ref(null)
 const autocompleteKey = ref(0)
 const brandsKv = ref({})
+
+const isDialogOpen = computed(() => memberDialogVisible.value);
+const closeAllDialogs = () => {
+    if (memberDialogVisible.value) {
+        memberDialogVisible.value = false;
+        return true;
+    }
+    return false;
+}
 
 onMounted(async () => {
     try {
@@ -222,10 +241,9 @@ const resetScanner = async () => {
 
 const focusInput = () => { scannerInput.value?.focus(); }
 
+// 🌟 核心修复：只发射呼叫指令，绝不越权直接清空！
 const clearAllWithFocus = () => {
-    clearAll();
     emit('clear-cart');
-    focusInput();
 }
 
 const getLevelName = (code) => {
@@ -240,7 +258,6 @@ const formatMoney = (val) => {
     return isNaN(num) ? '0.00' : num.toFixed(2);
 }
 
-// 🌟 小屏幕时进一步压缩超大数字的字号，防止溢出
 const getResponsiveFontSize = (val) => {
     const len = formatMoney(val).length;
     const isSmallScreen = window.innerWidth < 1536;
@@ -286,23 +303,21 @@ const handleScan = async () => {
     } catch (e) { resetScanner(); }
 }
 
-defineExpose({ focusInput })
+defineExpose({ focusInput, isDialogOpen, closeAllDialogs })
 </script>
 
 <style scoped>
 .pos-btn { @apply rounded-xl shadow-sm transition-all duration-150 active:scale-95 flex flex-col items-center justify-center tracking-wider; }
 
-/* 🌟 核心适配：基础版使用较小尺寸 (适应 1366x768) */
 :deep(.scanner-input .el-input__wrapper) {
     box-shadow: 0 0 0 2px #3b82f6 inset !important;
     background-color: #ffffff;
-    height: 48px; /* 较小高度 */
+    height: 48px;
     border-radius: 8px;
-    font-size: 16px; /* 较小字体 */
+    font-size: 16px;
     font-weight: 900;
 }
 
-/* 🌟 超大屏 (>= 1536px) 时恢复巨大号输入框 (适应 1080P/4K) */
 @media (min-width: 1536px) {
     :deep(.scanner-input .el-input__wrapper) {
         height: 64px;

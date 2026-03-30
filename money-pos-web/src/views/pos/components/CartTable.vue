@@ -5,7 +5,8 @@
         stripe
         border
         :header-cell-style="{ background: '#e0e7ff', color: '#3730a3', fontSize: '15px', fontWeight: 'bold' }"
-        :row-style="{ fontSize: '16px', color: '#1f2937' }"
+        :row-class-name="tableRowClassName"
+        @row-click="handleRowClick"
     >
         <el-table-column type="index" label="序号" width="70" align="center" />
         <el-table-column prop="barcode" label="条码" width="160" />
@@ -44,8 +45,13 @@
             <template #default="{ row, $index }">
                 <el-input-number
                     :model-value="row.qty"
-                    :min="1" :max="9999" size="small" class="!w-28"
+                    :min="1" :max="9999" size="small"
+                    :class="[
+                        '!w-28 transition-all duration-200',
+                        $index === activeItemIndex ? 'ring-2 ring-blue-600 ring-offset-2 rounded shadow-md' : ''
+                    ]"
                     @change="(val) => handleQtyChange($index, val)"
+                    @focus="handleFocus"
                 />
             </template>
         </el-table-column>
@@ -78,19 +84,55 @@
 </template>
 
 <script setup>
+import { watch, nextTick } from 'vue'
 import { usePosStore } from '../hooks/usePosStore'
 
-const { cartList, enrichedCartList, currentMember, removeItem, runTrial } = usePosStore()
+const { cartList, enrichedCartList, currentMember, removeItem, runTrial, activeItemIndex } = usePosStore()
 
-// 🌟 原汁原味恢复：保留判断是否有会员特权的逻辑
+// 🌟 核心逻辑：当输入框获得焦点时，自动全选内容
+const handleFocus = (event) => {
+    // 这里的 event.target 就是底层的 input 元素，执行 select() 即可实现全选
+    event.target.select();
+}
+
+// 🌟 自动滚屏黑科技，焦点去哪，屏幕滚哪
+watch(() => activeItemIndex.value, async (newVal) => {
+    if (newVal !== -1) {
+        await nextTick();
+        const activeRow = document.querySelector('.active-pos-row');
+        if (activeRow) {
+            activeRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }
+});
+
+const handleRowClick = (row) => {
+    const idx = cartList.value.findIndex(item => item.id === row.id);
+    if (activeItemIndex.value === idx) {
+        activeItemIndex.value = -1;
+    } else {
+        activeItemIndex.value = idx;
+    }
+}
+
 const getLevelCode = (brandId) => {
     if (!currentMember.value?.id || !brandId) return null;
     return currentMember.value.brandLevels?.[String(brandId)] || null;
 }
 
-// 🌟 极速响应枢纽：控制数据流向，立即触发前端计算并防抖请求后端
 const handleQtyChange = (index, newVal) => {
     cartList.value[index].qty = newVal;
     runTrial();
 }
+
+const tableRowClassName = ({ rowIndex }) => {
+    return rowIndex === activeItemIndex.value ? 'active-pos-row' : '';
+}
 </script>
+
+<style scoped>
+/* 🌟 击穿原生斑马纹，保证选中行背景泛蓝 */
+:deep(.el-table__body tr.active-pos-row > td.el-table__cell) {
+    background-color: #e0f2fe !important;
+}
+</style>

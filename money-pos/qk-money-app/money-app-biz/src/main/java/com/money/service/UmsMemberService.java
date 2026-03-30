@@ -91,4 +91,9 @@ public interface UmsMemberService extends IService<UmsMember> {
      * @param reason 撤销原因
      */
     void voidRecharge(String orderNo, String reason);
+
+    /**
+     * 获取单条会员完整画像详情 (包含余额、券、品牌特权等)
+     */
+    UmsMemberVO getDetail(Long id);
 }

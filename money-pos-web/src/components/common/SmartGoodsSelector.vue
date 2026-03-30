@@ -19,13 +19,25 @@
                 <Search />
             </el-icon>
         </template>
+
         <template #default="{ item }">
             <div class="flex justify-between items-center w-full">
-                <div>
-                    <span class="font-bold text-gray-800">{{ item.name }}</span>
-                    <span class="text-gray-400 text-xs ml-2">({{ item.barcode }})</span>
+                <div class="flex items-center truncate overflow-hidden pr-2">
+                    <span class="font-bold text-gray-800 truncate">{{ item.name }}</span>
+                    <span class="text-gray-400 text-xs ml-2 font-mono shrink-0">({{ item.barcode }})</span>
                 </div>
-                <span class="text-red-500 font-bold ml-4">￥{{ item.salePrice }}</span>
+                <div class="flex items-center gap-3 shrink-0">
+                    <span class="text-red-500 font-bold text-right">￥{{ item.salePrice?.toFixed(2) }}</span>
+
+                    <span :class="[
+                        'text-xs px-1.5 py-0.5 rounded font-bold border w-16 text-center',
+                        (item.stock == null || item.stock <= 0)
+                            ? 'bg-red-50 text-red-500 border-red-100'
+                            : 'bg-emerald-50 text-emerald-600 border-emerald-100'
+                    ]">
+                        存: {{ item.stock || 0 }}
+                    </span>
+                </div>
             </div>
         </template>
     </el-autocomplete>
@@ -40,7 +52,7 @@ import { ElMessage } from 'element-plus'
 const props = defineProps({
     modelValue: { type: String, default: '' },
     placeholder: { type: String, default: '搜索商品名称 / 条码 / 拼音' },
-    mode: { type: String, default: 'report' } // 'pos' (收银模式) 或 'report' (报表模式)
+    mode: { type: String, default: 'report' }
 })
 
 const emit = defineEmits(['update:modelValue', 'select', 'search', 'clear'])
@@ -49,11 +61,9 @@ const internalKeyword = ref(props.modelValue)
 const scannerInput = ref(null)
 const autocompleteKey = ref(0)
 
-// 双向绑定同步
 watch(() => props.modelValue, (val) => { internalKeyword.value = val })
 watch(internalKeyword, (val) => { emit('update:modelValue', val) })
 
-// 🌟 核武器重置机制：直接销毁重建输入框
 const resetScanner = async () => {
     internalKeyword.value = ''
     autocompleteKey.value++
@@ -63,7 +73,6 @@ const resetScanner = async () => {
 
 const focus = () => scannerInput.value?.focus()
 
-// 底层异步查库
 const querySearchAsync = async (queryString, cb) => {
     if (!queryString || queryString.trim() === '') {
         cb([])
@@ -77,23 +86,20 @@ const querySearchAsync = async (queryString, cb) => {
     }
 }
 
-// 鼠标或键盘上下键选中下拉列表项
 const handleSelect = (item) => {
     emit('select', item)
     if (props.mode === 'pos') {
-        resetScanner() // 收银台选完立刻清空
+        resetScanner()
     } else {
-        internalKeyword.value = item.barcode // 报表里选完，将精确条码填入框内
-        emit('search', internalKeyword.value) // 触发报表查数据
+        internalKeyword.value = item.barcode
+        emit('search', internalKeyword.value)
     }
 }
 
-// 扫码枪或回车键触发
 const handleScan = async () => {
     if (!internalKeyword.value) return;
 
     if (props.mode === 'pos') {
-        // POS模式：严格校验，直接加购
         try {
             const res = await req({ url: '/pos/goods', method: 'GET', params: { barcode: internalKeyword.value } })
             const items = res.data || []
@@ -111,7 +117,6 @@ const handleScan = async () => {
             resetScanner()
         }
     } else {
-        // 报表模式：直接把输入的关键字传给父组件查报表
         emit('search', internalKeyword.value)
     }
 }
@@ -125,7 +130,6 @@ defineExpose({ focus, resetScanner })
 </script>
 
 <style scoped>
-/* 仅在 POS 模式下生效的巨无霸样式 */
 .pos-theme:deep(.el-input__wrapper) {
     box-shadow: 0 0 0 2px #3b82f6 inset !important;
     background-color: #ffffff;

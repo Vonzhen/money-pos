@@ -28,7 +28,11 @@
             </template>
           </el-table-column>
           <el-table-column prop="name" label="客户姓名" show-overflow-tooltip>
-            <template #default="{row}"><span class="font-bold text-gray-800">{{ row.name }}</span></template>
+            <template #default="{row}">
+              <span @click="openProfile(row)" class="font-bold text-blue-600 cursor-pointer hover:underline hover:text-blue-800 flex items-center gap-1 transition-colors">
+                {{ row.name }} <el-icon><View /></el-icon>
+              </span>
+            </template>
           </el-table-column>
           <el-table-column prop="phone" label="手机号" width="100">
             <template #default="{row}"><span class="font-mono text-xs text-gray-500">{{ maskPhone(row.phone) }}</span></template>
@@ -55,7 +59,11 @@
             </template>
           </el-table-column>
           <el-table-column prop="name" label="客户姓名" show-overflow-tooltip>
-            <template #default="{row}"><span class="font-bold text-gray-800">{{ row.name }}</span></template>
+            <template #default="{row}">
+              <span @click="openProfile(row)" class="font-bold text-blue-600 cursor-pointer hover:underline hover:text-blue-800 flex items-center gap-1 transition-colors">
+                {{ row.name }} <el-icon><View /></el-icon>
+              </span>
+            </template>
           </el-table-column>
           <el-table-column prop="phone" label="手机号" width="100">
             <template #default="{row}"><span class="font-mono text-xs text-gray-500">{{ maskPhone(row.phone) }}</span></template>
@@ -82,7 +90,11 @@
             </template>
           </el-table-column>
           <el-table-column prop="name" label="客户姓名" show-overflow-tooltip>
-            <template #default="{row}"><span class="font-bold text-gray-800">{{ row.name }}</span></template>
+            <template #default="{row}">
+              <span @click="openProfile(row)" class="font-bold text-blue-600 cursor-pointer hover:underline hover:text-blue-800 flex items-center gap-1 transition-colors">
+                {{ row.name }} <el-icon><View /></el-icon>
+              </span>
+            </template>
           </el-table-column>
           <el-table-column prop="phone" label="手机号" width="100">
             <template #default="{row}"><span class="font-mono text-xs text-gray-500">{{ maskPhone(row.phone) }}</span></template>
@@ -94,35 +106,70 @@
       </el-card>
 
     </div>
+
+    <MemberProfileModal
+      v-model="profileVisible"
+      :member-id="currentMember.id"
+      :member-info="currentMember"
+      :brands-dict="globalBrandsKv"
+      :levels-dict="levelsDictMap"
+    />
   </PageWrapper>
 </template>
 
 <script setup>
 import PageWrapper from "@/components/PageWrapper.vue";
-import { ref, onMounted } from "vue";
-import { Money, Wallet, Coordinate } from "@element-plus/icons-vue";
+import { ref, onMounted, computed } from "vue";
+import { Money, Wallet, Coordinate, View } from "@element-plus/icons-vue";
 import rankApi from "@/api/ums/rank.js";
 import { ElMessage } from 'element-plus';
+import MemberProfileModal from "@/components/common/MemberProfileModal.vue"; // 引入通用画像组件
+import { usePosStore } from "@/views/pos/hooks/usePosStore.js";
 
 const loading = ref(true);
 const consumeList = ref([]);
 const balanceList = ref([]);
 const frequencyList = ref([]);
 
-// 手机号脱敏打码 (保护客户隐私)
+// 🌟 弹窗相关的极简控制状态
+const profileVisible = ref(false);
+const currentMember = ref({});
+
+// 获取全局字典数据
+const { globalBrandsKv, globalMemberTypes } = usePosStore();
+
+// 计算属性：将层级字典转为方便查询的 Map
+const levelsDictMap = computed(() => {
+    const dict = {};
+    if (globalMemberTypes.value && globalMemberTypes.value.length > 0) {
+        globalMemberTypes.value.forEach(item => {
+            dict[item.value || item.dictValue] = item.desc || item.dictLabel || item.label;
+        });
+    }
+    return dict;
+});
+
+// 🌟 最干净的唤醒方法：只传值，不拉数据！
+const openProfile = (row) => {
+    currentMember.value = row;
+    profileVisible.value = true;
+};
+
+// 手机号脱敏
 const maskPhone = (phone) => {
     if (!phone || phone.length !== 11) return phone || '-';
     return phone.substring(0, 3) + '****' + phone.substring(7);
 };
 
-// 前三名专属高亮特效
+// 排行榜高亮
 const getRankClass = (index) => {
-    if (index === 0) return 'text-red-500 font-black text-lg'; // 🥇 冠军
-    if (index === 1) return 'text-orange-500 font-bold text-base'; // 🥈 亚军
-    if (index === 2) return 'text-yellow-500 font-bold text-base'; // 🥉 季军
-    return 'text-gray-400 font-bold'; // 其他
+    if (index === 0) return 'text-red-500 font-black text-lg'; // 🥇
+    if (index === 1) return 'text-orange-500 font-bold text-base'; // 🥈
+    if (index === 2) return 'text-yellow-500 font-bold text-base'; // 🥉
+    return 'text-gray-400 font-bold';
 };
 
+// 拉取排行榜数据
 const loadAllRanks = async () => {
     loading.value = true;
     try {
@@ -147,7 +194,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
-/* 隐藏表格滚动条，让大屏更清爽 */
+/* 隐藏表格滚动条 */
 :deep(.el-table__body-wrapper::-webkit-scrollbar) {
     width: 6px;
 }

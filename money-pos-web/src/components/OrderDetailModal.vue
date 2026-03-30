@@ -107,6 +107,12 @@
                     <el-table :data="currentOrderDetail.details || []" stripe border size="small" class="w-full font-mono">
                         <el-table-column prop="goodsName" label="商品名称" min-width="150" show-overflow-tooltip />
 
+                        <el-table-column label="商品条码" width="140">
+                            <template #default="{row}">
+                                <span class="font-mono text-gray-500">{{ row.barcode || row.goodsBarcode || row.skuCode || row.skuBarcode || '-' }}</span>
+                            </template>
+                        </el-table-column>
+
                         <el-table-column prop="salePrice" label="吊牌单价" width="100" align="right">
                             <template #default="{row}"><MoneyDisplay :value="row.salePrice" /></template>
                         </el-table-column>
@@ -149,7 +155,7 @@
 
 <script setup>
 import { ref, computed, watch, onBeforeMount } from 'vue'
-import { Document, User } from '@element-plus/icons-vue' // 🌟 补齐了 User 图标
+import { Document, User } from '@element-plus/icons-vue'
 import { req } from "@/api/index.js"
 import dictApi from "@/api/system/dict.js"
 import brandApi from "@/api/gms/brand.js"

@@ -1,23 +1,47 @@
 <template>
     <el-dialog v-model="visible" title="销售单查询与审计中心" width="1200px" top="3vh" destroy-on-close @closed="$emit('closed')">
 
-        <div class="flex justify-between items-center mb-4 bg-gray-50 p-2 rounded border">
-            <el-radio-group v-model="timeRange" size="large" @change="fetchOrders">
-                <el-radio-button value="today">今天</el-radio-button>
-                <el-radio-button value="3days">近 3 天</el-radio-button>
-                <el-radio-button value="7days">近 7 天</el-radio-button>
-                <el-radio-button value="1month">近 1 个月</el-radio-button>
-            </el-radio-group>
-            <div class="flex gap-2 w-[300px]">
-                <el-input v-model="searchKeyword" placeholder="输入订单号搜索" clearable @keyup.enter="fetchOrders" @clear="fetchOrders">
-                    <template #append><el-button @click="fetchOrders"><el-icon><Search /></el-icon></el-button></template>
+        <div class="flex justify-between items-center mb-4 bg-gray-50 p-2 rounded border text-sm">
+            <div class="flex items-center gap-4">
+                <el-radio-group v-model="timeRange" size="default" @change="handleTimeChange">
+                    <el-radio-button value="today">今天</el-radio-button>
+                    <el-radio-button value="3days">近 3 天</el-radio-button>
+                    <el-radio-button value="7days">近 7 天</el-radio-button>
+                    <el-radio-button value="1month">近 1 个月</el-radio-button>
+                </el-radio-group>
+
+                <div class="flex items-center gap-6 px-4 py-1 bg-white rounded-lg border border-blue-100 shadow-sm ml-2">
+                    <div class="flex flex-col items-center">
+                        <span class="text-[10px] text-gray-400 font-bold uppercase">全局总单数</span>
+                        <span class="text-lg font-black text-blue-600 leading-tight">{{ auditStats.orderCount || 0 }} <small class="text-[10px] font-normal text-gray-400">单</small></span>
+                    </div>
+                    <div class="w-px h-6 bg-gray-100"></div>
+                    <div class="flex flex-col items-center">
+                        <span class="text-[10px] text-gray-400 font-bold uppercase">后台权威实收 (已扣退款)</span>
+                        <span class="text-lg font-black text-red-500 leading-tight">￥{{ Number(auditStats.totalSales || auditStats.saleCount || 0).toFixed(2) }}</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex gap-2 w-[280px]">
+                <el-input v-model="searchKeyword" placeholder="输入订单号搜索" clearable @keyup.enter="refreshList" @clear="refreshList" size="default">
+                    <template #append><el-button @click="refreshList"><el-icon><Search /></el-icon></el-button></template>
                 </el-input>
             </div>
         </div>
 
-        <div class="flex gap-4 h-[600px]">
-            <div class="w-[32%] border rounded flex flex-col overflow-hidden shadow-sm">
-                <el-table :data="orderList" v-loading="loading" stripe highlight-current-row height="100%" class="w-full text-sm" @current-change="handleSelectOrder">
+        <div class="flex gap-4 h-[620px]">
+            <div class="w-[32%] border rounded flex flex-col overflow-hidden shadow-sm bg-white">
+                <el-table
+                    ref="orderTableRef"
+                    :data="orderList"
+                    v-loading="loading && currentPage === 1"
+                    stripe
+                    highlight-current-row
+                    height="100%"
+                    class="w-full text-sm scrollable-table"
+                    @current-change="handleSelectOrder"
+                >
                     <el-table-column label="时间" width="80">
                         <template #default="{row}">
                             <div class="font-bold">{{ formatTime(row.createTime) }}</div>
@@ -26,24 +50,26 @@
                     </el-table-column>
                     <el-table-column label="订单号" min-width="100" show-overflow-tooltip>
                         <template #default="{row}">
-                            <span :class="['font-mono', (row.status === 'REFUNDED' || row.status === 'RETURN') ? 'line-through text-gray-400' : '']">
+                            <span :class="['font-mono', (row.status === 'REFUNDED' || row.status === 'CLOSED') ? 'line-through text-gray-400' : '']">
                                 {{ row.orderNo }}
                             </span>
                         </template>
                     </el-table-column>
-                    <el-table-column label="实收" width="125" align="right">
+                    <el-table-column label="实收" width="120" align="right">
                         <template #default="{row}">
                             <div class="whitespace-nowrap">
-                                <span v-if="row.status === 'REFUNDED' || row.status === 'RETURN'" class="text-gray-400 font-bold">已退单</span>
-                                <span v-else-if="row.status === 'PARTIAL'" class="font-bold text-orange-500 tracking-tight">￥{{ Number(row.payAmount || 0).toFixed(2) }}</span>
+                                <span v-if="row.status === 'REFUNDED'" class="text-gray-400 font-bold">已退单</span>
+                                <span v-else-if="row.status === 'CLOSED'" class="text-gray-400 font-bold">已取消</span>
+                                <span v-else-if="row.status === 'PARTIAL_REFUNDED'" class="font-bold text-orange-500 tracking-tight">￥{{ Number(row.payAmount || 0).toFixed(2) }}</span>
                                 <span v-else class="font-bold text-red-500 tracking-tight">￥{{ Number(row.payAmount || 0).toFixed(2) }}</span>
                             </div>
                         </template>
                     </el-table-column>
                 </el-table>
-                <div class="p-2 border-t bg-gray-50 flex justify-between items-center shrink-0">
-                    <span class="text-xs text-gray-500">共 {{ totalRecords }} 单</span>
-                    <el-pagination v-model:current-page="currentPage" :page-size="pageSize" :total="totalRecords" layout="prev, pager, next" size="small" @current-change="fetchOrders" />
+                <div class="p-2 border-t bg-gray-50 flex justify-center items-center shrink-0">
+                    <span v-if="loading && currentPage > 1" class="text-xs text-blue-500 font-bold"><el-icon class="is-loading mr-1"><Loading /></el-icon>正在加载更多...</span>
+                    <span v-else-if="hasMore" class="text-[10px] text-gray-400 font-bold tracking-widest cursor-pointer hover:text-blue-500" @click="fetchOrders(true)">--- 向下滚动加载更多 ---</span>
+                    <span v-else class="text-[10px] text-gray-400 font-bold tracking-widest">--- 已加载全部 {{ orderList.length }} 笔订单 ---</span>
                 </div>
             </div>
 
@@ -56,8 +82,8 @@
                 <div v-else class="h-full flex flex-col">
                     <div class="bg-gray-50 p-3 border-b flex justify-between items-center shrink-0">
                         <div>
-                            <div class="font-bold text-gray-800 text-lg">单号: <span class="font-mono">{{ currentOrderDetail.orderNo }}</span></div>
-                            <div class="text-xs text-gray-500 mt-1">创建时间: {{ currentOrderDetail.createTime }} | 收银员: {{ cashierName }}</div>
+                            <div class="font-bold text-gray-800 text-lg">单号: <span class="font-mono text-blue-600">{{ currentOrderDetail.orderNo }}</span></div>
+                            <div class="text-xs text-gray-500 mt-1">创建时间: {{ currentOrderDetail.createTime }} | 操作人: {{ cashierName }}</div>
                         </div>
                         <el-tag effect="dark" :type="getOrderStatusType(currentOrderDetail.status)" class="tracking-widest font-bold">
                             {{ getOrderStatusName(currentOrderDetail.status) }}
@@ -67,29 +93,13 @@
                     <div class="flex-1 overflow-y-auto p-4 bg-white space-y-4">
                         <div class="border border-blue-100 rounded-lg overflow-hidden text-sm shadow-sm">
                             <div class="bg-blue-50 px-3 py-1.5 font-bold text-blue-700 border-b border-blue-100 flex items-center gap-2"><el-icon><User /></el-icon> 会员信息</div>
-
                             <div class="p-3 flex items-center gap-6">
-                                <div class="shrink-0">
-                                    <span class="text-gray-500 mr-2">会员姓名:</span>
-                                    <span class="font-bold text-gray-800">{{ currentOrderDetail.member?.name || currentOrderDetail.member || '散客' }}</span>
-                                </div>
-
-                                <div class="shrink-0">
-                                    <span class="text-gray-500 mr-2">联系电话:</span>
-                                    <span class="font-mono text-gray-800">{{ currentOrderDetail.member?.phone || '-' }}</span>
-                                </div>
-
+                                <div class="shrink-0"><span class="text-gray-500 mr-2">姓名:</span><span class="font-bold text-gray-800">{{ currentOrderDetail.member?.name || currentOrderDetail.member || '散客' }}</span></div>
+                                <div class="shrink-0"><span class="text-gray-500 mr-2">电话:</span><span class="font-mono text-gray-800">{{ currentOrderDetail.member?.phone || '-' }}</span></div>
                                 <div class="flex flex-1 items-center gap-2 border-l border-gray-200 pl-4">
-                                    <span class="text-gray-500 shrink-0">会员身份:</span>
-                                    <div class="flex flex-wrap gap-2" v-if="currentOrderDetail.member?.brandLevels && Object.keys(currentOrderDetail.member.brandLevels).length > 0">
-                                        <el-tag
-                                            v-for="(levelCode, brandId) in currentOrderDetail.member.brandLevels"
-                                            :key="brandId"
-                                            size="small"
-                                            type="success"
-                                            effect="light"
-                                            class="border-success-300"
-                                        >
+                                    <span class="text-gray-500 shrink-0">身份:</span>
+                                    <div class="flex flex-wrap gap-2" v-if="currentOrderDetail.member?.brandLevels">
+                                        <el-tag v-for="(levelCode, brandId) in currentOrderDetail.member.brandLevels" :key="brandId" size="small" type="success" effect="light" class="border-success-300">
                                             <span class="font-bold text-gray-700 mr-1">{{ brandsKv[brandId] || getBrandName(brandId) || '未知' }}</span>
                                             <span class="text-green-600 font-bold">{{ (dict.memberTypeKv && dict.memberTypeKv[levelCode]) || getLevelName(levelCode) || levelCode }}</span>
                                         </el-tag>
@@ -141,7 +151,10 @@
                         <div class="font-bold text-gray-700 border-l-4 border-green-500 pl-2 mt-4">商品明细</div>
                         <el-table :data="currentOrderDetail.details" border size="small" class="w-full">
                             <el-table-column prop="goodsName" label="商品名称" show-overflow-tooltip min-width="120" />
-                            <el-table-column label="成交价" width="100" align="right">
+                            <el-table-column label="商品条码" width="140">
+                                <template #default="{row}"><span class="font-mono text-gray-500">{{ row.barcode || row.goodsBarcode || row.skuCode || row.skuBarcode || '-' }}</span></template>
+                            </el-table-column>
+                            <el-table-column label="成交价" width="90" align="right">
                                 <template #default="{row}"><span class="font-bold text-red-500">￥{{ Number(row.goodsPrice || 0).toFixed(2) }}</span></template>
                             </el-table-column>
                             <el-table-column label="数量状态" width="80" align="center">
@@ -150,10 +163,10 @@
                                     <div v-if="row.returnQuantity > 0" class="text-[10px] text-red-500 font-bold">- 已退 {{ row.returnQuantity }}</div>
                                 </template>
                             </el-table-column>
-                            <el-table-column label="小计" width="110" align="right">
+                            <el-table-column label="小计" width="100" align="right">
                                 <template #default="{row}"><span class="font-bold">￥{{ Number(NP.times(row.quantity, row.goodsPrice)).toFixed(2) }}</span></template>
                             </el-table-column>
-                            <el-table-column label="售后" width="70" align="center" fixed="right" v-if="currentOrderDetail.status !== 'RETURN' && currentOrderDetail.status !== 'REFUNDED'">
+                            <el-table-column label="售后" width="70" align="center" fixed="right" v-if="currentOrderDetail.status !== 'REFUNDED' && currentOrderDetail.status !== 'CLOSED'">
                                 <template #default="{row}">
                                     <el-button type="danger" link size="small" class="font-bold" @click="handlePartialReturn(row)" :disabled="(row.returnQuantity || 0) >= row.quantity">退货</el-button>
                                 </template>
@@ -164,7 +177,7 @@
                     <div class="p-3 border-t bg-gray-50 flex justify-between items-center shrink-0">
                         <div class="flex gap-3">
                             <el-button type="primary" plain @click="reprintOrder"><el-icon class="mr-1"><Printer /></el-icon> 补打小票</el-button>
-                            <el-button v-if="currentOrderDetail.status !== 'RETURN' && currentOrderDetail.status !== 'REFUNDED'" type="danger" plain @click="handleFullReturn">
+                            <el-button v-if="currentOrderDetail.status !== 'REFUNDED' && currentOrderDetail.status !== 'CLOSED'" type="danger" plain @click="handleFullReturn">
                                 <el-icon class="mr-1"><RefreshLeft /></el-icon> 整单退款
                             </el-button>
                         </div>
@@ -180,7 +193,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import { Search, Document, Loading, Printer, RefreshLeft, User } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 import { req } from "@/api/index.js"
@@ -195,96 +208,24 @@ const visible = computed({ get: () => props.modelValue, set: (val) => emit('upda
 
 const timeRange = ref('today')
 const searchKeyword = ref('')
-const orderList = ref([]); const loading = ref(false); const currentPage = ref(1); const pageSize = ref(15); const totalRecords = ref(0)
-const currentOrderDetail = ref(null); const detailLoading = ref(false)
 
-const payTagDict = ref([])
-const dict = ref({ orderStatusKv: {} })
+// 🌟 列表滚动控制参数
+const orderTableRef = ref(null)
+const orderList = ref([]);
+const loading = ref(false);
+const currentPage = ref(1);
+const pageSize = ref(20);
+const hasMore = ref(true);
 
+const currentOrderDetail = ref(null);
+const detailLoading = ref(false)
+const payTagDict = ref([]);
+const dict = ref({ orderStatusKv: {} });
+const brandsKv = ref({});
 const brandList = ref([])
-const brandsKv = ref({})
 
-onMounted(async () => {
-    try {
-        const dictRes = await dictApi.loadDict(["paySubTag", "orderStatus", "memberType"])
-        if (dictRes) {
-            if (dictRes.paySubTag) payTagDict.value = dictRes.paySubTag
-            dict.value = dictRes
-        }
-    } catch (e) {
-        console.error("字典加载失败", e)
-    }
-
-    try {
-        const brandRes = await (brandApi.list ? brandApi.list({ size: 1000 }) : brandApi.getSelect())
-        brandList.value = brandRes?.data?.records || brandRes?.data || brandRes?.records || brandRes || []
-        brandList.value.forEach(e => { brandsKv.value[e.id || e.value] = e.name || e.label })
-    } catch (e) {
-        console.error("品牌字典加载失败", e)
-    }
-})
-
-const getOrderStatusName = (status) => {
-    if (!status) return '-';
-    const statuses = dict.value.orderStatus;
-    const fallbackMap = {
-        'PENDING': '待支付', 'PAID': '已支付', 'PARTIAL': '部分退款',
-        'RETURN': '全额退款', 'REFUNDED': '已退款', 'CLOSED': '已关闭', 'CANCELLED': '已取消'
-    };
-    if (!Array.isArray(statuses) || statuses.length === 0) return fallbackMap[status] || status;
-    const match = statuses.find(s => s && (s.value === status || s.dictValue === status));
-    return match ? (match.desc || match.dictLabel || status) : (fallbackMap[status] || status);
-}
-
-const getOrderStatusType = (status) => {
-    if (status === 'PAID') return 'success';
-    if (status === 'PARTIAL') return 'warning';
-    if (status === 'RETURN' || status === 'REFUNDED' || status === 'CLOSED' || status === 'CANCELLED') return 'info';
-    return 'danger';
-}
-
-const getBrandName = (brandId) => {
-    if (!brandId) return '未知'
-    if (/[\u4e00-\u9fa5]/.test(brandId.toString())) return brandId;
-    const match = brandList.value.find(b => b && b.id && b.id.toString() === brandId.toString())
-    return match ? match.name : `ID:${brandId}`
-}
-
-const getLevelName = (levelCode) => {
-    if (!levelCode) return '无等级'
-    const types = dict.value.memberType
-    if (!Array.isArray(types) || types.length === 0) return levelCode
-    const match = types.find(m => m && (m.value === levelCode || m.dictValue === levelCode))
-    return match ? (match.desc || match.dictLabel || levelCode) : levelCode
-}
-
-const getPayTagName = (tagCode) => {
-    if (!tagCode) return '其他扫码'
-    const match = payTagDict.value.find(t => t && (t.value === tagCode || t.dictValue === tagCode))
-    return match ? (match.desc || match.dictLabel || tagCode) : tagCode
-}
-
-const formatTime = (timeStr) => timeStr ? dayjs(timeStr).format('HH:mm') : ''
-const formatDate = (timeStr) => timeStr ? dayjs(timeStr).format('MM-DD') : ''
-
-const returnPrice = computed(() => {
-    if (!currentOrderDetail.value || !currentOrderDetail.value.details) return 0;
-    return currentOrderDetail.value.details.reduce((sum, item) => NP.plus(sum, NP.times(item.returnQuantity || 0, item.goodsPrice || 0)), 0);
-})
-
-const netIncome = computed(() => {
-    if (currentOrderDetail.value?.status === 'REFUNDED' || currentOrderDetail.value?.status === 'RETURN') return 0;
-    return NP.minus(currentOrderDetail.value?.payAmount || 0, returnPrice.value)
-})
-
-const cashierName = computed(() => {
-    const logs = currentOrderDetail.value?.log || [];
-    return logs.length > 0 ? logs[logs.length - 1].createBy : 'System';
-})
-
-watch(visible, (newVal) => {
-    if (newVal) { timeRange.value = 'today'; searchKeyword.value = ''; currentPage.value = 1; currentOrderDetail.value = null; fetchOrders() }
-})
+// 🌟 后台统计看板专用存储
+const auditStats = ref({ orderCount: 0, totalSales: 0, profit: 0, saleCount: 0 })
 
 const getTimeRangeParams = () => {
     const end = dayjs().endOf('day').format('YYYY-MM-DD HH:mm:ss')
@@ -295,66 +236,95 @@ const getTimeRangeParams = () => {
     return { startTime: start, endTime: end }
 }
 
-const fetchOrders = async () => {
+const fetchStatistics = async () => {
+    try {
+        const { startTime, endTime } = getTimeRangeParams()
+        const res = await req({ url: '/oms-order/statistics', method: 'GET', params: { startTime, endTime } })
+        auditStats.value = res.data || res || { orderCount: 0, totalSales: 0 }
+    } catch (e) {
+        console.error("加载全局统计失败", e)
+    }
+}
+
+// 🌟 列表无限滚动拉取逻辑
+const fetchOrders = async (isLoadMore = false) => {
+    if (!isLoadMore) {
+        currentPage.value = 1;
+        orderList.value = [];
+        hasMore.value = true;
+        fetchStatistics(); // 切换时间时刷新统计
+    }
+    if (!hasMore.value || loading.value) return;
+
     loading.value = true
     try {
         const { startTime, endTime } = getTimeRangeParams()
         const params = { current: currentPage.value, size: pageSize.value, startTime, endTime, orderNo: searchKeyword.value || undefined }
         const res = await req({ url: '/oms-order/page', method: 'GET', params })
-        if (res.data && res.data.records) { orderList.value = res.data.records; totalRecords.value = res.data.total }
-        else if (res.records) { orderList.value = res.records; totalRecords.value = res.total }
-        else { orderList.value = res || []; totalRecords.value = (res || []).length }
+
+        const records = res.data?.records || res.records || [];
+        const total = res.data?.total || res.total || 0;
+
+        if (isLoadMore) {
+            orderList.value.push(...records);
+        } else {
+            orderList.value = records;
+        }
+
+        if (orderList.value.length >= total || records.length === 0) {
+            hasMore.value = false;
+        }
+        currentPage.value++;
     } catch (e) { ElMessage.error('获取订单列表失败') } finally { loading.value = false }
 }
 
+const refreshList = () => { fetchOrders(false); }
+const handleTimeChange = () => { refreshList(); }
+
+onMounted(async () => {
+    try {
+        const dictRes = await dictApi.loadDict(["paySubTag", "orderStatus", "memberType"])
+        if (dictRes) {
+            if (dictRes.paySubTag) payTagDict.value = dictRes.paySubTag
+            dict.value = dictRes
+        }
+    } catch (e) {}
+
+    try {
+        const brandRes = await (brandApi.list ? brandApi.list({ size: 1000 }) : brandApi.getSelect())
+        brandList.value = brandRes?.data?.records || brandRes?.data || brandRes?.records || brandRes || []
+        brandList.value.forEach(e => { brandsKv.value[e.id || e.value] = e.name || e.label })
+    } catch (e) {}
+
+    // 绑定触底事件实现无限滚动
+    nextTick(() => {
+        const wrap = orderTableRef.value?.$el.querySelector('.el-scrollbar__wrap');
+        if (wrap) {
+            wrap.addEventListener('scroll', (e) => {
+                const { scrollTop, clientHeight, scrollHeight } = e.target;
+                if (scrollTop + clientHeight >= scrollHeight - 10) {
+                    if (hasMore.value && !loading.value) fetchOrders(true);
+                }
+            });
+        }
+    })
+})
+
 const handleSelectOrder = async (row) => {
-    if (!row || !row.id) return
+    if (!row || !row.orderNo) return
     detailLoading.value = true
     currentOrderDetail.value = { ...row, details: [], log: [] }
     try {
         const res = await req({ url: '/oms-order/detail', method: 'GET', params: { orderNo: row.orderNo } })
         const data = res.data || res || {}
         currentOrderDetail.value = {
-            ...row,
-            ...data,
+            ...row, ...data,
             details: data.orderDetails || [],
             member: data.memberInfo || data.member || {},
             log: data.orderLog || [],
             payList: data.payments || []
         }
     } catch (e) { ElMessage.error('获取明细失败') } finally { detailLoading.value = false }
-}
-
-// 🌟 核心：补打小票真实调用硬件！
-const reprintOrder = async () => {
-    if (!currentOrderDetail.value || !currentOrderDetail.value.orderNo) {
-        return ElMessage.warning("请先在左侧选择一笔要补打的订单！");
-    }
-
-    try {
-        ElMessage.info("正在唤醒硬件打印机...");
-        // 🌟 向后台发送真实的物理打印请求
-        await req({
-            url: '/oms-order/hardware/print',
-            method: 'GET',
-            params: { orderNo: currentOrderDetail.value.orderNo }
-        });
-        ElMessage.success(`🖨️ 指令已发送！正在补打单号：${currentOrderDetail.value.orderNo}`);
-    } catch (e) {
-        ElMessage.error("打印机未响应，请检查 USB 连接或后台配置！");
-        console.error("硬件打印失败:", e);
-    }
-}
-
-const handleFullReturn = async () => {
-    try {
-        await ElMessageBox.confirm('确定要将此订单【全额退款】吗？', '整单退款确认', { confirmButtonText: '确定退款', cancelButtonText: '取消', type: 'warning' })
-        detailLoading.value = true
-        await req({ url: '/oms-order/return', method: 'POST', data: { orderNo: currentOrderDetail.value.orderNo, reqId: 'RET' + Date.now() } })
-        ElMessage.success('退单成功！')
-        fetchOrders()
-        currentOrderDetail.value.status = 'REFUNDED'
-    } catch (e) { ElMessage.error(e.msg || '退款失败') } finally { detailLoading.value = false }
 }
 
 const handlePartialReturn = async (row) => {
@@ -370,6 +340,62 @@ const handlePartialReturn = async (row) => {
         await req({ url: '/oms-order/returnGoods', method: 'POST', data: { orderNo: currentOrderDetail.value.orderNo, detailId: row.id, returnQty: returnQty } })
         ElMessage.success('退货成功！')
         handleSelectOrder(currentOrderDetail.value)
+        refreshList();
     } catch (e) { if(e !== 'cancel') ElMessage.error(e.msg || '退货失败') } finally { detailLoading.value = false }
 }
+
+const handleFullReturn = async () => {
+    try {
+        await ElMessageBox.confirm('确定要将此订单【全额退款】吗？', '提示', { type: 'warning' })
+        detailLoading.value = true
+        await req({ url: '/oms-order/return', method: 'POST', data: { orderNo: currentOrderDetail.value.orderNo, reqId: 'RET' + Date.now() } })
+        ElMessage.success('退单成功！')
+        currentOrderDetail.value.status = 'REFUNDED'
+        refreshList();
+    } catch (e) {} finally { detailLoading.value = false }
+}
+
+const reprintOrder = async () => {
+    try { await req({ url: '/oms-order/hardware/print', method: 'GET', params: { orderNo: currentOrderDetail.value.orderNo } }); ElMessage.success(`指令已发送`); } catch (e) {}
+}
+
+// 🌟 核心修复：完全匹配后端 OrderStatusEnum 的字典映射
+const getOrderStatusName = (s) => {
+    const fallbackMap = {
+        'UNPAID': '待支付',
+        'PAID': '已支付',
+        'PARTIAL_REFUNDED': '部分退款',
+        'REFUNDED': '全额退款',
+        'CLOSED': '已取消'
+    };
+    const match = dict.value.orderStatus?.find(v => v.value === s || v.dictValue === s);
+    return match ? (match.desc || match.dictLabel) : (fallbackMap[s] || s);
+}
+
+// 🌟 核心修复：完全匹配状态颜色，PARTIAL_REFUNDED 直接变橙色
+const getOrderStatusType = (s) => {
+    if (s === 'PAID') return 'success';
+    if (s === 'PARTIAL_REFUNDED') return 'warning'; // 橙色警示
+    if (s === 'REFUNDED' || s === 'CLOSED') return 'info'; // 灰色划线
+    return 'danger';
+}
+
+const getBrandName = (id) => brandList.value.find(b => b.id?.toString() === id?.toString())?.name || id;
+const getLevelName = (c) => dict.value.memberType?.find(m => m.value === c || m.dictValue === c)?.dictLabel || c;
+const getPayTagName = (c) => payTagDict.value.find(t => t.value === c || t.dictValue === c)?.desc || '其他扫码';
+const formatTime = (t) => t ? dayjs(t).format('HH:mm') : '';
+const formatDate = (t) => t ? dayjs(t).format('MM-DD') : '';
+
+// 财务计算公式：对于全退和取消的订单，净收为0
+const returnPrice = computed(() => (currentOrderDetail.value?.details || []).reduce((sum, i) => NP.plus(sum, NP.times(i.returnQuantity || 0, i.goodsPrice || 0)), 0));
+const netIncome = computed(() => (currentOrderDetail.value?.status === 'REFUNDED' || currentOrderDetail.value?.status === 'CLOSED') ? 0 : NP.minus(currentOrderDetail.value?.payAmount || 0, returnPrice.value));
+const cashierName = computed(() => { const logs = currentOrderDetail.value?.log || []; return logs.length > 0 ? logs[logs.length - 1].createBy : (currentOrderDetail.value?.createBy || 'System'); });
+
+watch(visible, (v) => { if (v) refreshList() })
 </script>
+
+<style scoped>
+.scrollable-table :deep(.el-scrollbar__wrap) {
+    overflow-x: hidden;
+}
+</style>

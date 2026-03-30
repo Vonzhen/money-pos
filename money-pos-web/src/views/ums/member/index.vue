@@ -38,7 +38,13 @@
             </div>
         </MoneyForm>
 
-        <MemberProfileModal v-model="profileVisible" :member-info="currentMember" :brands-dict="brandsKv" :levels-dict="dict.memberTypeKv" />
+        <MemberProfileModal
+            v-model="profileVisible"
+            :member-id="currentMember.id"
+            :member-info="currentMember"
+            :brands-dict="brandsKv"
+            :levels-dict="dict.memberTypeKv"
+        />
 
         <MemberRechargeDialog v-model="rechargeVisible" :member-info="currentMember" @success="moneyCrud.doQuery()" />
     </PageWrapper>
@@ -74,19 +80,19 @@ const currentMember = ref({});
 const openMember360 = (row) => { currentMember.value = row; profileVisible.value = true; };
 const openRecharge = (row) => { currentMember.value = row; rechargeVisible.value = true; };
 
-// 🌟 核心审计拦截：将组件内部的 _brandLevels 同步给后端
+// 核心审计拦截：将组件内部的 _brandLevels 同步给后端
 const hookedApi = {
     ...memberApi,
     add: (data) => {
         const payload = { ...data };
-        payload.brandLevels = payload._brandLevels || {}; // 兜底空对象
+        payload.brandLevels = payload._brandLevels || {};
         payload.type = 'MEMBER';
         delete payload._brandLevels;
         return memberApi.add(payload);
     },
     edit: (data) => {
         const payload = { ...data };
-        payload.brandLevels = payload._brandLevels || {}; // 兜底空对象
+        payload.brandLevels = payload._brandLevels || {};
         delete payload._brandLevels;
         return memberApi.edit(payload);
     }
@@ -114,7 +120,6 @@ const rules = {
     ]
 };
 
-// 🌟 弹窗打开即刷新 Key，确保生命周期干净
 watch(() => moneyCrud.value.box, (open) => { if (open) formKey.value = Date.now(); });
 
 moneyCrud.value.init(moneyCrud, async () => {

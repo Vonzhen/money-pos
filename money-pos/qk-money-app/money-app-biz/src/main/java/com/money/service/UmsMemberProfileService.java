@@ -202,4 +202,37 @@ public class UmsMemberProfileService {
             });
         }
     }
+
+    // 🌟 核心新增：组装单个会员的全量“胖模型”
+    public UmsMemberVO getDetail(Long id) {
+        UmsMember member = umsMemberMapper.selectById(id);
+        if (member == null) {
+            throw new BaseException(BizErrorStatus.MEMBER_NOT_FOUND, "会员不存在");
+        }
+
+        UmsMemberVO vo = new UmsMemberVO();
+        cn.hutool.core.bean.BeanUtil.copyProperties(member, vo);
+
+        // 1. 查满减券数量
+        Long vCount = posMemberCouponMapper.selectCount(
+                new LambdaQueryWrapper<PosMemberCoupon>()
+                        .eq(PosMemberCoupon::getMemberId, id)
+                        .eq(PosMemberCoupon::getStatus, STATUS_UNUSED)
+        );
+        vo.setVoucherCount(vCount != null ? vCount.intValue() : 0);
+
+        // 2. 查品牌等级身份
+        List<UmsMemberBrandLevel> levels = umsMemberBrandLevelMapper.selectList(
+                new LambdaQueryWrapper<UmsMemberBrandLevel>().eq(UmsMemberBrandLevel::getMemberId, id)
+        );
+        Map<String, String> levelMap = new HashMap<>();
+        if (levels != null) {
+            for (UmsMemberBrandLevel bl : levels) {
+                levelMap.put(bl.getBrand(), bl.getLevelCode());
+            }
+        }
+        vo.setBrandLevels(levelMap);
+
+        return vo;
+    }
 }

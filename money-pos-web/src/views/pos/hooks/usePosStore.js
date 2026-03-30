@@ -1,8 +1,10 @@
 import { ref, computed } from 'vue';
 import { req } from "@/api/index.js";
-import Big from 'big.js'; // 🌟 引入高精度计算库，替换原有的 lodash debounce
+import Big from 'big.js';
 
-// 🌟 全局单例状态 (跨组件共享)
+// ==========================================
+// 🌟 全局单例状态 (跨组件共享，必须放在函数外！)
+// ==========================================
 const cartList = ref([]);
 const currentMember = ref({});
 const isWaiveCoupon = ref(false);
@@ -15,47 +17,40 @@ const trialResult = ref(null);
 const reqId = ref('');
 const isTrialing = ref(false);
 
-// ==========================================
-// 🌟 核心新增：全局字典内存区 (方案B)
-// ==========================================
-const globalBrandsKv = ref({});    // 存储品牌 KV (例如 {1: '绿叶'})
-const globalMemberTypes = ref([]); // 存储会员等级字典数组
+const globalBrandsKv = ref({});
+const globalMemberTypes = ref([]);
 
-// 🌟 安全红线 1：请求版本锁。防止并发修改导致旧请求覆盖新请求
+// 🌟 全局唯一的选中焦点
+const activeItemIndex = ref(-1);
+
 let currentTrialVersion = 0;
-// 🌟 高级异步防抖控制器 (P1-1 修复)
 let trialTimer = null;
 let trialResolvers = [];
 
 export function usePosStore() {
 
-    // 🌟 写入全局字典的方法
     const initGlobalDicts = (brandsKv, memberTypes) => {
         globalBrandsKv.value = brandsKv;
         globalMemberTypes.value = memberTypes;
     };
 
-    // 🌟 【影子计算底座】获取本地预估单价 (使用 Big.js 修复 P2-2)
     const getCartItemPrices = (item, member) => {
         const brandId = item.brandId;
         const levelCode = member?.brandLevels ? member.brandLevels[brandId] : null;
 
         let unitOriginalPrice = new Big(item.salePrice || 0);
-        let unitRealPrice = unitOriginalPrice; // 默认成交价为零售价
+        let unitRealPrice = unitOriginalPrice;
 
-        // 只要是会员，直接锁定为会员价
         if (levelCode && item.levelPrices && item.levelPrices[levelCode] !== undefined) {
             unitRealPrice = new Big(item.levelPrices[levelCode]);
         }
-
         return { unitOriginalPrice, unitRealPrice };
     };
 
-    // 🌟 核心引擎：Promise 驱动的试算请求 (P1-1 修复)
     const runTrial = () => {
         return new Promise((resolve) => {
             trialResolvers.push(resolve);
-            isTrialing.value = true; // 立即上锁
+            isTrialing.value = true;
             clearTimeout(trialTimer);
 
             trialTimer = setTimeout(async () => {
@@ -66,7 +61,6 @@ export function usePosStore() {
                     return;
                 }
 
-                // 生成当前请求的唯一版本戳
                 const version = Date.now();
                 currentTrialVersion = version;
 
@@ -84,15 +78,8 @@ export function usePosStore() {
 
                 try {
                     const res = await req({ url: '/pos/trial', method: 'POST', data: payload });
-
-                    // 🌟 安全红线 2：丢弃过期响应
                     if (version === currentTrialVersion) {
-                        let realData = res;
-                        if (realData && realData.code !== undefined && realData.data) {
-                            realData = realData.data;
-                        } else if (realData && realData.data && realData.data.finalPayAmount !== undefined) {
-                            realData = realData.data;
-                        }
+                        let realData = res.data || res;
                         trialResult.value = realData;
                     }
                 } catch (error) {
@@ -100,10 +87,10 @@ export function usePosStore() {
                 } finally {
                     if (version === currentTrialVersion) {
                         isTrialing.value = false;
-                        flushTrialResolvers(); // 释放等待的 await
+                        flushTrialResolvers();
                     }
                 }
-            }, 300); // 300ms 防抖
+            }, 300);
         });
     };
 
@@ -113,7 +100,6 @@ export function usePosStore() {
         resolvers.forEach(r => r());
     };
 
-    // 🌟 核心防线：增强版购物车 (引入 Big.js 处理 display 逻辑)
     const enrichedCartList = computed(() => {
         return cartList.value.map(item => {
             const qty = new Big(item.qty || 1);
@@ -123,7 +109,6 @@ export function usePosStore() {
             let displaySubtotalMember = unitRealPrice.times(qty);
             let displaySubtotalPrivilege = displaySubtotalRetail.minus(displaySubtotalMember);
 
-            // 2. 后端权威覆盖
             if (trialResult.value && trialResult.value.items) {
                 const trialItem = trialResult.value.items.find(i => String(i.goodsId) === String(item.id));
                 if (trialItem) {
@@ -154,11 +139,7 @@ export function usePosStore() {
         return trialResult.value.items.find(i => String(i.goodsId) === String(goodsId));
     };
 
-    const totalCount = computed(() => enrichedCartList.value.reduce((sum, item) => sum + item.qty, 0));
-
-    // ==========================================
-    // 🌟 核心计价指标映射 (Big.js 保护)
-    // ==========================================
+    const totalCount = computed(() => cartList.value.reduce((sum, item) => sum + (Number(item.qty) || 0), 0));
 
     const totalAmount = computed(() => {
         if (trialResult.value && trialResult.value.retailAmount !== undefined && !isTrialing.value) return trialResult.value.retailAmount;
@@ -195,17 +176,15 @@ export function usePosStore() {
         return final.gt(0) ? final.toNumber() : 0;
     });
 
+    // 🌟 这是绝对不能丢的 PaymentStats！丢了就报错白屏！
     const paymentStats = computed(() => {
         const targetPay = new Big(finalPayAmount.value || 0);
         const payments = paymentList.value || [];
-
         const aggregate = new Big(payments.find(p => p.code && p.code.includes('AGGREGATE'))?.amount || 0);
         const tendered = payments.reduce((sum, p) => p.code && p.code.includes('AGGREGATE') ? sum : sum.plus(p.amount || 0), new Big(0));
-
         const totalInputs = tendered.plus(aggregate);
         const change = totalInputs.gt(targetPay) ? totalInputs.minus(targetPay) : new Big(0);
         const unpaid = targetPay.gt(totalInputs) ? targetPay.minus(targetPay) : new Big(0);
-
         return {
             targetPay: targetPay.toNumber(),
             tendered: tendered.toNumber(),
@@ -219,14 +198,43 @@ export function usePosStore() {
     const prepareCheckout = () => { reqId.value = `REQ${Date.now()}`; };
 
     const addToCart = (goods) => {
-        const exist = cartList.value.find(item => item.id === goods.id);
-        if (exist) { exist.qty = (exist.qty || 1) + 1; }
-        else { cartList.value.push({ ...goods, qty: 1 }); }
+        const existIndex = cartList.value.findIndex(item => item.id === goods.id);
+        if (existIndex !== -1) {
+            cartList.value[existIndex].qty = (Number(cartList.value[existIndex].qty) || 1) + 1;
+            activeItemIndex.value = existIndex; // 自动选中
+        } else {
+            cartList.value.push({ ...goods, qty: 1 });
+            activeItemIndex.value = cartList.value.length - 1; // 自动选中
+        }
         runTrial();
+    };
+
+    // 🌟 核心：上下移动光标的方法
+    const moveActiveIndex = (step) => {
+        if (cartList.value.length === 0) return;
+        let newIdx = activeItemIndex.value + step;
+        if (newIdx < 0) newIdx = 0;
+        if (newIdx >= cartList.value.length) newIdx = cartList.value.length - 1;
+        activeItemIndex.value = newIdx;
+    };
+
+    const quickAdjustActiveItem = (delta) => {
+        if (cartList.value.length === 0 || activeItemIndex.value === -1) return;
+        const item = cartList.value[activeItemIndex.value];
+        if (!item) return;
+
+        const newQty = (Number(item.qty) || 1) + delta;
+        if (newQty >= 1) {
+            item.qty = newQty;
+            runTrial();
+        } else {
+            removeItem(activeItemIndex.value);
+        }
     };
 
     const removeItem = (index) => {
         cartList.value.splice(index, 1);
+        activeItemIndex.value = cartList.value.length > 0 ? cartList.value.length - 1 : -1;
         runTrial();
     };
 
@@ -252,12 +260,14 @@ export function usePosStore() {
         manualDiscount.value = 0;
         paymentList.value = [];
         trialResult.value = null;
-        currentTrialVersion = 0; // 重置版本锁
+        currentTrialVersion = 0;
+        activeItemIndex.value = -1;
     };
 
     const restoreOrder = (cartArray, memberObj) => {
         cartList.value = cartArray;
         currentMember.value = memberObj;
+        activeItemIndex.value = cartArray.length > 0 ? cartArray.length - 1 : -1;
         runTrial();
     };
 
@@ -265,7 +275,6 @@ export function usePosStore() {
         return await req({ url: '/pos/settleAccounts', method: 'POST', data: orderData });
     };
 
-    // 🌟 核心新增：暴露按条码搜索并加入购物车的能力，供外部扫码枪接管
     const scanAndAddToCart = async (barcode) => {
         try {
             const res = await req({ url: '/pos/goods', method: 'GET', params: { barcode: barcode } });
@@ -285,11 +294,11 @@ export function usePosStore() {
 
     return {
         cartList, enrichedCartList, currentMember, isWaiveCoupon, manualDiscount, selectedCouponRule, usedCouponCount, paymentList,
-        totalCount, totalAmount, memberAmount, actualCouponUsed, waivedCouponAmount, finalPayAmount, theoreticalCouponUsed, participatingAmount, paymentStats,
-        reqId, trialResult, isTrialing,
+        totalCount, totalAmount, memberAmount, actualCouponUsed, waivedCouponAmount, finalPayAmount, theoreticalCouponUsed, participatingAmount,
+        paymentStats, // 必须暴露出它，否则报错白屏
+        reqId, trialResult, isTrialing, activeItemIndex,
         addToCart, removeItem, bindMember, clearMember, clearAll, restoreOrder, submitOrder, runTrial, prepareCheckout, getCartItemPrices,
-        getTrialItemInfo,
-        scanAndAddToCart,
-        globalBrandsKv, globalMemberTypes, initGlobalDicts // 🌟 暴露出全局字典和写入方法
+        getTrialItemInfo, scanAndAddToCart, globalBrandsKv, globalMemberTypes, initGlobalDicts,
+        quickAdjustActiveItem, moveActiveIndex
     };
 }
