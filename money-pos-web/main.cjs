@@ -20,7 +20,7 @@ function createWindows() {
 
     mainWindow = new BrowserWindow({
         width: 1280, height: 800,
-        title: "万象收银系统", show: false,
+        title: "万象收银", show: false,
         webPreferences: { nodeIntegration: false, contextIsolation: true, webSecurity: false },
         autoHideMenuBar: true
     });
@@ -53,7 +53,7 @@ function createWindows() {
             show: false,
             skipTaskbar: true, // 仅隐藏任务栏图标
 
-            title: "万象收银系统-客显屏",
+            title: "万象收银-客显屏",
             webPreferences: { nodeIntegration: false, contextIsolation: true, webSecurity: false }
         });
 

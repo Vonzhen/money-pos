@@ -44,6 +44,9 @@ public class PosCalculationEngine {
         Map<Long, GmsGoods> goodsMap;
         Map<String, String> memberBrandLevels = new HashMap<>();
         Map<Long, List<PosSkuLevelPrice>> skuPriceMap = new HashMap<>();
+
+        // 🌟 核心修复新增：资金池 A (专门用于累加数据库里严格定义的“应扣会员券额”)
+        BigDecimal totalConfiguredCoupon = BigDecimal.ZERO;
     }
 
     /**
@@ -57,7 +60,7 @@ public class PosCalculationEngine {
         // 1. 初始化上下文 (查库准备数据)
         CalcContext ctx = initContext(req);
 
-        // 2. 价格轨计算：确定零售价与会员价
+        // 2. 价格轨计算：确定零售价、会员价与【券核销定额】
         calculateBasePrices(ctx);
 
         // 3. 核销轨计算：分流特权差额 (真实核销 vs 店铺承担)
@@ -77,6 +80,7 @@ public class PosCalculationEngine {
         ctx.req = req;
         ctx.result = new PricingResult();
         ctx.result.setManualDeduct(req.getManualDiscountAmount() != null ? req.getManualDiscountAmount() : BigDecimal.ZERO);
+        ctx.totalConfiguredCoupon = BigDecimal.ZERO; // 初始化券资金池
 
         List<Long> goodsIds = req.getItems().stream().map(SettleTrialReqDTO.TrialItem::getGoodsId).collect(Collectors.toList());
         ctx.goodsMap = gmsGoodsService.listByIds(goodsIds).stream().collect(Collectors.toMap(GmsGoods::getId, g -> g));
@@ -107,6 +111,7 @@ public class PosCalculationEngine {
             BigDecimal qty = new BigDecimal(reqItem.getQuantity());
             BigDecimal unitOriginalPrice = goods.getSalePrice() != null ? goods.getSalePrice() : BigDecimal.ZERO;
             BigDecimal unitRealPrice = unitOriginalPrice; // 默认零售价
+            BigDecimal unitCoupon = BigDecimal.ZERO;      // 🌟 核心修复：默认商品不扣券
             BigDecimal unitCost = goods.getAvgCostPrice() != null ? goods.getAvgCostPrice() : (goods.getPurchasePrice() != null ? goods.getPurchasePrice() : BigDecimal.ZERO);
 
             // 匹配会员价
@@ -120,6 +125,7 @@ public class PosCalculationEngine {
                             throw new BaseException("商品「" + goods.getName() + "」的会员价配置异常");
                         }
                         unitRealPrice = sp.getMemberPrice(); // 🌟 锁定会员价
+                        unitCoupon = sp.getMemberCoupon() != null ? sp.getMemberCoupon() : BigDecimal.ZERO; // 🌟 锁定数据库明确配置的券额 (单轨品牌这里拿到的是 0)
                         break;
                     }
                 }
@@ -128,8 +134,16 @@ public class PosCalculationEngine {
             // 行汇总
             BigDecimal subTotalRetail = unitOriginalPrice.multiply(qty);
             BigDecimal subTotalMember = unitRealPrice.multiply(qty);
-            BigDecimal subTotalPrivilege = subTotalRetail.subtract(subTotalMember);
+            BigDecimal subTotalPrivilege = subTotalRetail.subtract(subTotalMember); // 物理差价
             BigDecimal itemTotalCost = unitCost.multiply(qty);
+
+            // 🌟 核心修复：计算本行商品基于后台配置【理论上必须扣除的券额】
+            BigDecimal subTotalCoupon = unitCoupon.multiply(qty);
+
+            // 🌟 防御性编程：扣除的券额绝不可能大于商品的物理价差
+            if (subTotalCoupon.compareTo(subTotalPrivilege) > 0) {
+                subTotalCoupon = subTotalPrivilege;
+            }
 
             // 封装明细
             PricingItemResult itemRes = new PricingItemResult();
@@ -146,8 +160,11 @@ public class PosCalculationEngine {
             // 累加总计
             ctx.result.setRetailAmount(ctx.result.getRetailAmount().add(subTotalRetail));
             ctx.result.setMemberAmount(ctx.result.getMemberAmount().add(subTotalMember));
-            ctx.result.setPrivilegeAmount(ctx.result.getPrivilegeAmount().add(subTotalPrivilege));
+            ctx.result.setPrivilegeAmount(ctx.result.getPrivilegeAmount().add(subTotalPrivilege)); // 物理差价总计
             ctx.result.setCostAmount(ctx.result.getCostAmount().add(itemTotalCost));
+
+            // 🌟 核心修复：把合规的券核销额放进“资金池 A”
+            ctx.totalConfiguredCoupon = ctx.totalConfiguredCoupon.add(subTotalCoupon);
 
             // 计算满减参与额 (基于会员价累加)
             if (goods.getIsDiscountParticipable() != null && goods.getIsDiscountParticipable() == 1) {
@@ -157,15 +174,23 @@ public class PosCalculationEngine {
     }
 
     private void dispatchSettlementTrack(CalcContext ctx) {
-        // 🌟 核心：核销与免收的精准分流
+        // 🌟 核心修复：核销与免收的【精准分流】
         boolean isWaive = Boolean.TRUE.equals(ctx.req.getWaiveCoupon());
+        BigDecimal totalPrivilege = ctx.result.getPrivilegeAmount(); // 总价差
+        BigDecimal configuredCoupon = ctx.totalConfiguredCoupon;     // 资金池A：数据库规定要扣的券额
 
         if (isWaive) {
-            ctx.result.setActualCouponDeduct(BigDecimal.ZERO); // 免收：真实核销为 0
-            ctx.result.setWaivedCouponAmount(ctx.result.getPrivilegeAmount()); // 店铺全额承担
+            // 收银员开启【免收】：全额不扣券，所有差价全部由店铺让利承担
+            ctx.result.setActualCouponDeduct(BigDecimal.ZERO);
+            ctx.result.setWaivedCouponAmount(totalPrivilege);
         } else {
-            ctx.result.setActualCouponDeduct(ctx.result.getPrivilegeAmount()); // 正常：全额核销会员资产
-            ctx.result.setWaivedCouponAmount(BigDecimal.ZERO);
+            // 【正常结算流】
+            // 1. 实际扣券额：只扣数据库里规定的额度（不再是粗暴地扣减所有差价）
+            ctx.result.setActualCouponDeduct(configuredCoupon);
+
+            // 2. 店铺承担额（单轨让利）：总差价 - 扣了券的钱，剩下的全是店家给会员贴的钱
+            // 如果是纯单轨订单，configuredCoupon 是 0，这笔账就会完美流入 WaivedCouponAmount，财务极其清晰！
+            ctx.result.setWaivedCouponAmount(totalPrivilege.subtract(configuredCoupon));
         }
     }
 
