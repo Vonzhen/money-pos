@@ -9,7 +9,7 @@
     <packaging>pom</packaging>
 
     <name>money-pos</name>
-    <description>万象收银系统</description>
+    <description>万象收银</description>
 
     <properties>
         <revision>1.0.0</revision>
