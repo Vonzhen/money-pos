@@ -28,8 +28,7 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * 经营分析大盘 业务实现类 (V2.5 最终整合版)
- * 职责：协调四大分析集市 Mapper，实现财务审计、销售大盘、客流罗盘的精准计算
+ * 经营分析大盘 业务实现类 (V3.0 决策引擎升级版)
  */
 @Service
 @RequiredArgsConstructor
@@ -41,7 +40,6 @@ public class OmsSalesAnalysisServiceImpl implements OmsSalesAnalysisService {
     private final OmsOrderTrafficMapper omsOrderTrafficMapper;
     private final OmsOrderAuditMapper omsOrderAuditMapper;
 
-    // 自适应前端时间格式引擎
     private LocalDateTime parseStartTime(String dateStr) {
         if (StrUtil.isBlank(dateStr)) return LocalDate.now().minusDays(29).atStartOfDay();
         if (dateStr.length() == 10) return LocalDate.parse(dateStr).atStartOfDay();
@@ -67,9 +65,13 @@ public class OmsSalesAnalysisServiceImpl implements OmsSalesAnalysisService {
         BigDecimal totalSalesAmount = BigDecimal.ZERO;
         int totalOrderCount = 0;
         int totalGoodsCount = 0;
+
         List<String> trendDates = new ArrayList<>();
         List<BigDecimal> trendSales = new ArrayList<>();
         List<Integer> trendOrders = new ArrayList<>();
+        // 🌟 P0-1 新增：客单价趋势数组
+        List<BigDecimal> trendAsp = new ArrayList<>();
+
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("MM-dd");
 
         for (LocalDate date = startTime.toLocalDate(); !date.isAfter(endTime.toLocalDate()); date = date.plusDays(1)) {
@@ -84,9 +86,17 @@ public class OmsSalesAnalysisServiceImpl implements OmsSalesAnalysisService {
                 totalGoodsCount += dailyStat.getGoodsCount();
                 trendSales.add(dailyStat.getNetSalesAmount());
                 trendOrders.add(dailyStat.getOrderCount());
+
+                // 🌟 P0-1 核心计算：组装每日 ASP
+                if (dailyStat.getOrderCount() > 0) {
+                    trendAsp.add(dailyStat.getNetSalesAmount().divide(new BigDecimal(dailyStat.getOrderCount()), 2, RoundingMode.HALF_UP));
+                } else {
+                    trendAsp.add(BigDecimal.ZERO);
+                }
             } else {
                 trendSales.add(BigDecimal.ZERO);
                 trendOrders.add(0);
+                trendAsp.add(BigDecimal.ZERO);
             }
         }
 
@@ -94,11 +104,59 @@ public class OmsSalesAnalysisServiceImpl implements OmsSalesAnalysisService {
         vo.setTotalOrderCount(totalOrderCount);
         vo.setTotalGoodsCount(totalGoodsCount);
         vo.setAvgOrderValue(totalOrderCount > 0 ? totalSalesAmount.divide(new BigDecimal(totalOrderCount), 2, RoundingMode.HALF_UP) : BigDecimal.ZERO);
+
         vo.setTrendDates(trendDates);
         vo.setTrendSales(trendSales);
         vo.setTrendOrders(trendOrders);
+        vo.setTrendAsp(trendAsp); // 注入 ASP 数组
+
         vo.setTopGoodsRanking(omsOrderAnalysisMapper.getTopGoodsRank(startTime, endTime));
         vo.setBrandDistribution(omsOrderAnalysisMapper.getBrandSalesDistribution(startTime, endTime));
+
+        // ==========================================
+        // 🌟 P0-2 核心组装：会员 vs 散客双线趋势
+        // ==========================================
+        List<DailyMemberStatDTO> memberStats = omsOrderAnalysisMapper.getDailyMemberStats(startTime, endTime);
+        MemberTrendVO memberTrendVO = new MemberTrendVO();
+        memberTrendVO.setDates(trendDates);
+
+        List<BigDecimal> memberSales = new ArrayList<>();
+        List<BigDecimal> guestSales = new ArrayList<>();
+        List<BigDecimal> memberAsp = new ArrayList<>();
+        List<BigDecimal> guestAsp = new ArrayList<>();
+
+        for (LocalDate date = startTime.toLocalDate(); !date.isAfter(endTime.toLocalDate()); date = date.plusDays(1)) {
+            String matchDate = date.toString();
+
+            BigDecimal mSales = BigDecimal.ZERO;
+            BigDecimal gSales = BigDecimal.ZERO;
+            int mOrders = 0;
+            int gOrders = 0;
+
+            for (DailyMemberStatDTO stat : memberStats) {
+                if (matchDate.equals(stat.getDateStr())) {
+                    if (stat.getIsMember() == 1) {
+                        mSales = mSales.add(stat.getSalesAmount() != null ? stat.getSalesAmount() : BigDecimal.ZERO);
+                        mOrders += (stat.getOrderCount() != null ? stat.getOrderCount() : 0);
+                    } else {
+                        gSales = gSales.add(stat.getSalesAmount() != null ? stat.getSalesAmount() : BigDecimal.ZERO);
+                        gOrders += (stat.getOrderCount() != null ? stat.getOrderCount() : 0);
+                    }
+                }
+            }
+
+            memberSales.add(mSales);
+            guestSales.add(gSales);
+            memberAsp.add(mOrders > 0 ? mSales.divide(new BigDecimal(mOrders), 2, RoundingMode.HALF_UP) : BigDecimal.ZERO);
+            guestAsp.add(gOrders > 0 ? gSales.divide(new BigDecimal(gOrders), 2, RoundingMode.HALF_UP) : BigDecimal.ZERO);
+        }
+
+        memberTrendVO.setMemberSales(memberSales);
+        memberTrendVO.setGuestSales(guestSales);
+        memberTrendVO.setMemberAsp(memberAsp);
+        memberTrendVO.setGuestAsp(guestAsp);
+
+        vo.setMemberTrend(memberTrendVO); // 注入会员双线数据
 
         return vo;
     }
@@ -241,13 +299,58 @@ public class OmsSalesAnalysisServiceImpl implements OmsSalesAnalysisService {
         return omsOrderTrafficMapper.getMonthlyTrafficAnalysis(startTime, endTime, divisor);
     }
 
-    // ==========================================
-    // 🌟 新增：商品分类销售占比实现
-    // ==========================================
     @Override
     public List<CategorySalesVO> getCategorySales(String startDate, String endDate) {
         LocalDateTime startTime = parseStartTime(startDate);
         LocalDateTime endTime = parseEndTime(endDate);
         return omsOrderAnalysisMapper.getCategorySalesDistribution(startTime, endTime);
+    }
+
+    // ==========================================
+    // 🌟 P0-3 核心实现：获取所选 TopN 单品的每日连续销量趋势
+    // ==========================================
+    @Override
+    public List<GoodsTrendVO> getTopGoodsTrend(String startDate, String endDate, List<Long> goodsIds) {
+        if (goodsIds == null || goodsIds.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        LocalDateTime startTime = parseStartTime(startDate);
+        LocalDateTime endTime = parseEndTime(endDate);
+
+        // 从数据库一次性捞出这几个商品的每日数据
+        List<DailyGoodsStatDTO> rawStats = omsOrderAnalysisMapper.getDailyGoodsStats(startTime, endTime, goodsIds);
+
+        Map<Long, GoodsTrendVO> resultMap = new HashMap<>();
+        for (Long id : goodsIds) {
+            GoodsTrendVO vo = new GoodsTrendVO();
+            vo.setGoodsId(id);
+            // 稍后在循环里填充真实的商品名称
+            vo.setGoodsName("商品 ID:" + id);
+            vo.setTrendSalesQty(new ArrayList<>());
+            resultMap.put(id, vo);
+        }
+
+        // 把数据库返回的结果按日期和商品铺平
+        for (LocalDate date = startTime.toLocalDate(); !date.isAfter(endTime.toLocalDate()); date = date.plusDays(1)) {
+            String matchDate = date.toString();
+
+            for (Long goodsId : goodsIds) {
+                GoodsTrendVO vo = resultMap.get(goodsId);
+                int dailyQty = 0;
+
+                for (DailyGoodsStatDTO stat : rawStats) {
+                    if (stat.getGoodsId().equals(goodsId)) {
+                        vo.setGoodsName(stat.getGoodsName()); // 更新为真实商品名
+                        if (matchDate.equals(stat.getDateStr())) {
+                            dailyQty += (stat.getSalesQty() != null ? stat.getSalesQty() : 0);
+                        }
+                    }
+                }
+                vo.getTrendSalesQty().add(dailyQty);
+            }
+        }
+
+        return new ArrayList<>(resultMap.values());
     }
 }

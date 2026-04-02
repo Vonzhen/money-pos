@@ -5,7 +5,8 @@ import com.money.dto.OmsOrder.OmsSalesDataVO;
 import com.money.dto.OmsOrder.OmsSalesDataVO.MarketingRoiVO;
 import com.money.dto.OmsOrder.OmsSalesDataVO.PerformanceReportVO;
 import com.money.dto.OmsOrder.OmsSalesDataVO.SalesDashboardVO;
-import com.money.dto.OmsOrder.OmsSalesDataVO.CategorySalesVO; // 🌟 导入内部类 VO
+import com.money.dto.OmsOrder.OmsSalesDataVO.CategorySalesVO;
+import com.money.dto.OmsOrder.OmsSalesDataVO.GoodsTrendVO; // 🌟 导入单品趋势 VO
 import com.money.dto.OmsOrder.ProfitAuditVO;
 import com.money.service.OmsSalesAnalysisService;
 import com.money.web.vo.PageVO;
@@ -19,6 +20,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.stream.Collectors;
+import java.util.Arrays;
 
 @Tag(name = "OmsAnalysis", description = "订单大盘与客流分析")
 @RestController
@@ -70,21 +73,18 @@ public class OmsSalesAnalysisController {
         return omsSalesAnalysisService.getTrafficAnalysis(dayOfWeek);
     }
 
-    @io.swagger.v3.oas.annotations.Operation(summary = "按周宏观大盘(周一至周日)")
-    @org.springframework.web.bind.annotation.GetMapping("/weekly-traffic")
+    @Operation(summary = "按周宏观大盘(周一至周日)")
+    @GetMapping("/weekly-traffic")
     public List<OmsSalesDataVO.TimeTrafficVO> getWeeklyTraffic() {
         return omsSalesAnalysisService.getWeeklyTraffic();
     }
 
-    @io.swagger.v3.oas.annotations.Operation(summary = "按月宏观潮汐(1号至31号)")
-    @org.springframework.web.bind.annotation.GetMapping("/monthly-traffic")
+    @Operation(summary = "按月宏观潮汐(1号至31号)")
+    @GetMapping("/monthly-traffic")
     public List<OmsSalesDataVO.TimeTrafficVO> getMonthlyTraffic() {
         return omsSalesAnalysisService.getMonthlyTraffic();
     }
 
-    // ==========================================
-    // 🌟 新增：5. 商品分类销售占比分析
-    // ==========================================
     @GetMapping("/category-sales")
     @Operation(summary = "获取商品分类销售占比")
     @PreAuthorize("@rbac.hasPermission('omsOrder:list')")
@@ -92,5 +92,25 @@ public class OmsSalesAnalysisController {
             @RequestParam(required = false) String startDate,
             @RequestParam(required = false) String endDate) {
         return omsSalesAnalysisService.getCategorySales(startDate, endDate);
+    }
+
+    // ==========================================
+    // 🌟 P0-3 核心新增：专门供前端单品榜单勾选联动的趋势查询接口
+    // ==========================================
+    @GetMapping("/top-goods-trend")
+    @Operation(summary = "查询选定单品的每日连贯销量趋势")
+    @PreAuthorize("@rbac.hasPermission('omsOrder:list')")
+    public List<GoodsTrendVO> getTopGoodsTrend(
+            @RequestParam(required = false) String startDate,
+            @RequestParam(required = false) String endDate,
+            @RequestParam String goodsIds) {
+
+        // 将逗号分隔的字符串快速转为 Long 列表
+        List<Long> idList = Arrays.stream(goodsIds.split(","))
+                .filter(s -> !s.trim().isEmpty())
+                .map(Long::parseLong)
+                .collect(Collectors.toList());
+
+        return omsSalesAnalysisService.getTopGoodsTrend(startDate, endDate, idList);
     }
 }

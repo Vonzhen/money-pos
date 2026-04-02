@@ -17,6 +17,7 @@ import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 @Tag(name = "GmsTurnover", description = "周转预警中心")
 @RestController
@@ -32,13 +33,19 @@ public class GmsTurnoverController {
         return gmsTurnoverService.getTurnoverWarnings();
     }
 
+    // ==========================================
+    // 🌟 P0-5 核心新增：获取 30 天预警压力趋势与黑榜
+    // ==========================================
+    @Operation(summary = "获取历史预警压力趋势及Top顽疾黑榜")
+    @GetMapping("/turnover-warning-trend")
+    public Map<String, Object> getWarningTrend() {
+        return gmsTurnoverService.getWarningTrend();
+    }
+
     @Operation(summary = "一键导出：智能采购建议单")
     @GetMapping("/export-replenish")
     public void exportReplenish(HttpServletResponse response) throws IOException {
-        // 1. 获取大脑算出的实时预警数据
         TurnoverDashboardVO dashboard = gmsTurnoverService.getTurnoverWarnings();
-
-        // 2. 将数据转换为 Excel 图纸格式
         List<TurnoverReplenishExcelDTO> list = new ArrayList<>();
         int i = 1;
         if (dashboard != null && dashboard.getReplenishList() != null) {
@@ -48,23 +55,18 @@ public class GmsTurnoverController {
                 dto.setGoodsName(item.getGoodsName());
                 dto.setCurrentStock(item.getCurrentStock());
                 dto.setSuggestedQty(item.getSuggestedQty());
-                dto.setActualQty(""); // 留白给人工填
+                dto.setActualQty("");
                 dto.setRemark("");
                 list.add(dto);
             }
         }
-
-        // 3. 调用通用引擎，一键下载！
         ExcelUtil.export(response, "智能采购建议单", "采购明细", TurnoverReplenishExcelDTO.class, list);
     }
 
     @Operation(summary = "一键导出：积压库存清仓单")
     @GetMapping("/export-deadstock")
     public void exportDeadStock(HttpServletResponse response) throws IOException {
-        // 1. 获取大脑算出的实时预警数据
         TurnoverDashboardVO dashboard = gmsTurnoverService.getTurnoverWarnings();
-
-        // 2. 将数据转换为 Excel 图纸格式
         List<TurnoverDeadStockExcelDTO> list = new ArrayList<>();
         int i = 1;
         if (dashboard != null && dashboard.getDeadStockList() != null) {
@@ -74,12 +76,10 @@ public class GmsTurnoverController {
                 dto.setGoodsName(item.getGoodsName());
                 dto.setCurrentStock(item.getCurrentStock());
                 dto.setDeadDays(item.getDeadDays());
-                dto.setActionPlan(""); // 留白给人工填
+                dto.setActionPlan("");
                 list.add(dto);
             }
         }
-
-        // 3. 调用通用引擎，一键下载！
         ExcelUtil.export(response, "积压库存清仓单", "清仓明细", TurnoverDeadStockExcelDTO.class, list);
     }
 }

@@ -3,7 +3,7 @@
     <div class="mb-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
       <h2 class="text-xl font-bold text-gray-800 flex items-center gap-2">
         <svg-icon name="sun" class="w-6 h-6 text-orange-500" />
-        时段客流价值分析
+        时段交易客流分析 <span class="text-sm font-normal text-gray-500">(按订单笔数)</span>
       </h2>
 
       <el-radio-group v-model="selectedDay" @change="loadData" size="large">
@@ -32,7 +32,7 @@
     </el-card>
 
     <el-alert
-      title="算法说明：点选特定星期时，系统将精准抽取【过去4周的该星期日】进行加权平均。绿色背景区域代表 [平均产出 < 50元 且 平均 < 1单] 的安全空闲窗口。"
+      title="算法说明：系统将精准抽取【过去4周的该星期日】进行加权平均。绿色背景区域代表 [平均产出 < 50元 且 平均 < 1单] 的安全空闲窗口。📌 注意：客流代表【有效交易订单笔数】（已剔除全额退款），并不等同于自然进店人数。"
       type="info" show-icon class="mt-4" :closable="false" />
   </PageWrapper>
 </template>
@@ -48,9 +48,8 @@ const trafficChartRef = ref(null);
 let chartInstance = null;
 
 const trafficData = ref([]);
-const selectedDay = ref(""); // 默认全盘
+const selectedDay = ref("");
 
-// 计算所有绿灯小时
 const safeHours = computed(() => {
   return trafficData.value.filter(item => item.suggestion === 'OUT').map(item => item.hour + "点");
 });
@@ -78,7 +77,6 @@ const drawChart = () => {
   const orderCounts = trafficData.value.map(item => item.avgOrderCount);
   const salesAmounts = trafficData.value.map(item => item.avgSalesAmount);
 
-  // 找出安全的区域，用绿色背景高亮
   const markAreaPieces = trafficData.value.filter(item => item.suggestion === 'OUT').map(item => {
     return [
       { xAxis: item.hour + '点' },
@@ -87,58 +85,29 @@ const drawChart = () => {
   });
 
   const option = {
-    tooltip: {
-      trigger: 'axis',
-      axisPointer: { type: 'cross' }
-    },
+    tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
     legend: { data: ['平均单量 (笔)', '平均产出 (元)'] },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
-    xAxis: {
-      type: 'category',
-      data: hours,
-      axisPointer: { type: 'shadow' }
-    },
+    xAxis: { type: 'category', data: hours, axisPointer: { type: 'shadow' } },
     yAxis: [
-      {
-        type: 'value',
-        name: '平均单量',
-        min: 0,
-        axisLabel: { formatter: '{value} 笔' }
-      },
-      {
-        type: 'value',
-        name: '平均产出',
-        min: 0,
-        splitLine: { show: false },
-        axisLabel: { formatter: '￥{value}' }
-      }
+      { type: 'value', name: '平均单量', min: 0, axisLabel: { formatter: '{value} 笔' } },
+      { type: 'value', name: '平均产出', min: 0, splitLine: { show: false }, axisLabel: { formatter: '￥{value}' } }
     ],
     series: [
       {
-        name: '平均单量 (笔)',
-        type: 'bar',
-        barWidth: '40%',
+        name: '平均单量 (笔)', type: 'bar', barWidth: '40%',
         itemStyle: { color: '#3b82f6', borderRadius: [4, 4, 0, 0] },
         data: orderCounts,
-        markArea: {
-          itemStyle: { color: 'rgba(16, 185, 129, 0.15)' }, // 浅绿色背景带
-          data: markAreaPieces
-        }
+        markArea: { itemStyle: { color: 'rgba(16, 185, 129, 0.15)' }, data: markAreaPieces }
       },
       {
-        name: '平均产出 (元)',
-        type: 'line',
-        yAxisIndex: 1, // 使用右侧Y轴
-        smooth: true,
-        symbolSize: 8,
-        itemStyle: { color: '#f59e0b' },
-        lineStyle: { width: 3 },
-        data: salesAmounts
+        name: '平均产出 (元)', type: 'line', yAxisIndex: 1, smooth: true, symbolSize: 8,
+        itemStyle: { color: '#f59e0b' }, lineStyle: { width: 3 }, data: salesAmounts
       }
     ]
   };
 
-  chartInstance.setOption(option, true); // true表示强制覆盖旧数据
+  chartInstance.setOption(option, true);
 }
 
 onMounted(() => {
