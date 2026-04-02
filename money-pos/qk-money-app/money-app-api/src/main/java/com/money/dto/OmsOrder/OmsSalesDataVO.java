@@ -5,7 +5,7 @@ import java.math.BigDecimal;
 import java.util.List;
 
 /**
- * 5.x 销售领域全量数据传输对象
+ * 5.x 销售领域全量数据传输对象 (大一统趋势升级版)
  */
 public class OmsSalesDataVO {
 
@@ -22,15 +22,65 @@ public class OmsSalesDataVO {
         private List<String> trendDates;
         private List<BigDecimal> trendSales;
         private List<Integer> trendOrders;
+
+        // 🌟 P0-1 核心新增：每日客单价 (ASP) 趋势
+        private List<BigDecimal> trendAsp;
+
+        // 🌟 P0-2 核心新增：会员 vs 散客 趋势载体
+        private MemberTrendVO memberTrend;
+    }
+
+    // ==========================================
+    // 🌟 P0-2 新增：会员经营趋势专用实体
+    // ==========================================
+    @Data
+    public static class MemberTrendVO {
+        private List<String> dates;
+        private List<BigDecimal> memberSales;
+        private List<BigDecimal> guestSales;
+        private List<BigDecimal> memberAsp;
+        private List<BigDecimal> guestAsp;
+    }
+
+    @Data
+    public static class DailyMemberStatDTO {
+        private String dateStr;
+        private Integer isMember; // 1:会员, 0:散客
+        private Integer orderCount;
+        private BigDecimal salesAmount;
+    }
+
+    // ==========================================
+    // 🌟 P0-3 新增：Top N 单品趋势载体
+    // ==========================================
+    @Data
+    public static class GoodsTrendVO {
+        private Long goodsId;
+        private String goodsName;
+        private List<Integer> trendSalesQty;
+    }
+
+    @Data
+    public static class DailyGoodsStatDTO {
+        private String dateStr;
+        private Long goodsId;
+        private String goodsName;
+        private Integer salesQty;
     }
 
     @Data
     public static class GoodsSalesRankVO {
+        // 🌟 修复：补齐商品真实 ID，供单品趋势联动查询使用
+        private Long goodsId;
         private String goodsName;
         private Integer salesQty;
         private BigDecimal salesAmount;
-        public GoodsSalesRankVO(String goodsName, Integer salesQty, BigDecimal salesAmount) {
-            this.goodsName = goodsName; this.salesQty = salesQty; this.salesAmount = salesAmount;
+
+        public GoodsSalesRankVO(Long goodsId, String goodsName, Integer salesQty, BigDecimal salesAmount) {
+            this.goodsId = goodsId;
+            this.goodsName = goodsName;
+            this.salesQty = salesQty;
+            this.salesAmount = salesAmount;
         }
     }
 
@@ -43,9 +93,6 @@ public class OmsSalesDataVO {
         }
     }
 
-    // ==========================================
-    // 🌟 新增：分类销售数据传输对象
-    // ==========================================
     @Data
     public static class CategorySalesVO {
         private String categoryName;
@@ -77,21 +124,17 @@ public class OmsSalesDataVO {
         private BigDecimal avgOrderValue;
     }
 
-    // ==========================================
-    // 🌟 8.2 核心新增：办事罗盘（24小时客流分析）数据体
-    // ==========================================
     @Data
     public static class HourlyTrafficVO {
-        private Integer hour;               // 几点 (0-23)
-        private java.math.BigDecimal avgOrderCount;   // 历史平均单量
-        private java.math.BigDecimal avgSalesAmount;  // 历史平均产出
-        private String suggestion;          // 建议："OUT" (可外出), "STAY" (需留守)
+        private Integer hour;
+        private java.math.BigDecimal avgOrderCount;
+        private java.math.BigDecimal avgSalesAmount;
+        private String suggestion;
     }
 
-    // 🌟 宏观潮汐罗盘数据体 (按周/按月通用)
     @Data
     public static class TimeTrafficVO {
-        private Integer timeKey; // 星期几(1-7) 或 月份几号(1-31)
+        private Integer timeKey;
         private java.math.BigDecimal avgOrderCount;
         private java.math.BigDecimal avgSalesAmount;
     }

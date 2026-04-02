@@ -18,8 +18,12 @@
       </el-tab-pane>
 
       <el-tab-pane name="month">
-        <template #label><span class="font-bold text-lg px-4">🗓️ 月度潮汐趋势分析</span></template>
-        <div ref="monthChartRef" class="w-full h-[500px] mt-4"></div>
+        <template #label><span class="font-bold text-lg px-4">🗓️ 月内日期分布 (1-31号)</span></template>
+        <div class="bg-orange-50 p-2 mt-2 mx-2 rounded border border-orange-100 text-orange-600 text-xs flex items-center">
+          <el-icon class="mr-1 text-base"><Warning /></el-icon>
+          温馨提示：按每月几号取均值，仅供整体分布参考。受节假日、双休日历偏移等因素扰动较大，不代表绝对稳定的规律，请结合实际排班。
+        </div>
+        <div ref="monthChartRef" class="w-full h-[460px] mt-2"></div>
       </el-tab-pane>
 
     </el-tabs>
@@ -31,6 +35,7 @@ import PageWrapper from "@/components/PageWrapper.vue";
 import { ref, onMounted, nextTick } from "vue";
 import analysisApi from "@/api/oms/analysis.js";
 import * as echarts from 'echarts';
+import { Warning } from '@element-plus/icons-vue'; // 🌟 引入警示图标
 
 const activeTab = ref("week");
 const loading = ref(false);
@@ -38,13 +43,11 @@ const weekChartRef = ref(null);
 const monthChartRef = ref(null);
 let chartInstance = null;
 
-// MySQL DAYOFWEEK: 1=周日, 2=周一...7=周六
 const weekMap = { 1: '周日', 2: '周一', 3: '周二', 4: '周三', 5: '周四', 6: '周五', 7: '周六' };
 
 const loadWeekData = async () => {
   const res = await analysisApi.getWeeklyTraffic();
   const data = res.data || res;
-  // 把周日排到最后，更符合国人习惯
   const sorted = data.sort((a, b) => (a.timeKey===1?8:a.timeKey) - (b.timeKey===1?8:b.timeKey));
 
   const xData = sorted.map(item => weekMap[item.timeKey]);

@@ -28,18 +28,21 @@ public interface OmsOrderAnalysisMapper {
             "  SUM(IFNULL(cost_amount, 0)) AS costAmount, " +
             "  SUM((SELECT SUM(IFNULL(quantity, 0) - IFNULL(return_quantity, 0)) FROM oms_order_detail d WHERE d.order_no = o.order_no)) AS goodsCount " +
             "FROM oms_order o " +
-            "WHERE status IN ('PAID', 'PARTIAL_REFUNDED', 'REFUNDED') " +
+            // 🌟 洗缩：坚决剔除 REFUNDED 状态，净化基础分析池
+            "WHERE status IN ('PAID', 'PARTIAL_REFUNDED') " +
             "  AND create_time >= #{startTime} AND create_time <= #{endTime} " +
             "GROUP BY period ORDER BY period ASC")
     List<AnalysisAtomicDataDTO> getPeriodAtomicStats(@Param("startTime") LocalDateTime startTime, @Param("endTime") LocalDateTime endTime, @Param("dimension") String dimension);
 
+    // 🌟 修复：精准提取 d.goods_id AS goodsId 给前端趋势联动用
     @Select("SELECT " +
+            "  d.goods_id AS goodsId, " +
             "  d.goods_name AS goodsName, " +
             "  SUM(d.quantity - IFNULL(d.return_quantity, 0)) AS salesQty, " +
             "  SUM((d.quantity - IFNULL(d.return_quantity, 0)) * IFNULL(d.goods_price, 0)) AS salesAmount " +
             "FROM oms_order_detail d " +
             "INNER JOIN oms_order o ON d.order_no = o.order_no " +
-            "WHERE o.status IN ('PAID', 'PARTIAL_REFUNDED', 'REFUNDED') " +
+            "WHERE o.status IN ('PAID', 'PARTIAL_REFUNDED') " +
             "  AND o.create_time >= #{startTime} AND o.create_time <= #{endTime} " +
             "GROUP BY d.goods_id, d.goods_name " +
             "HAVING salesQty > 0 " +
@@ -52,7 +55,7 @@ public interface OmsOrderAnalysisMapper {
             "FROM oms_order_detail d " +
             "INNER JOIN oms_order o ON d.order_no = o.order_no " +
             "LEFT JOIN gms_brand b ON d.brand_id = b.id " +
-            "WHERE o.status IN ('PAID', 'PARTIAL_REFUNDED', 'REFUNDED') " +
+            "WHERE o.status IN ('PAID', 'PARTIAL_REFUNDED') " +
             "  AND o.create_time >= #{startTime} AND o.create_time <= #{endTime} " +
             "GROUP BY d.brand_id, brandName " +
             "HAVING salesAmount > 0 " +
@@ -60,11 +63,10 @@ public interface OmsOrderAnalysisMapper {
     List<BrandSalesVO> getBrandSalesDistribution(@Param("startTime") LocalDateTime startTime, @Param("endTime") LocalDateTime endTime);
 
     @Select("SELECT '满减券' AS ruleType, IFNULL(remark, '通用满减活动') AS ruleName, COUNT(id) AS usedCount, SUM(IFNULL(use_voucher_amount, 0)) AS totalDiscountGived, SUM(IFNULL(final_sales_amount, 0)) AS totalRevenueBrought " +
-            "FROM oms_order WHERE status IN ('PAID', 'PARTIAL_REFUNDED', 'REFUNDED') AND create_time >= #{startTime} AND create_time <= #{endTime} AND IFNULL(use_voucher_amount, 0) > 0 GROUP BY ruleName " +
+            "FROM oms_order WHERE status IN ('PAID', 'PARTIAL_REFUNDED') AND create_time >= #{startTime} AND create_time <= #{endTime} AND IFNULL(use_voucher_amount, 0) > 0 GROUP BY ruleName " +
             "UNION ALL " +
-            // 🌟 核心一统：营销复盘全面取缔 coupon_amount，扶正 actual_coupon_deduct！
             "SELECT '会员资产' AS ruleType, '会员专属券核销' AS ruleName, COUNT(id) AS usedCount, SUM(IFNULL(actual_coupon_deduct, 0)) AS totalDiscountGived, SUM(IFNULL(final_sales_amount, 0)) AS totalRevenueBrought " +
-            "FROM oms_order WHERE status IN ('PAID', 'PARTIAL_REFUNDED', 'REFUNDED') AND create_time >= #{startTime} AND create_time <= #{endTime} AND IFNULL(actual_coupon_deduct, 0) > 0")
+            "FROM oms_order WHERE status IN ('PAID', 'PARTIAL_REFUNDED') AND create_time >= #{startTime} AND create_time <= #{endTime} AND IFNULL(actual_coupon_deduct, 0) > 0")
     List<MarketingRoiVO> getMarketingRoiStats(@Param("startTime") LocalDateTime startTime, @Param("endTime") LocalDateTime endTime);
 
     @Select("SELECT " +
@@ -74,10 +76,43 @@ public interface OmsOrderAnalysisMapper {
             "FROM oms_order_detail d " +
             "INNER JOIN oms_order o ON d.order_no = o.order_no " +
             "LEFT JOIN gms_goods_category c ON d.category_id = c.id " +
-            "WHERE o.status IN ('PAID', 'PARTIAL_REFUNDED', 'REFUNDED') " +
+            "WHERE o.status IN ('PAID', 'PARTIAL_REFUNDED') " +
             "  AND o.create_time >= #{startTime} AND o.create_time <= #{endTime} " +
             "GROUP BY d.category_id, categoryName " +
             "HAVING salesQty > 0 " +
             "ORDER BY salesAmount DESC")
     List<CategorySalesVO> getCategorySalesDistribution(@Param("startTime") LocalDateTime startTime, @Param("endTime") LocalDateTime endTime);
+
+    // ==========================================
+    // 🌟 P0-2 引擎：按日聚合会员与散客经营体征
+    // ==========================================
+    @Select("SELECT DATE_FORMAT(create_time, '%Y-%m-%d') AS dateStr, " +
+            "  CASE WHEN member_id IS NOT NULL THEN 1 ELSE 0 END AS isMember, " +
+            "  COUNT(id) AS orderCount, " +
+            "  SUM(IFNULL(final_sales_amount, 0)) AS salesAmount " +
+            "FROM oms_order " +
+            "WHERE status IN ('PAID', 'PARTIAL_REFUNDED') " +
+            "  AND create_time >= #{startTime} AND create_time <= #{endTime} " +
+            "GROUP BY dateStr, isMember " +
+            "ORDER BY dateStr ASC")
+    List<com.money.dto.OmsOrder.OmsSalesDataVO.DailyMemberStatDTO> getDailyMemberStats(@Param("startTime") LocalDateTime startTime, @Param("endTime") LocalDateTime endTime);
+
+    // ==========================================
+    // 🌟 P0-3 引擎：查询指定单品集合的每日净销量走势
+    // ==========================================
+    @Select("<script>" +
+            "SELECT DATE_FORMAT(o.create_time, '%Y-%m-%d') AS dateStr, " +
+            "  d.goods_id AS goodsId, " +
+            "  d.goods_name AS goodsName, " +
+            "  SUM(GREATEST(d.quantity - IFNULL(d.return_quantity, 0), 0)) AS salesQty " +
+            "FROM oms_order_detail d " +
+            "INNER JOIN oms_order o ON d.order_no = o.order_no " +
+            "WHERE o.status IN ('PAID', 'PARTIAL_REFUNDED') " +
+            "  AND o.create_time &gt;= #{startTime} AND o.create_time &lt;= #{endTime} " +
+            "  AND d.goods_id IN " +
+            "  <foreach item='id' collection='goodsIds' open='(' separator=',' close=')'>#{id}</foreach> " +
+            "GROUP BY dateStr, d.goods_id, d.goods_name " +
+            "ORDER BY dateStr ASC" +
+            "</script>")
+    List<com.money.dto.OmsOrder.OmsSalesDataVO.DailyGoodsStatDTO> getDailyGoodsStats(@Param("startTime") LocalDateTime startTime, @Param("endTime") LocalDateTime endTime, @Param("goodsIds") List<Long> goodsIds);
 }
