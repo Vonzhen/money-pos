@@ -19,38 +19,57 @@
                 </div>
             </div>
 
-            <div class="bg-white p-6 rounded-lg shadow-sm mb-6 border border-gray-200">
+            <div class="bg-white p-5 rounded-lg shadow-sm mb-6 border border-gray-200">
                 <div class="text-sm font-black text-gray-600 mb-4 flex items-center">
-                    <el-icon class="mr-2 text-blue-500"><List /></el-icon> 资金链路推演等式
+                    <el-icon class="mr-2 text-blue-500"><List /></el-icon> 资金链路推演等式 (大一统精准核算版)
                 </div>
-                <div class="flex flex-wrap items-center justify-between text-center gap-2">
-                    <div class="flex-1 min-w-[120px]">
-                        <div class="text-gray-400 text-xs font-bold mb-1">吊牌应收总计</div>
-                        <div class="text-2xl font-mono font-bold text-gray-800">¥ {{ formatMoney(data.totalAmount) }}</div>
-                    </div>
-                    <div class="text-2xl text-gray-300 font-black">-</div>
+                <div class="flex items-center justify-between text-center gap-1 overflow-x-auto pb-2">
 
-                    <div class="flex-1 min-w-[120px]">
-                        <div class="text-gray-400 text-xs font-bold mb-1">活动让利 (券/抹零)</div>
-                        <div class="text-2xl font-mono font-bold text-red-500">¥ {{ formatMoney(data.totalDiscount) }}</div>
+                    <div class="flex-col items-center shrink-0 min-w-[80px]">
+                        <div class="text-gray-400 text-[11px] font-bold mb-1">吊牌应收</div>
+                        <div class="text-xl font-mono font-bold text-gray-800">¥ {{ formatMoney(data.totalAmount) }}</div>
                     </div>
-                    <div class="text-2xl text-gray-300 font-black">=</div>
+                    <div class="text-xl text-gray-300 font-black shrink-0">-</div>
 
-                    <div class="flex-1 min-w-[120px]">
-                        <div class="text-gray-400 text-xs font-bold mb-1">实付总计 (含余额/扫码/现金)</div>
-                        <div class="text-2xl font-mono font-bold text-blue-600">¥ {{ formatMoney(data.payAmount) }}</div>
+                    <div class="flex-col items-center shrink-0 min-w-[80px]" title="用户真实消耗的会员券资产">
+                        <div class="text-orange-500 text-[11px] font-bold mb-1">会员券核销</div>
+                        <div class="text-xl font-mono font-bold text-orange-500">¥ {{ formatMoney(data.actualCouponDeduct || data.couponAmount) }}</div>
                     </div>
-                    <div class="text-2xl text-gray-300 font-black">-</div>
+                    <div class="text-xl text-gray-300 font-black shrink-0">-</div>
 
-                    <div class="flex-1 min-w-[120px]">
-                        <div class="text-gray-400 text-xs font-bold mb-1">售后退款冲回</div>
-                        <div class="text-2xl font-mono font-bold text-orange-500">¥ {{ formatMoney(data.refundAmount) }}</div>
+                    <div class="flex-col items-center shrink-0 min-w-[80px]" title="系统活动或免券导致的店铺让利">
+                        <div class="text-blue-500 text-[11px] font-bold mb-1">店铺免券让利</div>
+                        <div class="text-xl font-mono font-bold text-blue-500">¥ {{ formatMoney(data.waivedCouponAmount) }}</div>
                     </div>
-                    <div class="text-2xl text-gray-300 font-black">=</div>
+                    <div class="text-xl text-gray-300 font-black shrink-0">-</div>
 
-                    <div class="flex-1 min-w-[130px] bg-green-50 rounded-lg p-3 border border-green-200 shadow-inner">
-                        <div class="text-green-700 text-xs font-black tracking-widest mb-1">最终实际净收</div>
-                        <div class="text-3xl font-mono font-black text-green-600 tracking-tighter">¥ {{ formatMoney(data.netIncome) }}</div>
+                    <div class="flex-col items-center shrink-0 min-w-[80px]">
+                        <div class="text-red-400 text-[11px] font-bold mb-1">满减活动</div>
+                        <div class="text-xl font-mono font-bold text-red-500">¥ {{ formatMoney(data.voucherAmount) }}</div>
+                    </div>
+                    <div class="text-xl text-gray-300 font-black shrink-0">-</div>
+
+                    <div class="flex-col items-center shrink-0 min-w-[80px]">
+                        <div class="text-red-400 text-[11px] font-bold mb-1">整单手工优惠</div>
+                        <div class="text-xl font-mono font-bold text-red-500">¥ {{ formatMoney(data.manualDiscountAmount) }}</div>
+                    </div>
+                    <div class="text-xl text-gray-300 font-black shrink-0">=</div>
+
+                    <div class="flex-col items-center shrink-0 min-w-[90px]">
+                        <div class="text-gray-400 text-[11px] font-bold mb-1">实付总计</div>
+                        <div class="text-xl font-mono font-bold text-blue-600">¥ {{ formatMoney(data.payAmount) }}</div>
+                    </div>
+                    <div class="text-xl text-gray-300 font-black shrink-0">-</div>
+
+                    <div class="flex-col items-center shrink-0 min-w-[80px]">
+                        <div class="text-gray-400 text-[11px] font-bold mb-1">售后退款冲回</div>
+                        <div class="text-xl font-mono font-bold text-gray-500">¥ {{ formatMoney(data.refundAmount) }}</div>
+                    </div>
+                    <div class="text-xl text-gray-300 font-black shrink-0">=</div>
+
+                    <div class="flex-col items-center shrink-0 min-w-[120px] bg-green-50 rounded-lg p-2 border border-green-200 shadow-inner">
+                        <div class="text-green-700 text-[11px] font-black tracking-widest mb-0.5">最终实际净收</div>
+                        <div class="text-2xl font-mono font-black text-green-600 tracking-tighter">¥ {{ formatMoney(data.netIncome) }}</div>
                     </div>
                 </div>
             </div>
@@ -70,7 +89,7 @@
                 <el-card shadow="hover" class="border-t-4 border-t-blue-500 rounded-lg">
                     <div class="flex items-center justify-between">
                         <div>
-                            <div class="text-sm text-gray-500 mb-1 font-bold">全店真金白银流水入账</div>
+                            <div class="text-sm text-gray-500 mb-1 font-bold">全店流水入账（未扣退款）</div>
                             <div class="text-3xl font-mono font-bold text-blue-600">¥ {{ formatMoney(data.externalIncome) }}</div>
                         </div>
                         <div class="p-3 bg-blue-50 rounded-full"><el-icon class="text-2xl text-blue-500"><Wallet /></el-icon></div>
@@ -122,8 +141,9 @@ const payTagDict = ref([])
 
 const data = ref({
     totalAmount: 0, totalDiscount: 0, payAmount: 0, refundAmount: 0, netIncome: 0, grossProfit: 0, externalIncome: 0, totalDebt: 0,
+    actualCouponDeduct: 0, waivedCouponAmount: 0, voucherAmount: 0, manualDiscountAmount: 0,
     payBreakdown: [], trendDates: [],
-    trendScan: [], trendCash: [], trendRecharge: [], trendTotal: [], trendRefund: [], // 🌟 增加 trendRefund 坑位
+    trendScan: [], trendCash: [], trendRecharge: [], trendTotal: [], trendRefund: [],
     dynamicTrendMap: {}
 })
 
@@ -172,7 +192,7 @@ const initLineChart = () => {
     if (!lineChartRef.value) return
     if (!lineChart) lineChart = echarts.init(lineChartRef.value)
 
-    const legendData = ['全口径大盘总计', '扫码总计', '现金收银', '会员充值', '售后退款']; // 🌟 添加图例
+    const legendData = ['全口径大盘总计', '扫码总计', '现金收银', '会员充值', '售后退款'];
     const seriesData = [
         {
             name: '全口径大盘总计', type: 'line', smooth: true,
@@ -198,7 +218,6 @@ const initLineChart = () => {
             itemStyle: { color: '#E6A23C' },
             data: data.value.trendRecharge || []
         },
-        // 🌟 核心：新增的专属退款红线
         {
             name: '售后退款', type: 'line', smooth: true,
             itemStyle: { color: '#F56C6C' },

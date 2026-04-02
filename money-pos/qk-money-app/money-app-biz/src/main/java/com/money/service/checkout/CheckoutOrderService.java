@@ -24,10 +24,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Map;
 
-/**
- * 🌟 结算流水线第三关：档案员 (已移除冗余的审计日志逻辑)
- */
-@Slf4j // 🌟 补全了日志注解
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class CheckoutOrderService {
@@ -87,11 +84,9 @@ public class CheckoutOrderService {
         try {
             omsOrderMapper.insert(order);
         } catch (DuplicateKeyException e) {
-            // 🌟 修复问题8：明确捕获幂等键重复（重复点击/重试请求）
             log.warn("⚠️ 拦截到重复的下单请求，ReqID已被占用: {}", orderNo);
             throw new BaseException("订单已生成，请勿重复点击下单！");
         } catch (Exception e) {
-            // 🌟 新增：对真实的数据库未知故障进行明确界定
             log.error("💥 订单落库发生未知系统故障，单号: {}", orderNo, e);
             throw new BaseException("系统开小差了，订单可能未保存，请联系管理员核实单号：" + orderNo);
         }
@@ -111,7 +106,9 @@ public class CheckoutOrderService {
             detail.setVipPrice(goods.getVipPrice());
             detail.setQuantity(itemRes.getQuantity());
             detail.setGoodsPrice(itemRes.getUnitRealPrice());
-            detail.setCoupon(itemRes.getSubTotalPrivilege());
+
+            // 🌟 核心修复3：彻底抛弃假账！只存真正的单品核销额！
+            detail.setCoupon(itemRes.getActualSubTotalCoupon() != null ? itemRes.getActualSubTotalCoupon() : BigDecimal.ZERO);
 
             if (goods.getCategoryId() != null) {
                 detail.setCategoryId(goods.getCategoryId());

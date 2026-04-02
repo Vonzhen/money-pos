@@ -21,6 +21,15 @@ public class FinanceDataVO {
         private BigDecimal externalIncome;
         private BigDecimal totalDebt;
 
+        @Schema(description = "实际核销会员券")
+        private BigDecimal actualCouponDeduct;
+        @Schema(description = "店铺免券让利")
+        private BigDecimal waivedCouponAmount;
+        @Schema(description = "满减活动抵扣")
+        private BigDecimal voucherAmount;
+        @Schema(description = "手工整单优惠")
+        private BigDecimal manualDiscountAmount;
+
         private List<PayPieData> payBreakdown;
         private List<String> trendDates;
         private List<BigDecimal> trendScan;
@@ -56,37 +65,38 @@ public class FinanceDataVO {
         private String shiftStartTime;
         private String shiftEndTime;
         private String cashierName;
+
         private BigDecimal cashPay;
         private BigDecimal scanPay;
+
+        // 🌟 极致细节：扫码支付通道细分列表
+        private List<PayPieData> scanPayBreakdown;
+
         private BigDecimal expectedTotalIncome;
         private BigDecimal balancePay;
+
         private BigDecimal memberCouponPay;
         private BigDecimal voucherDiscount;
         private Integer voucherCount;
         private BigDecimal manualDiscount;
+        private BigDecimal waivedCouponAmount;
+
+        private BigDecimal refundAmount;
+        private BigDecimal netIncome;
+
         private List<BrandContributionVO> brandMatrix;
     }
 
-    // ==========================================
-    // 🌟 核心修复区：品牌贡献度实体类
-    // ==========================================
     @Data
     public static class BrandContributionVO {
         private String brandName;
         private BigDecimal revenue;
         private BigDecimal couponConsumption;
 
-        // 🌟 修复 1：必须提供一个无参构造！让 MyBatis 可以先建个空对象，不至于因为参数不够而越界爆炸。
-        public BrandContributionVO() {
-        }
-
-        // 保留原有的全参构造，防止系统中其他手动 new 这个对象的地方报错。
+        public BrandContributionVO() {}
         public BrandContributionVO(String brandName, BigDecimal revenue, BigDecimal couponConsumption) {
             this.brandName = brandName; this.revenue = revenue; this.couponConsumption = couponConsumption;
         }
-
-        // 🌟 修复 2：偷天换日！SQL 查出来的列名叫 `brandSales`，MyBatis 会来找 `setBrandSales` 方法。
-        // 我们在这里拦截它，并把值悄悄赋给前端真正需要的 `revenue` 字段！
         public void setBrandSales(BigDecimal brandSales) {
             this.revenue = brandSales;
         }

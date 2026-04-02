@@ -7,13 +7,10 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
-* <p>
-* 订单表
-* </p>
-*
-* @author money
-* @since 2023-02-27
-*/
+ * <p>
+ * 订单表
+ * </p>
+ */
 @Data
 @Schema(description = "订单表")
 public class OmsOrderVO {
@@ -59,8 +56,17 @@ public class OmsOrderVO {
     @Schema(description="实付款")
     private BigDecimal payAmount;
 
-    @Schema(description="抵用券")
+    @Schema(description="抵用券(旧版兼容字段)")
     private BigDecimal couponAmount;
+
+    // ==========================================
+    // 🌟 核心一统：对外输出绝对真实的“券核销”与“店铺让利”
+    // ==========================================
+    @Schema(description="实际核销会员券 (大一统主口径)")
+    private BigDecimal actualCouponDeduct;
+
+    @Schema(description="抹零/店铺免券让利金额")
+    private BigDecimal waivedCouponAmount;
 
     @Schema(description="最终销售金额")
     private BigDecimal finalSalesAmount;
@@ -77,15 +83,8 @@ public class OmsOrderVO {
     @Schema(description="满减券抵扣金额")
     private BigDecimal useVoucherAmount;
 
-    // 🌟 新增：专门存放前台手工改价、抹零、整单优惠的金额
     @Schema(description="手工整单优惠金额")
     private BigDecimal manualDiscountAmount;
 
     private LocalDateTime createTime;
-
-    /**
-     * 抹零金额 (结账时免去的零头)
-     */
-    private java.math.BigDecimal waivedCouponAmount;
-
 }

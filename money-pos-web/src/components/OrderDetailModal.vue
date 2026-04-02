@@ -86,18 +86,19 @@
                             <MoneyDisplay :value="currentOrderDetail.costAmount" color="text-blue-600" />
                         </el-descriptions-item>
 
-                        <el-descriptions-item label="会员券抵扣" label-align="center" align="center" label-class-name="whitespace-nowrap w-32">
-                            <span class="text-red-500 font-bold mr-1">-</span><MoneyDisplay :value="currentOrderDetail.memberCouponDeduct || currentOrderDetail.couponAmount" color="text-red-500" />
+                        <el-descriptions-item label="会员券真实核销" label-align="center" align="center" label-class-name="whitespace-nowrap w-32">
+                            <span class="text-red-500 font-bold mr-1">-</span><MoneyDisplay :value="currentOrderDetail.actualCouponDeduct" color="text-red-500" />
                         </el-descriptions-item>
+                        <el-descriptions-item label="店铺免券让利" label-align="center" align="center" label-class-name="whitespace-nowrap w-32">
+                            <span class="text-blue-500 font-bold mr-1">-</span><MoneyDisplay :value="currentOrderDetail.waivedCouponAmount" color="text-blue-500" />
+                        </el-descriptions-item>
+
                         <el-descriptions-item label="满减券抵扣" label-align="center" align="center" label-class-name="whitespace-nowrap w-32">
-                            <span class="text-red-500 font-bold mr-1">-</span><MoneyDisplay :value="currentOrderDetail.voucherDeduct || currentOrderDetail.useVoucherAmount" color="text-red-500" />
+                            <span class="text-red-500 font-bold mr-1">-</span><MoneyDisplay :value="currentOrderDetail.useVoucherAmount" color="text-red-500" />
                         </el-descriptions-item>
 
                         <el-descriptions-item label="整单优惠" label-align="center" align="center" label-class-name="whitespace-nowrap w-32">
-                            <span class="text-red-500 font-bold mr-1">-</span><MoneyDisplay :value="currentOrderDetail.manualDeduct || currentOrderDetail.manualDiscountAmount" color="text-red-500" />
-                        </el-descriptions-item>
-                        <el-descriptions-item label="售后退款" label-align="center" align="center" label-class-name="whitespace-nowrap w-32">
-                            <MoneyDisplay :value="returnPrice" color="text-gray-500" />
+                            <span class="text-red-500 font-bold mr-1">-</span><MoneyDisplay :value="currentOrderDetail.manualDiscountAmount" color="text-red-500" />
                         </el-descriptions-item>
                     </el-descriptions>
                 </div>

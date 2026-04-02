@@ -18,9 +18,7 @@ public interface OmsOrderPayMapper extends BaseMapper<OmsOrderPay> {
     @Select("SELECT DATE_FORMAT(o.create_time, '%Y-%m-%d') AS dateStr, " +
             "p.pay_method_code AS methodCode, " +
             "p.pay_tag AS payTag, " +
-            // 原始支付毛额 (无论是否退款，当初收了多少就是多少)
             "SUM(p.pay_amount) AS totalAmount, " +
-            // 🌟 修复问题4：引入财务净收入口径 (如果该单已被全额退款，则资金不计入净额)
             "SUM(CASE WHEN o.status = 'REFUNDED' THEN 0 ELSE p.pay_amount END) AS netAmount " +
             "FROM oms_order_pay p " +
             "JOIN oms_order o ON p.order_no = o.order_no " +
@@ -30,12 +28,12 @@ public interface OmsOrderPayMapper extends BaseMapper<OmsOrderPay> {
     List<Map<String, Object>> getDailyPaySummary(@Param("startTime") LocalDateTime startTime, @Param("endTime") LocalDateTime endTime);
 
     /**
-     * 🌟 交接班专属：高精度资金流扫荡
+     * 🌟 交接班专属：高精度资金流扫荡 (已完美支持 payTag 细分)
      */
     @Select("<script>" +
             "SELECT p.pay_method_code AS methodCode, " +
+            "p.pay_tag AS payTag, " + // 👈 核心补充：提取扫码二级标签
             "SUM(p.pay_amount) AS totalAmount, " +
-            // 🌟 同步修复交接班时的资金净额
             "SUM(CASE WHEN o.status = 'REFUNDED' THEN 0 ELSE p.pay_amount END) AS netAmount " +
             "FROM oms_order_pay p " +
             "JOIN oms_order o ON p.order_no = o.order_no " +
@@ -44,7 +42,7 @@ public interface OmsOrderPayMapper extends BaseMapper<OmsOrderPay> {
             "<if test='cashierName != null and cashierName != \"全部收银员\"'> " +
             "  AND o.create_by = #{cashierName} " +
             "</if>" +
-            "GROUP BY p.pay_method_code" +
+            "GROUP BY p.pay_method_code, p.pay_tag" + // 👈 核心补充：按标签分组
             "</script>")
     List<Map<String, Object>> getShiftPayStats(@Param("startTime") LocalDateTime startTime, @Param("endTime") LocalDateTime endTime, @Param("cashierName") String cashierName);
 }
