@@ -26,7 +26,6 @@ public interface OmsOrderDetailMapper extends BaseMapper<OmsOrderDetail> {
             "  AND (quantity - IFNULL(return_quantity, 0) >= #{returnQty})")
     int refundGoodsAtomically(@Param("detailId") Long detailId, @Param("returnQty") int returnQty);
 
-    // 1. 动态走势图 (🌟 升级为动态时间段)
     @Select("<script>" +
             "SELECT DATE_FORMAT(create_time, '%m-%d') AS date, " +
             "SUM(IFNULL(final_sales_amount, pay_amount)) AS sales, " +
@@ -40,7 +39,6 @@ public interface OmsOrderDetailMapper extends BaseMapper<OmsOrderDetail> {
             "</script>")
     List<com.money.dto.Home.TrendChartVO> getTrendData(@Param("startTime") LocalDateTime startTime, @Param("endTime") LocalDateTime endTime);
 
-    // 2. 品牌营收饼图 (🌟 升级为连表查时间)
     @Select("<script>" +
             "SELECT IFNULL(gb.name, '无品牌/未知') AS name, " +
             "SUM((ood.quantity - IFNULL(ood.return_quantity, 0)) * IFNULL(ood.goods_price, 0)) AS value " +
@@ -55,7 +53,6 @@ public interface OmsOrderDetailMapper extends BaseMapper<OmsOrderDetail> {
             "</script>")
     List<com.money.dto.Home.BrandPieVO> getBrandPieData(@Param("startTime") LocalDateTime startTime, @Param("endTime") LocalDateTime endTime);
 
-    // 3. 高性能利润排行榜
     @Select("SELECT d.goods_name AS goodsName, " +
             "SUM(d.quantity - IFNULL(d.return_quantity, 0)) AS totalQuantity, " +
             "SUM(d.goods_price * (d.quantity - IFNULL(d.return_quantity, 0))) AS totalSales, " +
@@ -71,11 +68,12 @@ public interface OmsOrderDetailMapper extends BaseMapper<OmsOrderDetail> {
     List<com.money.dto.Finance.FinanceDataVO.ProfitRankVO> getProfitRankingData(@Param("startTime") LocalDateTime startTime);
 
     /**
-     * 🌟 交接班专属：品牌贡献度 (已剔除退款退货)
+     * 🌟 交接班专属：品牌贡献度 (已剔除退款退货，包含真实核销券耗)
      */
     @Select("<script>" +
             "SELECT IFNULL(gb.name, '无品牌/未知') AS brandName, " +
-            "SUM((ood.quantity - IFNULL(ood.return_quantity, 0)) * IFNULL(ood.goods_price, 0)) AS brandSales " +
+            "SUM((ood.quantity - IFNULL(ood.return_quantity, 0)) * IFNULL(ood.goods_price, 0)) AS revenue, " +
+            "IFNULL(SUM(CASE WHEN ood.quantity > 0 THEN (ood.coupon / ood.quantity) * (ood.quantity - IFNULL(ood.return_quantity, 0)) ELSE 0 END), 0) AS couponConsumption " +
             "FROM oms_order_detail ood " +
             "LEFT JOIN gms_brand gb ON ood.brand_id = gb.id " +
             "JOIN oms_order o ON ood.order_no = o.order_no " +
@@ -85,8 +83,8 @@ public interface OmsOrderDetailMapper extends BaseMapper<OmsOrderDetail> {
             "  AND o.create_by = #{cashierName} " +
             "</if> " +
             "GROUP BY gb.id, gb.name " +
-            "HAVING brandSales > 0 " +
-            "ORDER BY brandSales DESC" +
+            "HAVING revenue > 0 " +
+            "ORDER BY revenue DESC" +
             "</script>")
     List<com.money.dto.Finance.FinanceDataVO.BrandContributionVO> getShiftBrandContribution(@Param("startTime") LocalDateTime startTime, @Param("endTime") LocalDateTime endTime, @Param("cashierName") String cashierName);
 }

@@ -83,6 +83,8 @@ public class OmsOrderRefundServiceImpl implements OmsOrderRefundService {
         gmsInventoryDocMapper.updateById(doc);
 
         if (order.getMemberId() != null) {
+            // 🌟 防护墙：因为传入的 order.getCouponAmount() 已经是完全干净的数据(免券=0)
+            // 所以底层 processReturn 无需修改，它会自动根据 0 来跳过退券
             umsMemberAssetService.processReturn(order.getMemberId(), order.getFinalSalesAmount(), order.getCouponAmount(), true, orderNo);
 
             if (order.getUseVoucherAmount() != null && order.getUseVoucherAmount().compareTo(BigDecimal.ZERO) > 0) {
@@ -133,8 +135,19 @@ public class OmsOrderRefundServiceImpl implements OmsOrderRefundService {
         BigDecimal unitCostPrice = detail.getPurchasePrice() != null ? detail.getPurchasePrice() : BigDecimal.ZERO;
 
         BigDecimal totalDetailCoupon = detail.getCoupon() != null ? detail.getCoupon() : BigDecimal.ZERO;
+
+        // ==========================================
+        // 🌟 核心修复 4：终极防火墙！
+        // 如果整单本身根本没有发生扣券行为（免券单，或者全单都是单轨），
+        // 强制抹除明细表的券均摊，绝对禁止无中生有乱退资产！
+        // ==========================================
+        if (order.getCouponAmount() == null || order.getCouponAmount().compareTo(BigDecimal.ZERO) <= 0) {
+            totalDetailCoupon = BigDecimal.ZERO;
+        }
+
         BigDecimal unitCoupon = BigDecimal.ZERO;
         if (detail.getQuantity() > 0 && totalDetailCoupon.compareTo(BigDecimal.ZERO) > 0) {
+            // 这里现在极度安全，因为明细表的 coupon 已经被洗成了真实快照
             unitCoupon = totalDetailCoupon.divide(new BigDecimal(detail.getQuantity()), 4, RoundingMode.HALF_UP);
         }
 
@@ -183,16 +196,13 @@ public class OmsOrderRefundServiceImpl implements OmsOrderRefundService {
         }
 
         if (goods.getIsCombo() != null && goods.getIsCombo() == 1) {
-            // 🌟 核心收口 2：先回补套餐自身的逻辑配额
             gmsGoodsMapper.addStockAtomically(goods.getId(), new BigDecimal(returnQty));
             GmsGoods updatedCombo = gmsGoodsMapper.selectById(goods.getId());
             int latestComboStock = (updatedCombo != null && updatedCombo.getStock() != null) ? updatedCombo.getStock().intValue() : 0;
 
-            // 注意：套餐配额的库存成本强制按 0 计算！真实的货值让子商品承担，防止对账时财务大盘虚高
             recordStockLog(goods, returnQty, latestComboStock, orderNo, BigDecimal.ZERO, "退款回补套餐配额");
             saveDocItem(doc.getDocNo(), goods, returnQty, BigDecimal.ZERO, latestComboStock);
 
-            // 🌟 然后穿透回补子商品的物理库存
             List<GmsGoodsCombo> combos = gmsGoodsComboMapper.selectList(new LambdaQueryWrapper<GmsGoodsCombo>().eq(GmsGoodsCombo::getComboGoodsId, goods.getId()));
             for (GmsGoodsCombo c : combos) {
                 GmsGoods sub = gmsGoodsMapper.selectById(c.getSubGoodsId());
@@ -209,7 +219,6 @@ public class OmsOrderRefundServiceImpl implements OmsOrderRefundService {
                 }
             }
         } else {
-            // 普通单品直接回补
             gmsGoodsMapper.addStockAtomically(goods.getId(), new BigDecimal(returnQty));
             GmsGoods updatedGoods = gmsGoodsMapper.selectById(goods.getId());
             int latestStock = (updatedGoods != null && updatedGoods.getStock() != null) ? updatedGoods.getStock().intValue() : 0;

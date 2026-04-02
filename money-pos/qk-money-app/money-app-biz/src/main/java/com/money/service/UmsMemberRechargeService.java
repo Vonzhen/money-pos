@@ -52,19 +52,15 @@ public class UmsMemberRechargeService {
         order.setMemberId(member.getId());
         order.setType(dto.getType());
 
-        // ==========================================
-        // 🌟 核心修复 1：将前台传来的数据“拨乱反正”，严格对齐财务模型
-        // ==========================================
+        // 财务模型对齐
         if (TYPE_COUPON.equals(dto.getType())) {
-            // 前端传来的 amount 其实是“要充值的券额(1000)”，realAmount 是“实收现金(100)”
             BigDecimal actualCash = dto.getRealAmount() != null ? dto.getRealAmount() : BigDecimal.ZERO;
             BigDecimal couponValue = dto.getAmount() != null ? dto.getAmount() : BigDecimal.ZERO;
 
-            order.setAmount(actualCash);       // 财务视角的营业额 (100)
-            order.setRealAmount(actualCash);   // 财务视角的实收现金 (100)
-            order.setGiftCoupon(couponValue);  // 会员资产视角的入账 (1000)
+            order.setAmount(actualCash);
+            order.setRealAmount(actualCash);
+            order.setGiftCoupon(couponValue);
         } else {
-            // 普通充值余额，走原有逻辑
             order.setAmount(dto.getAmount() != null ? dto.getAmount() : BigDecimal.ZERO);
             order.setGiftCoupon(dto.getGiftCoupon() != null ? dto.getGiftCoupon() : BigDecimal.ZERO);
             BigDecimal fallbackRealAmount = (dto.getRealAmount() != null && dto.getRealAmount().compareTo(BigDecimal.ZERO) > 0)
@@ -91,13 +87,9 @@ public class UmsMemberRechargeService {
                 umsMemberLogMapper.insert(createLog(member, TYPE_COUPON, "GIFT", order.getGiftCoupon(), BigDecimal.ZERO, beforeCoupon.add(order.getGiftCoupon()), orderNo, "充值赠送券额"));
             }
         } else if (TYPE_COUPON.equals(dto.getType())) {
-            // ==========================================
-            // 🌟 核心修复 2：充值券额时，使用 GiftCoupon (真实的1000) 加给会员
-            // ==========================================
             umsMemberMapper.update(null, new LambdaUpdateWrapper<UmsMember>()
                     .setSql("coupon = coupon + " + order.getGiftCoupon()).eq(UmsMember::getId, member.getId()));
 
-            // 日志记录：增加了多少券额(1000)，顾客实际花了多少钱(100)
             umsMemberLogMapper.insert(createLog(member, TYPE_COUPON, "RECHARGE", order.getGiftCoupon(), order.getRealAmount(), beforeCoupon.add(order.getGiftCoupon()), orderNo, "购买会员券: " + dto.getRemark()));
         } else if (TYPE_VOUCHER.equals(dto.getType())) {
             for (int i = 0; i < dto.getQuantity(); i++) {
@@ -111,6 +103,7 @@ public class UmsMemberRechargeService {
             long total = posMemberCouponMapper.selectCount(new LambdaQueryWrapper<PosMemberCoupon>()
                     .eq(PosMemberCoupon::getMemberId, member.getId())
                     .eq(PosMemberCoupon::getStatus, STATUS_UNUSED));
+            // 🌟 重点：这里把真实张数存在了 Log 的 amount 字段里
             umsMemberLogMapper.insert(createLog(member, TYPE_VOUCHER, "RECHARGE", BigDecimal.valueOf(dto.getQuantity()), order.getRealAmount(), BigDecimal.valueOf(total), orderNo, "购买满减券"));
         }
     }
@@ -148,11 +141,6 @@ public class UmsMemberRechargeService {
                 umsMemberLogMapper.insert(createLog(member, TYPE_COUPON, "REVERSAL", order.getGiftCoupon().negate(), BigDecimal.ZERO, beforeCoupon.subtract(order.getGiftCoupon()), orderNo, "【红冲赠送扣回】"));
             }
         } else if (TYPE_COUPON.equals(order.getType())) {
-            // ==========================================
-            // 🌟 核心修复 3：极度严谨的老数据兼容！
-            // 以前的错账券额存在了 Amount 里，现在的新账券额存在了 GiftCoupon 里。
-            // 撤销时，必须智能识别，防止以前充值的券无法撤销！
-            // ==========================================
             BigDecimal couponToDeduct = (order.getGiftCoupon() != null && order.getGiftCoupon().compareTo(BigDecimal.ZERO) > 0)
                     ? order.getGiftCoupon() : order.getAmount();
 
@@ -163,13 +151,44 @@ public class UmsMemberRechargeService {
             if (s3 == 0) throw new BaseException("撤销失败：券额已被消耗");
 
             umsMemberLogMapper.insert(createLog(member, TYPE_COUPON, "REVERSAL", couponToDeduct.negate(), negateRealAmount, beforeCoupon.subtract(couponToDeduct), orderNo, "【充值撤销】" + reason));
+
         } else if (TYPE_VOUCHER.equals(order.getType())) {
+            // ==========================================
+            // 🌟 核心修复 1：溯源查真实张数
+            // ==========================================
+            UmsMemberLog originalLog = umsMemberLogMapper.selectOne(new LambdaQueryWrapper<UmsMemberLog>()
+                    .eq(UmsMemberLog::getOrderNo, orderNo)
+                    .eq(UmsMemberLog::getOperateType, "RECHARGE")
+                    .eq(UmsMemberLog::getType, TYPE_VOUCHER)
+                    .last("LIMIT 1"));
+
+            if (originalLog == null || originalLog.getAmount() == null) {
+                throw new BaseException("红冲失败：无法在审计日志中追溯原始发券张数");
+            }
+            int targetQuantity = originalLog.getAmount().intValue();
+
+            // ==========================================
+            // 🌟 核心修复 2：余量风控拦截
+            // ==========================================
+            long unusedCount = posMemberCouponMapper.selectCount(new LambdaQueryWrapper<PosMemberCoupon>()
+                    .eq(PosMemberCoupon::getMemberId, member.getId())
+                    .eq(PosMemberCoupon::getStatus, STATUS_UNUSED));
+
+            if (unusedCount < targetQuantity) {
+                throw new BaseException("红冲失败：该订单中的部分满减券已被使用，当前剩余可用券不足，无法撤销！");
+            }
+
+            // ==========================================
+            // 🌟 核心修复 3：精准按照真实张数删除
+            // ==========================================
             posMemberCouponMapper.delete(new LambdaQueryWrapper<PosMemberCoupon>()
                     .eq(PosMemberCoupon::getMemberId, member.getId())
                     .eq(PosMemberCoupon::getStatus, STATUS_UNUSED)
-                    .last("LIMIT " + order.getAmount().intValue()));
+                    .last("LIMIT " + targetQuantity));
 
-            umsMemberLogMapper.insert(createLog(member, TYPE_VOUCHER, "REVERSAL", order.getAmount().negate(), negateRealAmount, BigDecimal.ZERO, orderNo, "【发券撤销】"));
+            umsMemberLogMapper.insert(createLog(member, TYPE_VOUCHER, "REVERSAL",
+                    BigDecimal.valueOf(-targetQuantity), negateRealAmount,
+                    BigDecimal.valueOf(unusedCount - targetQuantity), orderNo, "【发券撤销】" + reason));
         }
 
         order.setStatus(STATUS_VOID);

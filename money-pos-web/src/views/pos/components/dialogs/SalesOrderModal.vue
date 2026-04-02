@@ -113,11 +113,13 @@
                             <div class="border border-gray-200 rounded-lg p-2.5 bg-gray-50 flex items-center justify-between shadow-inner overflow-x-auto">
                                 <div class="flex flex-col items-center flex-1 px-0.5"><div class="text-[10px] text-gray-500 font-bold mb-0.5 whitespace-nowrap">应收</div><div class="text-sm font-black text-gray-800 whitespace-nowrap tracking-tight">￥{{ Number(currentOrderDetail.totalAmount || 0).toFixed(2) }}</div></div>
                                 <div class="text-gray-300 font-black shrink-0 mx-1">-</div>
-                                <div class="flex flex-col items-center flex-1 px-0.5"><div class="text-[10px] text-orange-500 font-bold mb-0.5 whitespace-nowrap">会员券</div><div class="text-sm font-black text-orange-500 whitespace-nowrap tracking-tight">￥{{ Number(currentOrderDetail.couponAmount || currentOrderDetail.memberCouponDeduct || 0).toFixed(2) }}</div></div>
+                                <div class="flex flex-col items-center flex-1 px-0.5" title="用户真实消耗的会员券资产"><div class="text-[10px] text-orange-500 font-bold mb-0.5 whitespace-nowrap">会员券核销</div><div class="text-sm font-black text-orange-500 whitespace-nowrap tracking-tight">￥{{ Number(currentOrderDetail.actualCouponDeduct || 0).toFixed(2) }}</div></div>
                                 <div class="text-gray-300 font-black shrink-0 mx-1">-</div>
-                                <div class="flex flex-col items-center flex-1 px-0.5"><div class="text-[10px] text-red-400 font-bold mb-0.5 whitespace-nowrap">满减券</div><div class="text-sm font-black text-red-500 whitespace-nowrap tracking-tight">￥{{ Number(currentOrderDetail.useVoucherAmount || currentOrderDetail.voucherDeduct || 0).toFixed(2) }}</div></div>
+                                <div class="flex flex-col items-center flex-1 px-0.5" title="系统活动或免券导致的店铺让利"><div class="text-[10px] text-blue-500 font-bold mb-0.5 whitespace-nowrap">店铺免券让利</div><div class="text-sm font-black text-blue-500 whitespace-nowrap tracking-tight">￥{{ Number(currentOrderDetail.waivedCouponAmount || 0).toFixed(2) }}</div></div>
                                 <div class="text-gray-300 font-black shrink-0 mx-1">-</div>
-                                <div class="flex flex-col items-center flex-1 px-0.5"><div class="text-[10px] text-red-400 font-bold mb-0.5 whitespace-nowrap">整单优惠</div><div class="text-sm font-black text-red-500 whitespace-nowrap tracking-tight">￥{{ Number(currentOrderDetail.manualDiscountAmount || currentOrderDetail.manualDeduct || 0).toFixed(2) }}</div></div>
+                                <div class="flex flex-col items-center flex-1 px-0.5"><div class="text-[10px] text-red-400 font-bold mb-0.5 whitespace-nowrap">满减券</div><div class="text-sm font-black text-red-500 whitespace-nowrap tracking-tight">￥{{ Number(currentOrderDetail.useVoucherAmount || 0).toFixed(2) }}</div></div>
+                                <div class="text-gray-300 font-black shrink-0 mx-1">-</div>
+                                <div class="flex flex-col items-center flex-1 px-0.5"><div class="text-[10px] text-red-400 font-bold mb-0.5 whitespace-nowrap">整单优惠</div><div class="text-sm font-black text-red-500 whitespace-nowrap tracking-tight">￥{{ Number(currentOrderDetail.manualDiscountAmount || 0).toFixed(2) }}</div></div>
                                 <div class="text-gray-300 font-black shrink-0 mx-1">=</div>
                                 <div class="flex flex-col items-center flex-1 px-0.5"><div class="text-[10px] text-blue-600 font-bold mb-0.5 whitespace-nowrap">实付</div><div class="text-sm font-black text-blue-600 whitespace-nowrap tracking-tight">￥{{ Number(currentOrderDetail.payAmount || 0).toFixed(2) }}</div></div>
                                 <div class="text-gray-300 font-black shrink-0 mx-1">-</div>
@@ -209,7 +211,6 @@ const visible = computed({ get: () => props.modelValue, set: (val) => emit('upda
 const timeRange = ref('today')
 const searchKeyword = ref('')
 
-// 🌟 列表滚动控制参数
 const orderTableRef = ref(null)
 const orderList = ref([]);
 const loading = ref(false);
@@ -224,7 +225,6 @@ const dict = ref({ orderStatusKv: {} });
 const brandsKv = ref({});
 const brandList = ref([])
 
-// 🌟 后台统计看板专用存储
 const auditStats = ref({ orderCount: 0, totalSales: 0, profit: 0, saleCount: 0 })
 
 const getTimeRangeParams = () => {
@@ -246,13 +246,12 @@ const fetchStatistics = async () => {
     }
 }
 
-// 🌟 列表无限滚动拉取逻辑
 const fetchOrders = async (isLoadMore = false) => {
     if (!isLoadMore) {
         currentPage.value = 1;
         orderList.value = [];
         hasMore.value = true;
-        fetchStatistics(); // 切换时间时刷新统计
+        fetchStatistics();
     }
     if (!hasMore.value || loading.value) return;
 
@@ -296,7 +295,6 @@ onMounted(async () => {
         brandList.value.forEach(e => { brandsKv.value[e.id || e.value] = e.name || e.label })
     } catch (e) {}
 
-    // 绑定触底事件实现无限滚动
     nextTick(() => {
         const wrap = orderTableRef.value?.$el.querySelector('.el-scrollbar__wrap');
         if (wrap) {
@@ -359,24 +357,23 @@ const reprintOrder = async () => {
     try { await req({ url: '/oms-order/hardware/print', method: 'GET', params: { orderNo: currentOrderDetail.value.orderNo } }); ElMessage.success(`指令已发送`); } catch (e) {}
 }
 
-// 🌟 核心修复：完全匹配后端 OrderStatusEnum 的字典映射
 const getOrderStatusName = (s) => {
     const fallbackMap = {
         'UNPAID': '待支付',
         'PAID': '已支付',
         'PARTIAL_REFUNDED': '部分退款',
         'REFUNDED': '全额退款',
-        'CLOSED': '已取消'
+        'CLOSED': '已关闭',
+        'CANCELLED': '已取消'
     };
     const match = dict.value.orderStatus?.find(v => v.value === s || v.dictValue === s);
     return match ? (match.desc || match.dictLabel) : (fallbackMap[s] || s);
 }
 
-// 🌟 核心修复：完全匹配状态颜色，PARTIAL_REFUNDED 直接变橙色
 const getOrderStatusType = (s) => {
     if (s === 'PAID') return 'success';
-    if (s === 'PARTIAL_REFUNDED') return 'warning'; // 橙色警示
-    if (s === 'REFUNDED' || s === 'CLOSED') return 'info'; // 灰色划线
+    if (s === 'PARTIAL_REFUNDED') return 'warning';
+    if (s === 'REFUNDED' || s === 'CLOSED') return 'info';
     return 'danger';
 }
 
@@ -386,7 +383,6 @@ const getPayTagName = (c) => payTagDict.value.find(t => t.value === c || t.dictV
 const formatTime = (t) => t ? dayjs(t).format('HH:mm') : '';
 const formatDate = (t) => t ? dayjs(t).format('MM-DD') : '';
 
-// 财务计算公式：对于全退和取消的订单，净收为0
 const returnPrice = computed(() => (currentOrderDetail.value?.details || []).reduce((sum, i) => NP.plus(sum, NP.times(i.returnQuantity || 0, i.goodsPrice || 0)), 0));
 const netIncome = computed(() => (currentOrderDetail.value?.status === 'REFUNDED' || currentOrderDetail.value?.status === 'CLOSED') ? 0 : NP.minus(currentOrderDetail.value?.payAmount || 0, returnPrice.value));
 const cashierName = computed(() => { const logs = currentOrderDetail.value?.log || []; return logs.length > 0 ? logs[logs.length - 1].createBy : (currentOrderDetail.value?.createBy || 'System'); });
