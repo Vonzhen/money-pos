@@ -2,10 +2,11 @@
     <PageWrapper>
         <MoneyRR :money-crud="moneyCrud">
             <SmartGoodsSelector
-                v-model="moneyCrud.query.goodsName"
+                v-model="moneyCrud.query.goodsBarcode"
                 mode="report"
                 placeholder="搜商品名称 / 条码 / 拼音"
                 class="md:!w-64"
+                @change="moneyCrud.doQuery"
                 @search="moneyCrud.doQuery"
             />
 
@@ -147,7 +148,6 @@ const detailLoading = ref(false)
 const detailList = ref([])
 const detailTitle = ref('')
 
-// 计算单据总盈亏额
 const totalImpact = computed(() => {
     return detailList.value.reduce((sum, item) => sum + (Number(item.impactAmount) || 0), 0);
 });
@@ -164,7 +164,6 @@ const showDetail = async (row) => {
         detailLoading.value = true;
         detailList.value = [];
         try {
-            // 🌟 核心：从后台拉取该单号下的所有流水记录，包含我们新加的成本快照和资产影响字段
             const res = await req({ url: '/gms/stockLog', method: 'GET', params: { orderNo: row.orderNo, size: 500 } })
             detailList.value = res.data?.records || res || []
         } catch (e) {
