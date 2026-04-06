@@ -1,6 +1,7 @@
 package com.money.service.checkout;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.money.constant.BizErrorStatus; // 🌟 引入刚确认的全局错误码字典！
 import com.money.constant.OrderStatusEnum;
 import com.money.dto.pos.PricingItemResult;
 import com.money.dto.pos.PricingResult;
@@ -71,6 +72,26 @@ public class CheckoutOrderService {
 
         order.setStatus(OrderStatusEnum.PAID.name());
         order.setPaymentTime(LocalDateTime.now());
+
+        // ==========================================
+        // 🛡️ 第三道防线：铁面判官，坚决拦截“金额不平”的订单！
+        // ==========================================
+        BigDecimal targetFinalPay = trialRes.getFinalPayAmount() != null ? trialRes.getFinalPayAmount() : BigDecimal.ZERO;
+        BigDecimal actualTotalPaid = BigDecimal.ZERO;
+
+        if (context.getRequest() != null && context.getRequest().getPayments() != null) {
+            // 🌟 完美修复：使用 Java 8 原生 Stream，让编译器自动推断类型，彻底告别 var！
+            actualTotalPaid = context.getRequest().getPayments().stream()
+                    .map(p -> p.getPayAmount() != null ? p.getPayAmount() : BigDecimal.ZERO)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+        }
+
+        // 金额核算：如果收银员手滑少填了，或者黑客篡改了前端请求...
+        if (actualTotalPaid.compareTo(targetFinalPay) < 0) {
+            log.error("🚨 拦截非法入账请求！单号: {}, 真实应收: {}, 实际上传支付总计: {}", orderNo, targetFinalPay, actualTotalPaid);
+            throw new BaseException(BizErrorStatus.POS_PAYMENT_NOT_ENOUGH.getMessage());
+        }
+        // ==========================================
 
         if (verifiedMember != null) {
             order.setVip(true);

@@ -1,11 +1,9 @@
 package com.money.controller;
 
 import cn.hutool.core.util.StrUtil;
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.money.entity.UmsMemberLog;
 import com.money.entity.UmsRechargeOrder;
-import com.money.mapper.UmsMemberLogMapper;
-import com.money.mapper.UmsRechargeOrderMapper;
+import com.money.service.UmsMemberAssetService; // 🌟 引入标准的资产服务
 import com.money.service.UmsMemberService;
 import com.money.web.exception.BaseException;
 import io.swagger.v3.oas.annotations.Operation;
@@ -26,19 +24,14 @@ import java.util.Map;
 public class UmsMemberAssetController {
 
     private final UmsMemberService umsMemberService;
-    private final UmsRechargeOrderMapper umsRechargeOrderMapper;
-    private final UmsMemberLogMapper umsMemberLogMapper;
+    private final UmsMemberAssetService umsMemberAssetService; // 🌟 架构规范化：由 Service 全面接管数据层
 
     @GetMapping("/logs")
     @Operation(summary = "查询会员资产流水")
     @PreAuthorize("@rbac.hasPermission('umsMember:list')")
     public List<UmsMemberLog> getMemberLogs(@RequestParam Long memberId) {
-        return umsMemberLogMapper.selectList(
-                new LambdaQueryWrapper<UmsMemberLog>()
-                        .eq(UmsMemberLog::getMemberId, memberId)
-                        .orderByDesc(UmsMemberLog::getCreateTime)
-                        .last("LIMIT 100")
-        );
+        // 🌟 路由转发：将请求委托给 Service，方便后期织入审计和脱敏逻辑
+        return umsMemberAssetService.getMemberLogs(memberId);
     }
 
     @PostMapping("/recharge")
@@ -54,17 +47,8 @@ public class UmsMemberAssetController {
     public UmsRechargeOrder getRechargeOrderDetail(@PathVariable String orderNo) {
         if (StrUtil.isBlank(orderNo)) throw new BaseException("单号不能为空");
 
-        UmsRechargeOrder order = umsRechargeOrderMapper.selectOne(
-                new LambdaQueryWrapper<UmsRechargeOrder>()
-                        .eq(UmsRechargeOrder::getOrderNo, orderNo)
-                        .last("LIMIT 1")
-        );
-
-        if (order == null) {
-            log.error("未找到充值凭证，单号：{}", orderNo);
-            throw new BaseException("单据档案不存在，可能已被物理删除");
-        }
-        return order;
+        // 🌟 路由转发：业务异常判断等逻辑下沉至 Service
+        return umsMemberAssetService.getRechargeOrderDetail(orderNo);
     }
 
     @Operation(summary = "执行红冲撤销")

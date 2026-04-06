@@ -133,13 +133,18 @@ const showOrderDetail = (orderNo) => {
 }
 
 const dict = ref({ orderStatusKv: {} })
-// 🌟 完善着色矩阵：PARTIAL 映射到 warning (黄/橙)
+// 🌟 完善着色矩阵：全面拥抱新标准，同时完美向下兼容老旧历史订单！
 const statusColor = {
-    'RETURN': 'info',
-    'REFUNDED': 'info',
-    'PAID': 'success',
-    'DONE': 'success',
-    'PARTIAL': 'warning'
+    'RETURN': 'info',           // 兼容历史老订单：已退款
+    'REFUNDED': 'info',         // 新标准：全额退款 (灰色)
+
+    'PAID': 'success',          // 新标准：已支付 (绿色)
+    'DONE': 'success',          // 兼容历史老订单：已完成
+
+    'PARTIAL': 'warning',       // 兼容历史老订单：部分退款
+    'PARTIAL_REFUNDED': 'warning', // 🌟 新标准：部分退款 (橙黄警示色)
+
+    'CLOSED': 'info'            // 新标准补充：已取消的订单 (灰色)
 }
 const datePicker = ref([dayjs().startOf('M').format('YYYY-MM-DD HH:mm:ss'), dayjs().endOf('M').format('YYYY-MM-DD HH:mm:ss')])
 const defaultTime = [dayjs().startOf('d').toDate(), dayjs().endOf('d').toDate()]
@@ -173,9 +178,9 @@ function handleDatePick(value) {
 }
 
 function returnOrder(row) {
+    // 🌟 核心肃清：不再生成无意义的 Date.now() 发给后端
     orderApi.returnOrder({
-        orderNo: row.orderNo,
-        reqId: 'RET' + Date.now()
+        orderNo: row.orderNo
     }).then(() => {
         moneyCrud.value.messageOk()
         moneyCrud.value.doQuery()

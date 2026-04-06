@@ -1,11 +1,14 @@
 package com.money.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.money.constant.BizErrorStatus;
 import com.money.entity.UmsMember;
 import com.money.entity.UmsMemberLog;
+import com.money.entity.UmsRechargeOrder; // 🌟 新增引入
 import com.money.mapper.UmsMemberLogMapper;
 import com.money.mapper.UmsMemberMapper;
+import com.money.mapper.UmsRechargeOrderMapper; // 🌟 新增引入
 import com.money.web.exception.BaseException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -13,6 +16,7 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List; // 🌟 新增引入
 
 /**
  * 领域服务：会员资产子域
@@ -24,10 +28,37 @@ public class UmsMemberAssetService {
 
     private final UmsMemberMapper umsMemberMapper;
     private final UmsMemberLogMapper umsMemberLogMapper;
+    private final UmsRechargeOrderMapper umsRechargeOrderMapper; // 🌟 补齐底层的 Mapper 注入
 
     private static final String TYPE_BALANCE = "BALANCE";
     private static final String TYPE_COUPON = "COUPON";
     private static final String TYPE_VOUCHER = "VOUCHER";
+
+    // ==========================================
+    // 🌟 新增：由 Service 彻底接管的查询防线 (方便后续加脱敏/缓存/审计)
+    // ==========================================
+    public List<UmsMemberLog> getMemberLogs(Long memberId) {
+        return umsMemberLogMapper.selectList(
+                new LambdaQueryWrapper<UmsMemberLog>()
+                        .eq(UmsMemberLog::getMemberId, memberId)
+                        .orderByDesc(UmsMemberLog::getCreateTime)
+                        .last("LIMIT 100")
+        );
+    }
+
+    public UmsRechargeOrder getRechargeOrderDetail(String orderNo) {
+        UmsRechargeOrder order = umsRechargeOrderMapper.selectOne(
+                new LambdaQueryWrapper<UmsRechargeOrder>()
+                        .eq(UmsRechargeOrder::getOrderNo, orderNo)
+                        .last("LIMIT 1")
+        );
+
+        if (order == null) {
+            log.error("未找到充值凭证，单号：{}", orderNo);
+            throw new BaseException("单据档案不存在，可能已被物理删除");
+        }
+        return order;
+    }
 
     // ==========================================
     // 正向交易：严格校验，找不到会员必须阻断！
@@ -85,12 +116,12 @@ public class UmsMemberAssetService {
     // 逆向退款：优雅降级，放过散客与死号，保全退款主流程！
     // ==========================================
     public void addBalance(Long memberId, BigDecimal amount, String orderNo, String remark) {
-        if (memberId == null || memberId <= 0 || amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) return; // 🌟 容错 1：散客拦截
+        if (memberId == null || memberId <= 0 || amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) return;
 
         UmsMember member = umsMemberMapper.selectById(memberId);
         if (member == null) {
             log.warn("【优雅降级】退还余额时未找到会员(ID:{})，可能为散客或已被删除，跳过资产回退...", memberId);
-            return; // 🌟 容错 2：无声放行
+            return;
         }
 
         BigDecimal beforeBalance = member.getBalance() != null ? member.getBalance() : BigDecimal.ZERO;
@@ -103,7 +134,7 @@ public class UmsMemberAssetService {
     }
 
     public void logVoucherRefund(Long memberId, BigDecimal amount, BigDecimal afterAmount, String orderNo) {
-        if (memberId == null || memberId <= 0 || amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) return; // 🌟 容错 1：散客拦截
+        if (memberId == null || memberId <= 0 || amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) return;
 
         UmsMember member = umsMemberMapper.selectById(memberId);
         if (member != null) {
@@ -114,12 +145,12 @@ public class UmsMemberAssetService {
     }
 
     public void processReturn(Long id, BigDecimal amount, BigDecimal coupon, boolean increaseCancelTimes, String orderNo) {
-        if (id == null || id <= 0) return; // 🌟 容错 1：散客拦截
+        if (id == null || id <= 0) return;
 
         UmsMember member = umsMemberMapper.selectById(id);
         if (member == null) {
             log.warn("【优雅降级】退货时未找到会员(ID:{})，跳过资产回退，保障资金与库存退库顺畅！", id);
-            return; // 🌟 容错 2：拒绝抛出异常阻断退款主流程！
+            return;
         }
 
         BigDecimal beforeCoupon = member.getCoupon() == null ? BigDecimal.ZERO : member.getCoupon();

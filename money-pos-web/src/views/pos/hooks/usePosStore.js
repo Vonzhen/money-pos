@@ -40,18 +40,16 @@ export function usePosStore() {
 
         let unitOriginalPrice = new Big(item.salePrice || 0);
         let unitRealPrice = unitOriginalPrice;
-        let unitCoupon = new Big(0); // 🌟 核心修正：新增单品应扣券额变量
+        let unitCoupon = new Big(0);
 
         if (levelCode && item.levelPrices && item.levelPrices[levelCode] !== undefined) {
             unitRealPrice = new Big(item.levelPrices[levelCode]);
 
-            // 🌟 核心修正：尝试精准读取数据库配置的真实券额（单轨模式这里会读到 0）
             if (item.levelCoupons && item.levelCoupons[levelCode] !== undefined) {
                 unitCoupon = new Big(item.levelCoupons[levelCode]);
             } else if (item.memberCoupon !== undefined) {
                 unitCoupon = new Big(item.memberCoupon);
             } else {
-                // 兜底逻辑：如果前端完全没拿到券额字段，才退化为物理差价
                 const diff = unitOriginalPrice.minus(unitRealPrice);
                 unitCoupon = diff.gt(0) ? diff : new Big(0);
             }
@@ -115,13 +113,12 @@ export function usePosStore() {
     const enrichedCartList = computed(() => {
         return cartList.value.map(item => {
             const qty = new Big(item.qty || 1);
-            // 🌟 接收拆分后的精准价和券
             const { unitOriginalPrice, unitRealPrice, unitCoupon } = getCartItemPrices(item, currentMember.value);
 
             let displaySubtotalRetail = unitOriginalPrice.times(qty);
             let displaySubtotalMember = unitRealPrice.times(qty);
-            let displaySubtotalPrivilege = displaySubtotalRetail.minus(displaySubtotalMember); // 这是物理让利差价
-            let displayCouponDeduct = unitCoupon.times(qty); // 🌟 独立出来：这是真正要在列表里显示的“应扣券额”
+            let displaySubtotalPrivilege = displaySubtotalRetail.minus(displaySubtotalMember);
+            let displayCouponDeduct = unitCoupon.times(qty);
 
             if (trialResult.value && trialResult.value.items) {
                 const trialItem = trialResult.value.items.find(i => String(i.goodsId) === String(item.id));
@@ -132,7 +129,6 @@ export function usePosStore() {
                 }
             }
 
-            // 🌟 终极单轨兜底校验：如果后端引擎说整单实际不扣券(且没开免收)，前端列表展示的券额强制全归 0！
             if (trialResult.value && !isWaiveCoupon.value && trialResult.value.actualCouponDeduct === 0) {
                 displayCouponDeduct = new Big(0);
             }
@@ -144,10 +140,10 @@ export function usePosStore() {
                 displayRealPrice: unitRealPrice.toNumber(),
                 displaySubtotalRetail: displaySubtotalRetail.toNumber(),
                 displaySubtotalMember: displaySubtotalMember.toNumber(),
-                displaySubtotalPrivilege: displaySubtotalPrivilege.toNumber(), // 后端算出来的让利
+                displaySubtotalPrivilege: displaySubtotalPrivilege.toNumber(),
                 displayPrice: unitRealPrice.toNumber(),
                 displaySubtotal: displaySubtotalMember.toNumber(),
-                displayCouponDeduct: displayCouponDeduct.toNumber(), // 🌟 给 CartTable 渲染用的单品券额
+                displayCouponDeduct: displayCouponDeduct.toNumber(),
                 isPending: isTrialing.value
             };
         });
@@ -170,18 +166,13 @@ export function usePosStore() {
         return enrichedCartList.value.reduce((sum, item) => sum.plus(item.displaySubtotalMember), new Big(0)).toNumber();
     });
 
-    // 🌟 核心逻辑修复：重新定义“理论会员券抵扣额” (用来判断余额够不够，以及是否显示免收开关)
     const theoreticalCouponUsed = computed(() => {
-        // 1. 先用前端精准的公式自己算一遍底子
         const frontendCalculatedCoupon = enrichedCartList.value.reduce((sum, item) => sum.plus(item.displayCouponDeduct || 0), new Big(0)).toNumber();
 
         if (trialResult.value && !isTrialing.value) {
-            // 2. 如果没有开启“免收券”，我们绝对信任后端的 actualCouponDeduct
             if (!isWaiveCoupon.value && trialResult.value.actualCouponDeduct !== undefined) {
                 return trialResult.value.actualCouponDeduct;
             }
-            // 3. 如果开启了“免收券”，后端的 actualCoupon 会变成 0。
-            // 为了维持 UI 开关不消失，我们返回前端算出的底子。
         }
         return frontendCalculatedCoupon;
     });
@@ -206,7 +197,6 @@ export function usePosStore() {
         return final.gt(0) ? final.toNumber() : 0;
     });
 
-    // 🌟 这是绝对不能丢的 PaymentStats！
     const paymentStats = computed(() => {
         const targetPay = new Big(finalPayAmount.value || 0);
         const payments = paymentList.value || [];
@@ -214,7 +204,12 @@ export function usePosStore() {
         const tendered = payments.reduce((sum, p) => p.code && p.code.includes('AGGREGATE') ? sum : sum.plus(p.amount || 0), new Big(0));
         const totalInputs = tendered.plus(aggregate);
         const change = totalInputs.gt(targetPay) ? totalInputs.minus(targetPay) : new Big(0);
-        const unpaid = targetPay.gt(totalInputs) ? targetPay.minus(targetPay) : new Big(0);
+
+        // ==========================================
+        // 🌟 核心安全修正：拨乱反正，用 应付 减去 实付！不再自欺欺人！
+        // ==========================================
+        const unpaid = targetPay.gt(totalInputs) ? targetPay.minus(totalInputs) : new Big(0);
+
         return {
             targetPay: targetPay.toNumber(),
             tendered: tendered.toNumber(),
