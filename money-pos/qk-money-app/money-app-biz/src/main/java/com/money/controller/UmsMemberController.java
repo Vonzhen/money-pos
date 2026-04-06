@@ -80,18 +80,21 @@ public class UmsMemberController {
     }
 
     @Operation(summary = "排行榜-累计消费Top50")
+    @PreAuthorize("@rbac.hasPermission('umsMember:list')")
     @GetMapping("/rank/consume")
     public List<com.money.dto.UmsMember.MemberRankVO> getTopConsume() {
         return umsMemberMapper.getTopConsumeMembers();
     }
 
     @Operation(summary = "排行榜-余额Top50")
+    @PreAuthorize("@rbac.hasPermission('umsMember:list')")
     @GetMapping("/rank/balance")
     public List<com.money.dto.UmsMember.MemberRankVO> getTopBalance() {
         return umsMemberMapper.getTopBalanceMembers();
     }
 
     @Operation(summary = "排行榜-频次Top50")
+    @PreAuthorize("@rbac.hasPermission('umsMember:list')")
     @GetMapping("/rank/frequency")
     public List<com.money.dto.UmsMember.MemberRankVO> getTopFrequency() {
         return umsMemberMapper.getTopFrequencyMembers();

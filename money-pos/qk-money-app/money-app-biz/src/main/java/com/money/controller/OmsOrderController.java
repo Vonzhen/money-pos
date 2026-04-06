@@ -3,7 +3,6 @@ package com.money.controller;
 import cn.hutool.core.util.StrUtil;
 import com.money.constant.BizErrorStatus;
 import com.money.dto.OmsOrder.*;
-// 🌟 引入 V8.0 轻拆分后的“三驾马车”与硬件驱动
 import com.money.service.OmsOrderService;
 import com.money.service.OmsOrderRefundService;
 import com.money.service.OmsSalesAnalysisService;
@@ -28,10 +27,10 @@ import java.time.LocalDateTime;
 @RequiredArgsConstructor
 public class OmsOrderController {
 
-    private final OmsOrderService omsOrderService; // 大总管：负责查
-    private final OmsOrderRefundService omsOrderRefundService; // 法医：负责退款
-    private final OmsSalesAnalysisService omsSalesAnalysisService; // 会计：负责报表
-    private final PosPrinterService posPrinterService; // 🚀 硬件车间主任：负责开钱箱和打印
+    private final OmsOrderService omsOrderService;
+    private final OmsOrderRefundService omsOrderRefundService;
+    private final OmsSalesAnalysisService omsSalesAnalysisService;
+    private final PosPrinterService posPrinterService;
 
     @Operation(summary = "订单分页列表")
     @GetMapping("/page")
@@ -46,7 +45,6 @@ public class OmsOrderController {
     public OrderCountVO statistics(
             @DateTimeFormat(pattern = "yyyy-MM-dd HH:mm:ss") LocalDateTime startTime,
             @DateTimeFormat(pattern = "yyyy-MM-dd HH:mm:ss") LocalDateTime endTime) {
-        // 统计报表归会计管
         return omsSalesAnalysisService.countOrderAndSales(startTime, endTime);
     }
 
@@ -70,23 +68,20 @@ public class OmsOrderController {
     public static class ReturnOrderReqDTO {
         @NotBlank(message = "退款单号不能为空")
         private String orderNo;
-        @NotBlank(message = "缺少防重放标识 reqId")
-        private String reqId;
+        // 🌟 核心肃清：删除了那个骗人的、毫无作用的 reqId 校验！
     }
 
-    @Operation(summary = "整单退款 (接入幂等保护)")
+    @Operation(summary = "整单退款 (订单级防并发锁)")
     @PostMapping("/return")
     @PreAuthorize("@rbac.hasPermission('oms:order:return')")
     public void returnOrder(@Validated @RequestBody ReturnOrderReqDTO reqDTO) {
-        // 退款归特种部队管
         omsOrderRefundService.returnOrder(reqDTO.getOrderNo());
     }
 
-    @Operation(summary = "部分商品退货 (资金逆向操作)")
+    @Operation(summary = "部分商品退货 (商品级防并发锁)")
     @PostMapping("/returnGoods")
     @PreAuthorize("@rbac.hasPermission('oms:order:return')")
     public void returnGoods(@Validated @RequestBody ReturnGoodsDTO returnGoodsDTO) {
-        // 退款归特种部队管
         omsOrderRefundService.returnGoods(returnGoodsDTO);
     }
 
@@ -94,20 +89,14 @@ public class OmsOrderController {
     @GetMapping("/profit-audit")
     @PreAuthorize("@rbac.hasPermission('oms:order:audit')")
     public PageVO<ProfitAuditVO> getProfitAuditPage(OmsOrderQueryDTO queryDTO) {
-        // 审计报表归会计管
         return omsSalesAnalysisService.getProfitAuditPage(queryDTO);
     }
 
     @Operation(summary = "硬件级：打印小票并弹开钱箱")
     @GetMapping("/hardware/print")
     public Boolean printHardwareReceipt(@RequestParam String orderNo) {
-        // 1. 查出完整的订单快照
         OrderDetailVO orderVO = omsOrderService.getOrderDetailByNo(orderNo);
-
-        // 2. 调用硬件打印机 (店名、电话等配置，Service 内部会自动去查数据库，不需要传参数了)
         posPrinterService.printReceiptAndOpenDrawer(orderVO);
-
-        // 3. 直接返回 true，避免报找不到 Result 类的错
         return true;
     }
 }

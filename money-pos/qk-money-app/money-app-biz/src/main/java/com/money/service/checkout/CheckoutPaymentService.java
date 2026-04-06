@@ -9,21 +9,21 @@ import com.money.service.SysDictDetailService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 🌟 结算流水线第六关：出纳员 (增加真实流水回显能力)
+ * 🌟 结算流水线第六关：出纳员 (支付方式大一统升级版)
  */
-@Slf4j // 🌟 补全了日志注解
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class CheckoutPaymentService {
 
     private final OmsOrderPayMapper omsOrderPayMapper;
-    // 🌟 注入字典服务
     private final SysDictDetailService sysDictDetailService;
 
     public void loadExistingPayments(CheckoutContext context) {
@@ -77,14 +77,13 @@ public class CheckoutPaymentService {
             OmsOrderPay payRecord = new OmsOrderPay();
             payRecord.setOrderNo(orderNo);
             payRecord.setPayMethodCode(item.getMethodCode());
-
-            // ==========================================
-            // 🌟 修复问题5：【payMethodName 过度信任前端】
-            // 摒弃前端传入的 Name，采用后台动态字典安全查询匹配！
-            // ==========================================
-            payRecord.setPayMethodName(getSafeMethodName(item.getMethodCode()));
-
             payRecord.setPayTag(item.getPayTag());
+
+            // ==========================================
+            // 🌟 核心升级：调用双层字典解析引擎，传入 Code 和 Tag
+            // ==========================================
+            payRecord.setPayMethodName(getSafeMethodName(item.getMethodCode(), item.getPayTag()));
+
             payRecord.setPayAmount(item.getNetAmount());
             payRecord.setNetAmount(item.getNetAmount());
             payRecord.setOriginalAmount(item.getOriginalAmount() != null ? item.getOriginalAmount() : item.getNetAmount());
@@ -95,29 +94,39 @@ public class CheckoutPaymentService {
         }
     }
 
-    // 🌟 终极安全映射引擎：查字典，既绝对零信任前端，又保留系统的动态配置能力！
-    private String getSafeMethodName(String code) {
-        if (code == null || code.trim().isEmpty()) {
-            return "未知支付";
-        }
-
+    // 🌟 全系统统一的双层支付翻译官：完全放权给数据库字典！
+    private String getSafeMethodName(String methodCode, String payTag) {
         try {
-            // ⚠️ 注意：这里的 "pay_method" 请确保是您在后台实际配置的支付方式【字典类型编码】
-            List<SysDictDetail> dictList = sysDictDetailService.listByDict("pay_method");
+            // 1. 优先查子标签字典 (例如: 微信支付, 抖音支付)
+            if (StringUtils.hasText(payTag)) {
+                List<SysDictDetail> subList = sysDictDetailService.listByDict("paySubTag");
+                if (subList != null) {
+                    for (SysDictDetail detail : subList) {
+                        if (payTag.equalsIgnoreCase(detail.getValue())) {
+                            return detail.getCnDesc();
+                        }
+                    }
+                }
+            }
 
-            if (dictList != null) {
-                for (SysDictDetail detail : dictList) {
-                    // 🌟 核心修复：完美对接您的实体类！用 getValue() 对比，用 getCnDesc() 拿中文名
-                    if (code.equalsIgnoreCase(detail.getValue())) {
-                        return detail.getCnDesc();
+            // 2. 其次查主通道字典 (例如: 现金, 余额, 聚合扫码)
+            if (StringUtils.hasText(methodCode)) {
+                // 🌟 修正错配：统一使用数据库真实存在的 'pos_payment_method'
+                List<SysDictDetail> mainList = sysDictDetailService.listByDict("pos_payment_method");
+                if (mainList != null) {
+                    for (SysDictDetail detail : mainList) {
+                        if (methodCode.equalsIgnoreCase(detail.getValue())) {
+                            return detail.getCnDesc();
+                        }
                     }
                 }
             }
         } catch (Exception e) {
-            log.error("💥 动态匹配支付方式字典失败，降级到安全兜底模式。代码: {}", code, e);
+            log.error("💥 动态匹配支付方式字典失败，降级到安全兜底模式。Code:{}, Tag:{}", methodCode, payTag, e);
         }
 
-        // 🌟 核心兜底：如果在字典里没查到（非法或未知的 Code），使用代码兜底防黑客！
+        // 3. 终极兜底：只有当数据库故意漏配，或者遭受非法 Code 注入时，才会走到这里
+        String code = StringUtils.hasText(payTag) ? payTag : methodCode;
         return "其他渠道(" + code + ")";
     }
 }
