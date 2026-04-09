@@ -99,7 +99,6 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
         BigDecimal totalAmount = BigDecimal.ZERO, totalDiscount = BigDecimal.ZERO;
         BigDecimal payAmount = BigDecimal.ZERO, refundAmount = BigDecimal.ZERO, costAmount = BigDecimal.ZERO;
 
-        // 🌟 新增：四个细分让利字段的独立累加器
         BigDecimal actualCouponDeduct = BigDecimal.ZERO;
         BigDecimal waivedCouponAmount = BigDecimal.ZERO;
         BigDecimal voucherAmount = BigDecimal.ZERO;
@@ -108,9 +107,7 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
         for (OmsOrder o : dailyOrders) {
             totalAmount = totalAmount.add(null2Zero(o.getTotalAmount()));
 
-            // 🌟 核心一统拆解：分别累加，拒绝对接糊涂账
             BigDecimal currentActualCoupon = null2Zero(o.getActualCouponDeduct());
-            // 兼容兜底：如果 old_order 的 actualCouponDeduct 是空的，拿 couponAmount 顶上
             if (o.getActualCouponDeduct() == null) currentActualCoupon = null2Zero(o.getCouponAmount());
 
             BigDecimal currentWaived = null2Zero(o.getWaivedCouponAmount());
@@ -122,7 +119,6 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
             voucherAmount = voucherAmount.add(currentVoucher);
             manualDiscountAmount = manualDiscountAmount.add(currentManual);
 
-            // 总让利依然累加（保留兜底兼容）
             totalDiscount = totalDiscount.add(currentActualCoupon).add(currentWaived).add(currentVoucher).add(currentManual);
 
             BigDecimal currentPay = null2Zero(o.getPayAmount());
@@ -135,7 +131,6 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
 
         vo.setTotalAmount(totalAmount);
         vo.setTotalDiscount(totalDiscount);
-        // 🌟 将拆解完的数据装车送往前端大屏
         vo.setActualCouponDeduct(actualCouponDeduct);
         vo.setWaivedCouponAmount(waivedCouponAmount);
         vo.setVoucherAmount(voucherAmount);
@@ -190,7 +185,14 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
         BigDecimal realExternalIncome = externalPayTotal.add(rechargeAmount);
         vo.setExternalIncome(realExternalIncome);
 
-        List<Object> balanceObjs = umsMemberService.listObjs(new LambdaQueryWrapper<UmsMember>().select(UmsMember::getBalance).isNotNull(UmsMember::getBalance));
+        // ==========================================
+        // 🌟 核心修复点 2：仅统计大于0的正向余额，隔离负数脏数据干扰
+        // ==========================================
+        List<Object> balanceObjs = umsMemberService.listObjs(new LambdaQueryWrapper<UmsMember>()
+                .select(UmsMember::getBalance)
+                .isNotNull(UmsMember::getBalance)
+                .gt(UmsMember::getBalance, 0)); // 强势过滤负数余额
+
         vo.setTotalDebt(balanceObjs.stream().map(obj -> (BigDecimal) obj).reduce(BigDecimal.ZERO, BigDecimal::add));
 
         List<PayPieData> pieDataList = new ArrayList<>();
@@ -292,7 +294,6 @@ public class FinanceDashboardServiceImpl implements FinanceDashboardService {
 
     @Override
     public ChannelMixAnalysisVO getChannelMixAnalysis(String startDate, String endDate) {
-        // ... (保持原样)
         ChannelMixAnalysisVO vo = new ChannelMixAnalysisVO();
 
         LocalDate start = (startDate != null && !startDate.isEmpty()) ? LocalDate.parse(startDate) : LocalDate.now().minusDays(6);
