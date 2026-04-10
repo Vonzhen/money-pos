@@ -1,11 +1,13 @@
 package com.money.service.impl;
 
+import com.money.constant.BizErrorStatus; // 🌟 引入全局标准错误码
 import com.money.dto.Finance.FinanceDataVO.*;
 import com.money.mapper.OmsOrderDetailMapper;
 import com.money.mapper.OmsOrderMapper;
 import com.money.mapper.OmsOrderPayMapper;
 import com.money.service.FinanceShiftService;
 import com.money.util.MoneyUtil;
+import com.money.web.exception.BaseException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -33,7 +35,8 @@ public class FinanceShiftServiceImpl implements FinanceShiftService {
             return new BigDecimal(String.valueOf(val));
         } catch (Exception e) {
             log.error("💥 交接班金额解析异常! 出现疑似脏数据: [{}]", val, e);
-            return BigDecimal.ZERO;
+            // 🌟 核心规范化：消灭魔术字符串，采用全局统一的枚举进行熔断报警
+            throw new BaseException(BizErrorStatus.POS_PAYMENT_INVALID, "财务报表解析熔断：非法金额格式 [" + val + "]");
         }
     }
 
@@ -49,13 +52,13 @@ public class FinanceShiftServiceImpl implements FinanceShiftService {
         vo.setShiftEndTime(now.format(dtf));
         vo.setCashierName(cashier);
 
+        // 🌟 这里的底层 SQL 请务必确认使用了 SUM(net_amount) AS netAmount
         List<Map<String, Object>> payStats = omsOrderPayMapper.getShiftPayStats(shiftStart, now, cashier);
 
         BigDecimal cashPay = BigDecimal.ZERO;
         BigDecimal scanPay = BigDecimal.ZERO;
         BigDecimal balancePay = BigDecimal.ZERO;
 
-        // 🌟 新增：扫码通道明细追踪器
         Map<String, BigDecimal> scanTagMap = new HashMap<>();
 
         for (Map<String, Object> stat : payStats) {
@@ -69,9 +72,7 @@ public class FinanceShiftServiceImpl implements FinanceShiftService {
             } else {
                 scanPay = MoneyUtil.add(scanPay, amt);
 
-                // 🌟 提取扫码标签进行分类汇总
                 String tag = (String) stat.get("payTag");
-                // 防止数据库字段别名为下划线格式
                 if (tag == null) tag = (String) stat.get("pay_tag");
 
                 tag = (tag != null && !tag.trim().isEmpty()) ? tag : "UNKNOWN";
@@ -82,7 +83,6 @@ public class FinanceShiftServiceImpl implements FinanceShiftService {
         vo.setScanPay(scanPay);
         vo.setBalancePay(balancePay);
 
-        // 🌟 组装扫码明细列表给前端
         List<PayPieData> scanBreakdownList = new ArrayList<>();
         for (Map.Entry<String, BigDecimal> entry : scanTagMap.entrySet()) {
             if (entry.getValue().compareTo(BigDecimal.ZERO) > 0) {
@@ -111,6 +111,8 @@ public class FinanceShiftServiceImpl implements FinanceShiftService {
 
         BigDecimal grossTotal = cashPay.add(scanPay).add(balancePay);
         vo.setNetIncome(grossTotal.subtract(refundAmount));
+
+        // 由于 cashPay 是通过 netAmount 计算的（已经扣除了找零），这里就是钱箱里应该有的真实进账！
         vo.setExpectedTotalIncome(MoneyUtil.add(cashPay, scanPay));
 
         List<BrandContributionVO> brandMatrix = omsOrderDetailMapper.getShiftBrandContribution(shiftStart, now, cashier);

@@ -16,7 +16,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 🌟 结算流水线第六关：出纳员 (支付方式大一统升级版)
+ * 🌟 结算流水线第六关：出纳员
  */
 @Slf4j
 @Service
@@ -27,6 +27,7 @@ public class CheckoutPaymentService {
     private final SysDictDetailService sysDictDetailService;
 
     public void loadExistingPayments(CheckoutContext context) {
+        // ... (保持原代码不变) ...
         String orderNo = context.getOrder().getOrderNo();
         List<OmsOrderPay> pays = omsOrderPayMapper.selectList(
                 new LambdaQueryWrapper<OmsOrderPay>().eq(OmsOrderPay::getOrderNo, orderNo)
@@ -78,15 +79,12 @@ public class CheckoutPaymentService {
             payRecord.setOrderNo(orderNo);
             payRecord.setPayMethodCode(item.getMethodCode());
             payRecord.setPayTag(item.getPayTag());
-
-            // ==========================================
-            // 🌟 核心升级：调用双层字典解析引擎，传入 Code 和 Tag
-            // ==========================================
             payRecord.setPayMethodName(getSafeMethodName(item.getMethodCode(), item.getPayTag()));
 
-            payRecord.setPayAmount(item.getNetAmount());
-            payRecord.setNetAmount(item.getNetAmount());
-            payRecord.setOriginalAmount(item.getOriginalAmount() != null ? item.getOriginalAmount() : item.getNetAmount());
+            // 🌟 核心升级：完整的三元组时空胶囊落库
+            payRecord.setPayAmount(item.getNetAmount()); // 兼容老代码
+            payRecord.setOriginalAmount(item.getOriginalAmount()); // 原始实收
+            payRecord.setNetAmount(item.getNetAmount());           // 财务净额
             payRecord.setChangeAllocated(item.getChangeAmount() != null ? item.getChangeAmount() : BigDecimal.ZERO);
             payRecord.setCreateTime(now);
 
@@ -94,38 +92,28 @@ public class CheckoutPaymentService {
         }
     }
 
-    // 🌟 全系统统一的双层支付翻译官：完全放权给数据库字典！
     private String getSafeMethodName(String methodCode, String payTag) {
+        // ... (保持原双层字典逻辑不变) ...
         try {
-            // 1. 优先查子标签字典 (例如: 微信支付, 抖音支付)
             if (StringUtils.hasText(payTag)) {
                 List<SysDictDetail> subList = sysDictDetailService.listByDict("paySubTag");
                 if (subList != null) {
                     for (SysDictDetail detail : subList) {
-                        if (payTag.equalsIgnoreCase(detail.getValue())) {
-                            return detail.getCnDesc();
-                        }
+                        if (payTag.equalsIgnoreCase(detail.getValue())) return detail.getCnDesc();
                     }
                 }
             }
-
-            // 2. 其次查主通道字典 (例如: 现金, 余额, 聚合扫码)
             if (StringUtils.hasText(methodCode)) {
-                // 🌟 修正错配：统一使用数据库真实存在的 'pos_payment_method'
                 List<SysDictDetail> mainList = sysDictDetailService.listByDict("pos_payment_method");
                 if (mainList != null) {
                     for (SysDictDetail detail : mainList) {
-                        if (methodCode.equalsIgnoreCase(detail.getValue())) {
-                            return detail.getCnDesc();
-                        }
+                        if (methodCode.equalsIgnoreCase(detail.getValue())) return detail.getCnDesc();
                     }
                 }
             }
         } catch (Exception e) {
             log.error("💥 动态匹配支付方式字典失败，降级到安全兜底模式。Code:{}, Tag:{}", methodCode, payTag, e);
         }
-
-        // 3. 终极兜底：只有当数据库故意漏配，或者遭受非法 Code 注入时，才会走到这里
         String code = StringUtils.hasText(payTag) ? payTag : methodCode;
         return "其他渠道(" + code + ")";
     }

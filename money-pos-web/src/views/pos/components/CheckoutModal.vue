@@ -175,7 +175,6 @@ const isSubmitDisabled = computed(() => {
            (!isWaiveCoupon.value && currentMember.value.id && currentMember.value.coupon < theoreticalCouponUsed.value);
 })
 
-// 🌟 新增：全选处理函数 (event.target 即 input 元素)
 const handleFocus = (event) => {
     event.target.select();
 }
@@ -213,6 +212,7 @@ const unpaidAmount = computed(() => {
     const diff = pay.minus(paid);
     return diff.gt(0) ? diff.toNumber() : 0;
 })
+// 找零计算仅用于页面底部红字展示，提交时不发送给后端
 const changeAmount = computed(() => {
     const cashItem = paymentList.value.find(p => p.code.includes('CASH'));
     const cashPaid = new Big(cashItem ? (cashItem.amount || 0) : 0);
@@ -284,31 +284,22 @@ const handleClosed = () => {
 
 const submitOrderAction = async () => {
     if (unpaidAmount.value > 0) return ElMessage.error(`实付不足 ￥${unpaidAmount.value.toFixed(2)}`);
+
+    // 🌟 核心简化：前端不做“会计”，直接提交用户在框里输入的原始钱数
     const validPayments = paymentList.value
         .filter(p => p.amount > 0)
         .map(p => {
-            const original = new Big(p.amount);
-            let net = original;
-            let changeAlloc = new Big(0);
-            if (p.code.includes('CASH')) {
-                const totalChange = new Big(changeAmount.value);
-                if (totalChange.gt(0)) {
-                    changeAlloc = totalChange;
-                    net = original.minus(changeAlloc);
-                }
-            }
             return {
                 payMethodCode: p.code,
                 payMethodName: p.name,
-                payAmount: net.toNumber(),
-                originalAmount: original.toNumber(),
-                netAmount: net.toNumber(),
-                changeAmount: changeAlloc.toNumber(),
+                payAmount: p.amount, // 👈 诚实的原始输入，不扣减找零
                 payTag: p.activeTag || null
             };
         });
+
     const orderDetails = cartList.value.map(item => ({ goodsId: item.id, quantity: Number(item.qty) || 1 }));
-    submitLoading.value = true
+    submitLoading.value = true;
+
     try {
         const payload = {
             reqId: reqId.value,
@@ -318,7 +309,7 @@ const submitOrderAction = async () => {
             waiveCoupon: isWaiveCoupon.value,
             manualDiscountAmount: manualDiscount.value || 0,
             orderDetail: orderDetails,
-            payments: validPayments
+            payments: validPayments // 发送原始实收数据
         };
         const res = await submitOrder(payload)
         ElMessage.success('收款成功！订单已真实入库！')

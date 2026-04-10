@@ -19,7 +19,6 @@ import com.money.service.OmsOrderDetailService;
 import com.money.service.OmsOrderLogService;
 import com.money.service.OmsOrderService;
 import com.money.service.UmsMemberService;
-import com.money.util.MoneyUtil;
 import com.money.util.PageUtil;
 import com.money.web.exception.BaseException;
 import com.money.web.util.BeanMapUtil;
@@ -32,7 +31,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-@Service // 🌟 挂牌，纳入 Spring 容器管理
+@Service
 @RequiredArgsConstructor
 public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> implements OmsOrderService {
 
@@ -45,25 +44,14 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
 
     @Override
     public PageVO<OmsOrderVO> list(OmsOrderQueryDTO queryDTO) {
-        // 提取前端可能传过来的字符串关键字（防呆处理：兼容 String 或 Long 类型）
+        // ... (保持原 list 方法完全不变) ...
         String memberKeyword = queryDTO.getMember() != null ? String.valueOf(queryDTO.getMember()) : null;
-
         Page<OmsOrder> page = omsOrderMapper.selectPage(PageUtil.toPage(queryDTO), new LambdaQueryWrapper<OmsOrder>()
-                // 🌟 修复 1：会员智能搜索。如果输入了手机号或姓名，进行双字段模糊匹配
-                .and(StrUtil.isNotBlank(memberKeyword), w -> w
-                        .like(OmsOrder::getMember, memberKeyword)
-                        .or()
-                        .like(OmsOrder::getContact, memberKeyword))
-
-                // 🌟 修复 2：订单号智能搜索。必须用 like 模糊查询，不能用 eq！
+                .and(StrUtil.isNotBlank(memberKeyword), w -> w.like(OmsOrder::getMember, memberKeyword).or().like(OmsOrder::getContact, memberKeyword))
                 .like(StrUtil.isNotBlank(queryDTO.getOrderNo()), OmsOrder::getOrderNo, queryDTO.getOrderNo())
-
-                // 状态和时间精确匹配保持不变
                 .eq(StrUtil.isNotBlank(queryDTO.getStatus()), OmsOrder::getStatus, queryDTO.getStatus())
-                .between(queryDTO.getStartTime() != null && queryDTO.getEndTime() != null,
-                        OmsOrder::getCreateTime, queryDTO.getStartTime(), queryDTO.getEndTime())
+                .between(queryDTO.getStartTime() != null && queryDTO.getEndTime() != null, OmsOrder::getCreateTime, queryDTO.getStartTime(), queryDTO.getEndTime())
                 .orderByDesc(OmsOrder::getCreateTime));
-
         return PageUtil.toPageVO(page, OmsOrderVO::new);
     }
 
@@ -84,11 +72,9 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
     private OrderDetailVO assembleOrderDetail(OmsOrder order) {
         OrderDetailVO vo = BeanMapUtil.to(order, OrderDetailVO::new);
 
-        // 1. 组装明细
         List<OmsOrderDetail> details = omsOrderDetailService.list(new LambdaQueryWrapper<OmsOrderDetail>().eq(OmsOrderDetail::getOrderNo, order.getOrderNo()));
         vo.setOrderDetails(BeanMapUtil.to(details, OmsOrderDetailVO::new));
 
-        // 2. 组装会员及多轨身份
         if (order.getMemberId() != null) {
             UmsMember member = umsMemberService.getById(order.getMemberId());
             if (member != null) {
@@ -103,22 +89,13 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
             }
         }
 
-        // 3. 组装操作日志
         List<OmsOrderLog> logs = omsOrderLogService.list(new LambdaQueryWrapper<OmsOrderLog>().eq(OmsOrderLog::getOrderId, order.getId()).orderByAsc(OmsOrderLog::getCreateTime));
         vo.setOrderLog(BeanMapUtil.to(logs, OrderDetailVO.OrderLogVO::new));
 
-        // 4. 组装支付流与找零计算
         List<OmsOrderPay> pays = omsOrderPayMapper.selectList(new LambdaQueryWrapper<OmsOrderPay>().eq(OmsOrderPay::getOrderNo, order.getOrderNo()));
         vo.setPayments(BeanMapUtil.to(pays, OrderDetailVO.OrderPayVO::new));
 
-        // 执行找零逻辑
-        calculateChange(vo, pays, order.getPayAmount());
-
-        return vo;
-    }
-
-    // 🌟 修复版找零计算：严格执行支付降维建模
-    private void calculateChange(OrderDetailVO vo, List<OmsOrderPay> pays, BigDecimal orderReceivableAmount) {
+        // 🌟 核心重构：废弃 calculateChange()。直接从 OmsOrderPay 快照中读取展示！
         BigDecimal balanceAmount = BigDecimal.ZERO;
         BigDecimal scanAmount = BigDecimal.ZERO;
         BigDecimal cashAmount = BigDecimal.ZERO;
@@ -126,30 +103,25 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
 
         for (OmsOrderPay pay : pays) {
             PayMethodEnum method = PayMethodEnum.fromCode(pay.getPayMethodCode());
-            if (method == null) method = PayMethodEnum.AGGREGATE; // 防御未知支付方式
+            if (method == null) method = PayMethodEnum.AGGREGATE;
 
-            if (method == PayMethodEnum.BALANCE) {
-                balanceAmount = MoneyUtil.add(balanceAmount, pay.getPayAmount());
-            } else if (method == PayMethodEnum.AGGREGATE) {
-                scanAmount = MoneyUtil.add(scanAmount, pay.getPayAmount());
-            } else if (method == PayMethodEnum.CASH) {
-                cashAmount = MoneyUtil.add(cashAmount, pay.getPayAmount());
+            // 读取原始实付 (兼容老数据)
+            BigDecimal orig = pay.getOriginalAmount() != null ? pay.getOriginalAmount() : pay.getPayAmount();
+
+            if (method == PayMethodEnum.BALANCE) balanceAmount = balanceAmount.add(orig);
+            else if (method == PayMethodEnum.AGGREGATE) scanAmount = scanAmount.add(orig);
+            else if (method == PayMethodEnum.CASH) cashAmount = cashAmount.add(orig);
+
+            if (pay.getChangeAllocated() != null) {
+                changeAmount = changeAmount.add(pay.getChangeAllocated());
             }
-        }
-
-        BigDecimal totalIn = MoneyUtil.add(MoneyUtil.add(balanceAmount, scanAmount), cashAmount);
-        changeAmount = MoneyUtil.subtract(totalIn, orderReceivableAmount);
-
-        if(changeAmount.compareTo(BigDecimal.ZERO) < 0) {
-            changeAmount = BigDecimal.ZERO;
-        } else {
-            // 找零只能从现金池里扣
-            cashAmount = MoneyUtil.subtract(cashAmount, changeAmount);
         }
 
         vo.setBalanceAmount(balanceAmount);
         vo.setScanAmount(scanAmount);
         vo.setCashAmount(cashAmount);
         vo.setChangeAmount(changeAmount);
+
+        return vo;
     }
 }

@@ -335,7 +335,17 @@ const handlePartialReturn = async (row) => {
         const returnQty = parseInt(value)
         if (returnQty > maxQty) return ElMessage.error('不能超过可退数量！')
         detailLoading.value = true
-        await req({ url: '/oms-order/returnGoods', method: 'POST', data: { orderNo: currentOrderDetail.value.orderNo, detailId: row.id, returnQty: returnQty } })
+        // 🌟 核心修复：在此处加上 reqId 字段！
+        await req({
+            url: '/oms-order/returnGoods',
+            method: 'POST',
+            data: {
+                orderNo: currentOrderDetail.value.orderNo,
+                detailId: row.id,
+                returnQty: returnQty,
+                reqId: 'PRET' + Date.now() // 🌟 新增：防重放标识
+            }
+        })
         ElMessage.success('退货成功！')
         handleSelectOrder(currentOrderDetail.value)
         refreshList();

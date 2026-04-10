@@ -2,7 +2,7 @@ package com.money.service.checkout;
 
 import com.money.constant.PayMethodEnum;
 import com.money.dto.pos.NormalizedPaymentResult;
-import com.money.dto.pos.PricingResult; // 🌟 引入新契约
+import com.money.dto.pos.PricingResult;
 import com.money.dto.pos.SettleAccountsDTO;
 import com.money.dto.pos.SettleTrialReqDTO;
 import com.money.service.impl.PosCalculationEngine;
@@ -16,7 +16,7 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 /**
- * 🌟 结算流水线第二关：精算师
+ * 🌟 结算流水线第二关：精算师 (权威真理源)
  */
 @Service
 @RequiredArgsConstructor
@@ -27,7 +27,6 @@ public class CheckoutPricingService {
     public void calculate(CheckoutContext context) {
         SettleAccountsDTO dto = context.getRequest();
 
-        // 1. 委托计价引擎算账
         SettleTrialReqDTO trialReq = new SettleTrialReqDTO();
         trialReq.setMember(dto.getMember());
         trialReq.setUsedCouponRuleId(dto.getUsedCouponRuleId());
@@ -42,14 +41,12 @@ public class CheckoutPricingService {
             return item;
         }).collect(Collectors.toList()));
 
-        // 🌟 核心替换：拿到权威的“真理裁决书”
         PricingResult trialRes = posCalculationEngine.calculate(trialReq);
         BigDecimal finalPayAmount = trialRes.getFinalPayAmount().setScale(2, RoundingMode.HALF_UP);
 
-        // 👉 将计价结果装入公文包
         context.setPricingResult(trialRes);
 
-        // 2. 支付金额清洗 (基于真理引擎输出的最终应付)
+        // 🌟 权威分配：将前端的“原始实收”和算出来的“最终应付”交给归一化引擎
         NormalizedPaymentResult payResult = normalizePayments(dto.getPayments(), finalPayAmount);
         context.setPaymentResult(payResult);
     }
@@ -60,24 +57,29 @@ public class CheckoutPricingService {
         for (SettleAccountsDTO.PaymentItem p : rawPayments) {
             if (p.getPayAmount() == null || p.getPayAmount().compareTo(BigDecimal.ZERO) <= 0) continue;
 
-            BigDecimal itemPay = p.getPayAmount().setScale(2, RoundingMode.HALF_UP);
+            // 🌟 1. 明确语义：前端传来的 payAmount 就是原始实收！
+            BigDecimal itemOriginal = p.getPayAmount().setScale(2, RoundingMode.HALF_UP);
             PayMethodEnum methodEnum = PayMethodEnum.fromCode(p.getPayMethodCode());
-            boolean isCash = methodEnum.isAllowChange();
+            boolean isCash = (methodEnum != null && methodEnum.isAllowChange());
 
             NormalizedPaymentResult.StandardPayItem sItem = new NormalizedPaymentResult.StandardPayItem();
             sItem.setMethodCode(p.getPayMethodCode());
             sItem.setMethodName(p.getPayMethodName());
             sItem.setPayTag(p.getPayTag());
             sItem.setCash(isCash);
-            sItem.setOriginalAmount(itemPay);
-            sItem.setNetAmount(itemPay);
+
+            sItem.setOriginalAmount(itemOriginal);
+            // 净额初始等于实收，后续扣减找零
+            sItem.setNetAmount(itemOriginal);
+            sItem.setChangeAmount(BigDecimal.ZERO);
+
             result.getValidItems().add(sItem);
 
-            result.setTotalPaid(result.getTotalPaid().add(itemPay));
+            result.setTotalPaid(result.getTotalPaid().add(itemOriginal));
             if (isCash) {
-                result.setCashPaid(result.getCashPaid().add(itemPay));
+                result.setCashPaid(result.getCashPaid().add(itemOriginal));
             } else {
-                result.setNonCashPaid(result.getNonCashPaid().add(itemPay));
+                result.setNonCashPaid(result.getNonCashPaid().add(itemOriginal));
             }
         }
 
@@ -88,22 +90,27 @@ public class CheckoutPricingService {
             throw new BaseException("【风控拦截】非现金支付总额超过了应付总额，严禁套现！");
         }
 
+        // 🌟 2. 计算总找零
         result.setChangeAmount(result.getTotalPaid().subtract(finalPayAmount));
         result.setNetReceived(result.getTotalPaid().subtract(result.getChangeAmount()));
 
+        // 🌟 3. 将找零分摊给现金支付项
         BigDecimal remainChange = result.getChangeAmount();
         for (NormalizedPaymentResult.StandardPayItem item : result.getValidItems()) {
             if (item.isCash() && remainChange.compareTo(BigDecimal.ZERO) > 0) {
-                if (item.getNetAmount().compareTo(remainChange) >= 0) {
-                    item.setNetAmount(item.getNetAmount().subtract(remainChange));
+                if (item.getOriginalAmount().compareTo(remainChange) >= 0) {
+                    item.setChangeAmount(remainChange);
+                    item.setNetAmount(item.getOriginalAmount().subtract(remainChange));
                     remainChange = BigDecimal.ZERO;
                 } else {
-                    remainChange = remainChange.subtract(item.getNetAmount());
+                    item.setChangeAmount(item.getOriginalAmount());
                     item.setNetAmount(BigDecimal.ZERO);
+                    remainChange = remainChange.subtract(item.getOriginalAmount());
                 }
             }
             item.setNetAmount(item.getNetAmount().setScale(2, RoundingMode.HALF_UP));
             item.setOriginalAmount(item.getOriginalAmount().setScale(2, RoundingMode.HALF_UP));
+            item.setChangeAmount(item.getChangeAmount().setScale(2, RoundingMode.HALF_UP));
         }
 
         result.setTotalPaid(result.getTotalPaid().setScale(2, RoundingMode.HALF_UP));

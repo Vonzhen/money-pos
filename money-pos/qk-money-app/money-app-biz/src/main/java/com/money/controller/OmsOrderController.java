@@ -2,7 +2,14 @@ package com.money.controller;
 
 import cn.hutool.core.util.StrUtil;
 import com.money.constant.BizErrorStatus;
-import com.money.dto.OmsOrder.*;
+// 🌟 必须显式导入，拒绝通配符
+import com.money.dto.OmsOrder.OmsOrderQueryDTO;
+import com.money.dto.OmsOrder.OmsOrderVO;
+import com.money.dto.OmsOrder.OrderDetailVO;
+import com.money.dto.OmsOrder.OrderCountVO;
+import com.money.dto.OmsOrder.ProfitAuditVO;
+import com.money.dto.OmsOrder.ReturnOrderDTO;
+import com.money.dto.OmsOrder.ReturnGoodsDTO;
 import com.money.service.OmsOrderService;
 import com.money.service.OmsOrderRefundService;
 import com.money.service.OmsSalesAnalysisService;
@@ -11,17 +18,15 @@ import com.money.web.exception.BaseException;
 import com.money.web.vo.PageVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
-import javax.validation.constraints.NotBlank;
 import java.time.LocalDateTime;
 
-@Tag(name = "oms-order", description = "订单与营销管理 (V8.0 轻拆分稳定版)")
+@Tag(name = "oms-order", description = "订单与营销管理 (V8.1 防并发锁死版)")
 @RestController
 @RequestMapping("/oms-order")
 @RequiredArgsConstructor
@@ -54,35 +59,24 @@ public class OmsOrderController {
     public OrderDetailVO getOrderDetail(
             @RequestParam(required = false) Long id,
             @RequestParam(required = false) String orderNo) {
-
         if (id == null && StrUtil.isBlank(orderNo)) {
             throw new BaseException(BizErrorStatus.POS_SETTLE_REQ_EMPTY, "必须提供订单ID或订单编号");
         }
-        if (StrUtil.isNotBlank(orderNo)) {
-            return omsOrderService.getOrderDetailByNo(orderNo);
-        }
-        return omsOrderService.getOrderDetail(id);
+        return StrUtil.isNotBlank(orderNo) ? omsOrderService.getOrderDetailByNo(orderNo) : omsOrderService.getOrderDetail(id);
     }
 
-    @Data
-    public static class ReturnOrderReqDTO {
-        @NotBlank(message = "退款单号不能为空")
-        private String orderNo;
-        // 🌟 核心肃清：删除了那个骗人的、毫无作用的 reqId 校验！
-    }
-
-    @Operation(summary = "整单退款 (订单级防并发锁)")
+    @Operation(summary = "整单退款 (接入领域防线与防并发)")
     @PostMapping("/return")
     @PreAuthorize("@rbac.hasPermission('oms:order:return')")
-    public void returnOrder(@Validated @RequestBody ReturnOrderReqDTO reqDTO) {
-        omsOrderRefundService.returnOrder(reqDTO.getOrderNo());
+    public void returnOrder(@Validated @RequestBody ReturnOrderDTO dto) { // 🌟 采用外部独立DTO
+        omsOrderRefundService.returnOrder(dto.getReqId(), dto.getOrderNo());
     }
 
-    @Operation(summary = "部分商品退货 (商品级防并发锁)")
+    @Operation(summary = "部分商品退货 (接入领域防线与防并发)")
     @PostMapping("/returnGoods")
     @PreAuthorize("@rbac.hasPermission('oms:order:return')")
-    public void returnGoods(@Validated @RequestBody ReturnGoodsDTO returnGoodsDTO) {
-        omsOrderRefundService.returnGoods(returnGoodsDTO);
+    public void returnGoods(@Validated @RequestBody ReturnGoodsDTO dto) { // 🌟 采用外部独立DTO
+        omsOrderRefundService.returnGoods(dto);
     }
 
     @Operation(summary = "利润审计分页")
