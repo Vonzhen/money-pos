@@ -133,7 +133,7 @@
         </div>
 
         <div class="w-[22%] shrink-0 grid grid-cols-3 grid-rows-2 gap-1.5 2xl:gap-2">
-            <button type="button" class="pos-btn bg-blue-600 hover:bg-blue-500 text-white relative" @click="handleSuspend">
+            <button class="pos-btn bg-blue-600 hover:bg-blue-500 text-white relative" @click="$emit('suspend')">
                 <div v-if="suspendCount > 0" class="absolute -top-1.5 -right-1.5 2xl:-top-2 2xl:-right-2 bg-red-500 text-white text-[10px] 2xl:text-xs font-black min-w-[20px] 2xl:min-w-[24px] h-[20px] 2xl:h-[24px] flex items-center justify-center rounded-full border-2 border-gray-900 shadow-md">
                     {{ suspendCount }}
                 </div>
@@ -141,22 +141,20 @@
                 <span class="text-sm 2xl:text-base font-bold">挂单</span>
             </button>
 
-            <button type="button" class="pos-btn bg-purple-600 hover:bg-purple-500 text-white" @click="openMemberDialog">
+            <button class="pos-btn bg-purple-600 hover:bg-purple-500 text-white" @click="openMemberDialog">
                 <el-icon class="text-xl 2xl:text-2xl mb-0.5 2xl:mb-1"><User /></el-icon>
                 <span class="text-sm 2xl:text-base font-bold">会员</span>
             </button>
 
-            <button type="button" class="pos-btn bg-red-600 hover:bg-red-500 text-white row-span-2 shadow-[0_0_15px_rgba(239,68,68,0.3)] border border-red-500/50" @click="handleOpenCheckout">
+            <button class="pos-btn bg-red-600 hover:bg-red-500 text-white row-span-2 shadow-[0_0_15px_rgba(239,68,68,0.3)] border border-red-500/50" @click="$emit('open-checkout')">
                 <span class="text-2xl 2xl:text-3xl font-black tracking-widest">收款</span>
                 <span class="text-[10px] 2xl:text-xs font-bold opacity-90 mt-1 bg-red-800/50 px-2 py-0.5 2xl:py-1 rounded-full">[空格键]</span>
             </button>
-
-            <button type="button" class="pos-btn bg-emerald-600 hover:bg-emerald-500 text-white" @click="handleOpenDrawer">
+            <button class="pos-btn bg-emerald-600 hover:bg-emerald-500 text-white" @click="$emit('open-drawer')">
                 <el-icon class="text-xl 2xl:text-2xl mb-0.5 2xl:mb-1"><Unlock /></el-icon>
                 <span class="text-sm 2xl:text-base font-bold">钱箱</span>
             </button>
-
-            <button type="button" class="pos-btn bg-slate-600 hover:bg-slate-500 text-white" @click="clearAllWithFocus">
+            <button class="pos-btn bg-slate-600 hover:bg-slate-500 text-white" @click="clearAllWithFocus">
                 <el-icon class="text-xl 2xl:text-2xl mb-0.5 2xl:mb-1"><Delete /></el-icon>
                 <span class="text-sm 2xl:text-base font-bold">清空</span>
             </button>
@@ -235,23 +233,6 @@ const resetScanner = async () => {
 }
 
 const focusInput = () => { scannerInput.value?.focus(); }
-
-// ==========================================
-// 🌟 核心加固：将所有外抛事件统一封装到 JS 内部执行
-// ==========================================
-const handleSuspend = () => {
-    emit('suspend');
-    focusInput(); // 挂单后顺便保持焦点
-}
-
-const handleOpenDrawer = () => {
-    emit('open-drawer');
-    focusInput(); // 弹钱箱后顺便保持焦点
-}
-
-const handleOpenCheckout = () => {
-    emit('open-checkout');
-}
 
 const clearAllWithFocus = () => {
     emit('clear-cart');
