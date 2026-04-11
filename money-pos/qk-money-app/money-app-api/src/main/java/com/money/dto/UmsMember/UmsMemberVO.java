@@ -74,4 +74,8 @@ public class UmsMemberVO {
     // 🌟 核心新增：打包发给前端回显的多品牌身份矩阵
     @Schema(description="【全新架构】多品牌等级矩阵")
     private Map<String, String> brandLevels;
+
+    // 👇 加上这个新字段 👇
+    @Schema(description="【全新架构】多品牌语义真理矩阵 (直接存中文品牌名和中文等级)")
+    private Map<String, String> brandLevelDesc;
 }

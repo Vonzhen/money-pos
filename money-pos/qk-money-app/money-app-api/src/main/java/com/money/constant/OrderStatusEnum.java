@@ -4,28 +4,50 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * 🌟 金融级订单状态机枚举 (已剔除 RETURN 和 DONE)
+ * 🌟 金融级订单状态机枚举 (带动态兜底翻译功能)
  */
 public enum OrderStatusEnum {
 
     /** 待支付 */
-    UNPAID,
+    UNPAID("待支付"),
 
     /** 已支付 (正常结算完成) */
-    PAID,
+    PAID("已支付"),
 
     /** 部分退款 (发生过部分退货，但还能继续退) */
-    PARTIAL_REFUNDED,
+    PARTIAL_REFUNDED("部分退货"),
 
     /** 全额退款 (终态，不可再操作) */
-    REFUNDED,
+    REFUNDED("已退单"), // 🌟 这里的兜底文案已对齐您的字典
 
     /** 已取消 (未支付直接作废的订单) */
-    CLOSED;
+    CLOSED("已取消");
+
+    private final String desc;
+
+    OrderStatusEnum(String desc) {
+        this.desc = desc;
+    }
+
+    public String getDesc() {
+        return desc;
+    }
+
+    /**
+     * 🌟 兜底翻译器：为 VO 提供基础状态映射
+     */
+    public static String getFallbackDesc(String statusCode) {
+        if (statusCode == null) return "-";
+        for (OrderStatusEnum status : values()) {
+            if (status.name().equals(statusCode)) {
+                return status.getDesc();
+            }
+        }
+        return statusCode; // 未知状态原样输出
+    }
 
     /**
      * 🌟 核心引擎：定义“经营有效集”
-     * 只要算营业额、算利润、画走势图，统统只查这三个状态！
      */
     public static List<String> getValidFinancialStatus() {
         return Arrays.asList(PAID.name(), PARTIAL_REFUNDED.name(), REFUNDED.name());

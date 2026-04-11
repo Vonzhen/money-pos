@@ -10,7 +10,9 @@ import com.money.constant.BizErrorStatus;
 import com.money.dto.UmsMember.UmsMemberDTO;
 import com.money.dto.UmsMember.UmsMemberQueryDTO;
 import com.money.dto.UmsMember.UmsMemberVO;
+import com.money.entity.GmsBrand;
 import com.money.entity.PosMemberCoupon;
+import com.money.entity.SysDictDetail;
 import com.money.entity.UmsMember;
 import com.money.entity.UmsMemberBrandLevel;
 import com.money.mapper.PosMemberCouponMapper;
@@ -42,7 +44,49 @@ public class UmsMemberProfileService {
     private final PosMemberCouponMapper posMemberCouponMapper;
     private final UmsMemberBrandLevelMapper umsMemberBrandLevelMapper;
 
+    // 🌟 注入双擎翻译服务
+    private final SysDictDetailService sysDictDetailService;
+    private final GmsBrandService gmsBrandService;
+
     private static final String STATUS_UNUSED = "UNUSED";
+
+    /**
+     * 🌟 翻译引擎 1：加载全量品牌映射 (ID -> 名称)
+     */
+    private Map<String, String> getBrandMap() {
+        Map<String, String> map = new HashMap<>();
+        try {
+            List<GmsBrand> brands = gmsBrandService.list();
+            if (brands != null) {
+                for (GmsBrand b : brands) {
+                    map.put(String.valueOf(b.getId()), b.getName());
+                }
+            }
+        } catch (Exception e) {
+            log.warn("⚠️ 获取品牌映射表失败", e);
+        }
+        return map;
+    }
+
+    /**
+     * 🌟 翻译引擎 2：加载会员等级字典 (Code -> 中文名)
+     */
+    private Map<String, String> getMemberLevelDictMap() {
+        Map<String, String> map = new HashMap<>();
+        try {
+            List<SysDictDetail> details = sysDictDetailService.listByDict("memberType");
+            if (details != null) {
+                for (SysDictDetail d : details) {
+                    if (StrUtil.isNotBlank(d.getValue())) {
+                        map.put(d.getValue().trim().toUpperCase(), d.getCnDesc());
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("⚠️ 获取 memberType 字典失败", e);
+        }
+        return map;
+    }
 
     public PageVO<UmsMemberVO> list(UmsMemberQueryDTO queryDTO) {
         LambdaQueryWrapper<UmsMember> wrapper = new LambdaQueryWrapper<>();
@@ -80,20 +124,37 @@ public class UmsMemberProfileService {
             );
             Map<Long, List<UmsMemberBrandLevel>> blMap = allBrandLevels.stream().collect(Collectors.groupingBy(UmsMemberBrandLevel::getMemberId));
 
+            // 🌟 核心防爆破：一次性加载双擎缓存，避免在 for 循环中查库
+            Map<String, String> brandMap = getBrandMap();
+            Map<String, String> levelDictMap = getMemberLevelDictMap();
+
             for (UmsMemberVO vo : pageVO.getRecords()) {
                 vo.setVoucherCount(voucherCountMap.getOrDefault(vo.getId(), 0));
                 List<UmsMemberBrandLevel> levels = blMap.get(vo.getId());
-                Map<String, String> levelMap = new HashMap<>();
+
+                Map<String, String> levelMap = new HashMap<>();      // 存旧数据 (防前端报错)
+                Map<String, String> levelDescMap = new HashMap<>();  // 存新语义 (纯中文)
+
                 if (levels != null) {
                     for (UmsMemberBrandLevel bl : levels) {
                         levelMap.put(bl.getBrand(), bl.getLevelCode());
+
+                        // 🌟 执行“双擎翻译”
+                        String brandName = brandMap.getOrDefault(bl.getBrand(), "未知品牌(" + bl.getBrand() + ")");
+                        String safeLevelCode = bl.getLevelCode() != null ? bl.getLevelCode().trim().toUpperCase() : "";
+                        String levelName = levelDictMap.getOrDefault(safeLevelCode, bl.getLevelCode());
+
+                        levelDescMap.put(brandName, levelName);
                     }
                 }
                 vo.setBrandLevels(levelMap);
+                vo.setBrandLevelDesc(levelDescMap); // 🌟 挂载纯中文语义矩阵
             }
         }
         return pageVO;
     }
+
+    // ... (add, update, getTop20Goods, getDormantMembers, delete, saveBrandLevels 方法保持完全不动) ...
 
     public void add(UmsMemberDTO addDTO) {
         UmsMember umsMember = new UmsMember();
@@ -137,53 +198,33 @@ public class UmsMemberProfileService {
 
     public List<UmsMemberVO> getDormantMembers(Integer days) {
         if (days == null || days <= 0) throw new BaseException("天数参数异常");
-
-        // 计算沉睡阈值时间：当前时间往前推 days 天
         LocalDateTime threshold = LocalDateTime.now().minusDays(days);
-
-        // 🌟 核心修复：双维度沉睡判定逻辑
         List<UmsMember> list = umsMemberMapper.selectList(new LambdaQueryWrapper<UmsMember>()
                 .eq(UmsMember::getDeleted, false)
                 .and(wrapper -> wrapper
-                        // 维度 1：【流失老客】有访问记录，且最后访问时间早于阈值
-                        .and(w1 -> w1.isNotNull(UmsMember::getLastVisitTime)
-                                .le(UmsMember::getLastVisitTime, threshold))
-                        // 维度 2：【沉水死粉】无访问记录（如刚导入），且账号创建/导入时间早于阈值
-                        .or(w2 -> w2.isNull(UmsMember::getLastVisitTime)
-                                .le(UmsMember::getCreateTime, threshold))
+                        .and(w1 -> w1.isNotNull(UmsMember::getLastVisitTime).le(UmsMember::getLastVisitTime, threshold))
+                        .or(w2 -> w2.isNull(UmsMember::getLastVisitTime).le(UmsMember::getCreateTime, threshold))
                 )
-                // 排序：优先唤醒曾经消费过的大客户，其次是普通客户
                 .orderByDesc(UmsMember::getConsumeAmount)
                 .last("LIMIT 100"));
-
         return BeanUtil.copyToList(list, UmsMemberVO.class);
     }
 
     public void delete(Set<Long> ids) {
         if (ids == null || ids.isEmpty()) return;
-
         List<UmsMember> membersToDelete = umsMemberMapper.selectBatchIds(ids);
         if (membersToDelete == null || membersToDelete.isEmpty()) return;
-
         for (UmsMember member : membersToDelete) {
             UmsMember updateEntity = new UmsMember();
             updateEntity.setId(member.getId());
-
-            // 1. 软删除
             updateEntity.setDeleted(true);
-
-            // 2. 资产清零
             updateEntity.setBalance(BigDecimal.ZERO);
             updateEntity.setCoupon(BigDecimal.ZERO);
-
-            // 3. 身份脱敏 (取消手机号修改，仅修改名称，防止超过数据库VARCHAR限制)
             String oldName = member.getName() != null ? member.getName() : "未知";
-            // 截取名字防止加了前缀后超过长度
             if (oldName.length() > 20) {
                 oldName = oldName.substring(0, 20);
             }
             updateEntity.setName("[注销]" + oldName);
-
             umsMemberMapper.updateById(updateEntity);
         }
     }
@@ -203,7 +244,6 @@ public class UmsMemberProfileService {
         }
     }
 
-    // 🌟 核心新增：组装单个会员的全量“胖模型”
     public UmsMemberVO getDetail(Long id) {
         UmsMember member = umsMemberMapper.selectById(id);
         if (member == null) {
@@ -213,7 +253,6 @@ public class UmsMemberProfileService {
         UmsMemberVO vo = new UmsMemberVO();
         cn.hutool.core.bean.BeanUtil.copyProperties(member, vo);
 
-        // 1. 查满减券数量
         Long vCount = posMemberCouponMapper.selectCount(
                 new LambdaQueryWrapper<PosMemberCoupon>()
                         .eq(PosMemberCoupon::getMemberId, id)
@@ -221,17 +260,30 @@ public class UmsMemberProfileService {
         );
         vo.setVoucherCount(vCount != null ? vCount.intValue() : 0);
 
-        // 2. 查品牌等级身份
         List<UmsMemberBrandLevel> levels = umsMemberBrandLevelMapper.selectList(
                 new LambdaQueryWrapper<UmsMemberBrandLevel>().eq(UmsMemberBrandLevel::getMemberId, id)
         );
+
         Map<String, String> levelMap = new HashMap<>();
-        if (levels != null) {
+        Map<String, String> levelDescMap = new HashMap<>();
+
+        if (levels != null && !levels.isEmpty()) {
+            // 🌟 详情页依然执行双擎翻译
+            Map<String, String> brandMap = getBrandMap();
+            Map<String, String> levelDictMap = getMemberLevelDictMap();
+
             for (UmsMemberBrandLevel bl : levels) {
                 levelMap.put(bl.getBrand(), bl.getLevelCode());
+
+                String brandName = brandMap.getOrDefault(bl.getBrand(), "未知品牌(" + bl.getBrand() + ")");
+                String safeLevelCode = bl.getLevelCode() != null ? bl.getLevelCode().trim().toUpperCase() : "";
+                String levelName = levelDictMap.getOrDefault(safeLevelCode, bl.getLevelCode());
+
+                levelDescMap.put(brandName, levelName);
             }
         }
         vo.setBrandLevels(levelMap);
+        vo.setBrandLevelDesc(levelDescMap); // 🌟 挂载纯中文语义矩阵
 
         return vo;
     }

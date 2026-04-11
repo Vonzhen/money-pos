@@ -38,16 +38,16 @@
                 </div>
 
                 <div class="flex flex-wrap gap-1 mt-0.5">
-                    <template v-if="item.brandLevels && Object.keys(item.brandLevels).length > 0">
+                    <template v-if="item.brandLevelDesc && Object.keys(item.brandLevelDesc).length > 0">
                         <el-tag
-                            v-for="(levelCode, brandId) in item.brandLevels"
-                            :key="brandId"
+                            v-for="(levelName, brandName) in item.brandLevelDesc"
+                            :key="brandName"
                             size="small"
                             type="success"
                             effect="dark"
                             class="font-bold tracking-wider border-0 shadow-[0_0_8px_rgba(16,185,129,0.2)] !text-[10px] !h-[18px] !leading-[16px] !px-1.5"
                         >
-                            {{ getBrandName(brandId) }}: {{ getLevelName(levelCode) }}
+                            {{ brandName }}: {{ levelName }}
                         </el-tag>
                     </template>
                     <span v-else class="text-gray-400 font-bold text-[11px] mt-0.5">普通客</span>

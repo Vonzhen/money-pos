@@ -23,17 +23,17 @@
                         </div>
                         <div class="flex flex-1 items-center gap-2 border-l border-gray-200 pl-4">
                             <span class="text-gray-500 shrink-0">会员身份:</span>
-                            <div class="flex flex-wrap gap-2" v-if="currentOrderDetail.member?.brandLevels && Object.keys(currentOrderDetail.member.brandLevels).length > 0">
+                            <div class="flex flex-wrap gap-2" v-if="currentOrderDetail.member?.brandLevelDesc && Object.keys(currentOrderDetail.member.brandLevelDesc).length > 0">
                                 <el-tag
-                                    v-for="(levelCode, brandId) in currentOrderDetail.member.brandLevels"
-                                    :key="brandId"
+                                    v-for="(levelName, brandName) in currentOrderDetail.member.brandLevelDesc"
+                                    :key="brandName"
                                     size="small"
                                     type="success"
                                     effect="light"
                                     class="border-success-300"
                                 >
-                                    <span class="font-bold text-gray-700 mr-1">{{ brandsKv[brandId] || getBrandName(brandId) || '未知' }}</span>
-                                    <span class="text-green-600 font-bold">{{ (dict.memberTypeKv && dict.memberTypeKv[levelCode]) || getLevelName(levelCode) || levelCode }}</span>
+                                    <span class="font-bold text-gray-700 mr-1">{{ brandName }}</span>
+                                    <span class="text-green-600 font-bold">{{ levelName }}</span>
                                 </el-tag>
                             </div>
                             <span v-else class="text-gray-400 font-bold text-sm">无关联身份 / 散客</span>
@@ -159,7 +159,6 @@ import { ref, computed, watch, onBeforeMount } from 'vue'
 import { Document, User } from '@element-plus/icons-vue'
 import { req } from "@/api/index.js"
 import dictApi from "@/api/system/dict.js"
-import brandApi from "@/api/gms/brand.js"
 import { ElMessage } from 'element-plus'
 
 const props = defineProps(['modelValue', 'orderNo'])
@@ -170,44 +169,20 @@ const currentOrderDetail = ref(null)
 const detailLoading = ref(false)
 
 const dict = ref({})
-const brandList = ref([])
-const brandsKv = ref({})
 
 const fetchBaseData = async () => {
     try {
-        const dictRes = await dictApi.loadDict(["memberType", "paySubTag", "orderStatus"])
+        // 🌟 净化：移除了 memberType 的加载，只保留支付方式和订单状态字典
+        const dictRes = await dictApi.loadDict(["paySubTag", "orderStatus"])
         dict.value = dictRes || {}
     } catch (e) {
         console.error("字典加载失败", e)
-    }
-    try {
-        const brandRes = await (brandApi.list ? brandApi.list({ size: 1000 }) : brandApi.getSelect())
-        brandList.value = brandRes?.data?.records || brandRes?.data || brandRes?.records || brandRes || []
-        brandList.value.forEach(e => { brandsKv.value[e.id || e.value] = e.name || e.label })
-    } catch (e) {
-        console.error("品牌字典加载失败", e)
     }
 }
 
 onBeforeMount(() => {
     fetchBaseData()
 })
-
-const getBrandName = (brandId) => {
-    if (!brandId) return '未知'
-    if (/[\u4e00-\u9fa5]/.test(brandId.toString())) return brandId;
-    const match = brandList.value.find(b => b && b.id && b.id.toString() === brandId.toString())
-    return match ? match.name : `ID:${brandId}`
-}
-
-const getLevelName = (levelCode) => {
-    if (!levelCode) return '无等级'
-    const types = dict.value.memberType
-    if (!Array.isArray(types) || types.length === 0) return levelCode
-
-    const match = types.find(m => m && (m.value === levelCode || m.dictValue === levelCode))
-    return match ? (match.desc || match.dictLabel || levelCode) : levelCode
-}
 
 const getPayTagName = (tagCode) => {
     if (!tagCode) return '其他扫码'
@@ -279,7 +254,7 @@ const returnPrice = computed(() => {
 
 watch(visible, async (newVal) => {
     if (newVal && props.orderNo) {
-        if (!dict.value.memberType || !dict.value.orderStatus) {
+        if (!dict.value.orderStatus) {
             await fetchBaseData()
         }
 

@@ -37,7 +37,7 @@
             </template>
             <template #status="{scope}">
                 <el-tag :type="statusColor[scope.row.status] || 'primary'" effect="dark" class="font-bold">
-                    {{ dict.orderStatusKv[scope.row.status] || scope.row.status }}
+                    {{ getOrderStatusName(scope.row.status) }}
                 </el-tag>
             </template>
             <template #opt="{scope}">
@@ -132,7 +132,36 @@ const showOrderDetail = (orderNo) => {
     detailVisible.value = true;
 }
 
-const dict = ref({ orderStatusKv: {} })
+const dict = ref({ orderStatus: [], orderStatusKv: {} })
+
+// 🌟 核心：统一的状态解析逻辑（强制翻译字典，字典未加载时硬编码兜底）
+const getOrderStatusName = (status) => {
+    if (!status) return '-';
+    // 1. 优先尝试从后端加载的 Key-Value 映射里找
+    if (dict.value?.orderStatusKv && dict.value.orderStatusKv[status]) {
+        return dict.value.orderStatusKv[status];
+    }
+    // 2. 备选：从后端原始数组里找
+    const statuses = dict.value?.orderStatus;
+    if (Array.isArray(statuses)) {
+        const match = statuses.find(s => s.value === status || s.dictValue === status);
+        if (match) return match.desc || match.dictLabel || status;
+    }
+    // 3. 终极兜底补丁：专门解决截图中的 "REFUNDED" 原始英文显示问题
+    const fallbackMap = {
+        'PAID': '已支付',
+        'DONE': '已完成',
+        'PARTIAL': '部分退货',
+        'PARTIAL_REFUNDED': '部分退货',
+        'REFUNDED': '已退款',
+        'RETURN': '已退款',
+        'CLOSED': '已关闭',
+        'CANCELLED': '已取消',
+        'UNPAID': '待支付'
+    };
+    return fallbackMap[status] || status;
+}
+
 const statusColor = {
     'RETURN': 'info',
     'REFUNDED': 'info',
@@ -142,6 +171,7 @@ const statusColor = {
     'PARTIAL_REFUNDED': 'warning',
     'CLOSED': 'info'
 }
+
 const datePicker = ref([dayjs().startOf('M').format('YYYY-MM-DD HH:mm:ss'), dayjs().endOf('M').format('YYYY-MM-DD HH:mm:ss')])
 const defaultTime = [dayjs().startOf('d').toDate(), dayjs().endOf('d').toDate()]
 const shortcuts = [
@@ -150,6 +180,7 @@ const shortcuts = [
     { text: '最近7天', value() { return [dayjs().subtract(6, 'd').startOf('d').toDate(), dayjs().endOf('d').toDate()] } },
     { text: '最近30天', value() { return [dayjs().subtract(29, 'd').startOf('d').toDate(), dayjs().endOf('d').toDate()] } }
 ]
+
 moneyCrud.value.init(moneyCrud, async () => {
     dict.value = await dictApi.loadDict(["orderStatus"])
     moneyCrud.value.query.startTime = datePicker.value[0]
@@ -174,7 +205,6 @@ function handleDatePick(value) {
 }
 
 function returnOrder(row) {
-    // 🌟 修复：补充 reqId 防重放标识，让请求能穿透后端的 Validation 防线！
     orderApi.returnOrder({
         orderNo: row.orderNo,
         reqId: 'B_RET' + Date.now()

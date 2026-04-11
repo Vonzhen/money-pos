@@ -16,10 +16,11 @@ public interface OmsOrderTrafficMapper {
             "SELECT " +
             "  HOUR(create_time) as hour, " +
             "  COUNT(id) / #{divisor} as avgOrderCount, " +
-            "  SUM(IFNULL(final_sales_amount, 0)) / #{divisor} as avgSalesAmount " +
+            "  SUM(IFNULL(final_sales_amount, 0)) / #{divisor} as avgSalesAmount, " +
+            "  COUNT(id) as totalOrderCount, " + // 🌟 新增：原始总单量
+            "  SUM(IFNULL(final_sales_amount, 0)) as totalSalesAmount " + // 🌟 新增：原始总金额
             "FROM oms_order " +
             "WHERE create_time &gt;= #{startTime} AND create_time &lt;= #{endTime} " +
-            // 🌟 洗缩：踢出全额退款单，防止客流潮汐被“假忙碌”高估
             "  AND status IN ('PAID', 'PARTIAL_REFUNDED') " +
             "<if test='dayOfWeek != null'> AND DAYOFWEEK(create_time) = #{dayOfWeek} </if> " +
             "GROUP BY HOUR(create_time) " +
@@ -34,10 +35,11 @@ public interface OmsOrderTrafficMapper {
     @Select("SELECT " +
             "  DAYOFWEEK(create_time) as timeKey, " +
             "  COUNT(id) / #{divisor} as avgOrderCount, " +
-            "  SUM(IFNULL(final_sales_amount, 0)) / #{divisor} as avgSalesAmount " +
+            "  SUM(IFNULL(final_sales_amount, 0)) / #{divisor} as avgSalesAmount, " +
+            "  COUNT(id) as totalOrderCount, " + // 🌟 新增：原始总单量
+            "  SUM(IFNULL(final_sales_amount, 0)) as totalSalesAmount " + // 🌟 新增：原始总金额
             "FROM oms_order " +
             "WHERE create_time >= #{startTime} AND create_time <= #{endTime} " +
-            // 🌟 洗缩：踢出全额退款单
             "  AND status IN ('PAID', 'PARTIAL_REFUNDED') " +
             "GROUP BY timeKey ORDER BY timeKey ASC")
     List<com.money.dto.OmsOrder.OmsSalesDataVO.TimeTrafficVO> getWeeklyTrafficAnalysis(
@@ -48,10 +50,11 @@ public interface OmsOrderTrafficMapper {
     @Select("SELECT " +
             "  DAY(create_time) as timeKey, " +
             "  COUNT(id) / #{divisor} as avgOrderCount, " +
-            "  SUM(IFNULL(final_sales_amount, 0)) / #{divisor} as avgSalesAmount " +
+            "  SUM(IFNULL(final_sales_amount, 0)) / #{divisor} as avgSalesAmount, " +
+            "  COUNT(id) as totalOrderCount, " + // 🌟 新增：原始总单量
+            "  SUM(IFNULL(final_sales_amount, 0)) as totalSalesAmount " + // 🌟 新增：原始总金额
             "FROM oms_order " +
             "WHERE create_time >= #{startTime} AND create_time <= #{endTime} " +
-            // 🌟 洗缩：踢出全额退款单
             "  AND status IN ('PAID', 'PARTIAL_REFUNDED') " +
             "GROUP BY timeKey ORDER BY timeKey ASC")
     List<com.money.dto.OmsOrder.OmsSalesDataVO.TimeTrafficVO> getMonthlyTrafficAnalysis(

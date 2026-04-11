@@ -29,8 +29,14 @@ public class OmsOrderVO {
     @Schema(description="vip单")
     private Boolean vip;
 
-    @Schema(description="状态")
+    @Schema(description="状态 (逻辑键)")
     private String status;
+
+    // ==========================================
+    // 🌟 新增语义工厂：后端统一下发中文状态
+    // ==========================================
+    @Schema(description="状态中文描述 (动态同步字典与枚举兜底)")
+    private String statusDesc;
 
     @Schema(description="联系方式")
     private String contact;
@@ -59,9 +65,6 @@ public class OmsOrderVO {
     @Schema(description="抵用券(旧版兼容字段)")
     private BigDecimal couponAmount;
 
-    // ==========================================
-    // 🌟 核心一统：对外输出绝对真实的“券核销”与“店铺让利”
-    // ==========================================
     @Schema(description="实际核销会员券 (大一统主口径)")
     private BigDecimal actualCouponDeduct;
 

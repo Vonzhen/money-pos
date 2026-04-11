@@ -113,6 +113,10 @@ public class OmsSalesAnalysisServiceImpl implements OmsSalesAnalysisService {
         return PageUtil.toPageVO(page);
     }
 
+    // ==========================================
+    // 🌟 核心升级：客流罗盘与潮汐趋势，彻底剥夺前端计算权
+    // ==========================================
+
     @Override
     public List<HourlyTrafficVO> getTrafficAnalysis(Integer dayOfWeek) {
         Double divisor = (dayOfWeek != null) ? 4.0 : 28.0;
@@ -121,6 +125,7 @@ public class OmsSalesAnalysisServiceImpl implements OmsSalesAnalysisService {
         LocalDateTime endTime = LocalDateTime.now();
         LocalDateTime startTime = endTime.minusDays(28);
 
+        // Mapper 已经升级，现在会同时返回 avg (平均) 和 total (总数)
         List<HourlyTrafficVO> dbData = omsOrderTrafficMapper.getHourlyTrafficAnalysis(startTime, endTime, mysqlDow, divisor);
         Map<Integer, HourlyTrafficVO> dataMap = new HashMap<>();
         if (dbData != null) {
@@ -141,8 +146,15 @@ public class OmsSalesAnalysisServiceImpl implements OmsSalesAnalysisService {
         for (int i = 0; i < 24; i++) {
             HourlyTrafficVO vo = dataMap.getOrDefault(i, new HourlyTrafficVO());
             if (vo.getHour() == null) vo.setHour(i);
+
+            // 🌟 防御编程：防止 SQL 查不到数据导致前端空指针
             if (vo.getAvgOrderCount() == null) vo.setAvgOrderCount(BigDecimal.ZERO);
             if (vo.getAvgSalesAmount() == null) vo.setAvgSalesAmount(BigDecimal.ZERO);
+            if (vo.getTotalOrderCount() == null) vo.setTotalOrderCount(BigDecimal.ZERO);
+            if (vo.getTotalSalesAmount() == null) vo.setTotalSalesAmount(BigDecimal.ZERO);
+
+            // 🌟 核心：将确切的“采样天数”下发给前端，前端无需再硬编码猜逻辑
+            vo.setSampleDays(divisor.intValue());
 
             boolean isSafeToLeave = vo.getAvgOrderCount().compareTo(safeOrderThreshold) < 0
                     && vo.getAvgSalesAmount().compareTo(safeValueThreshold) < 0;
@@ -158,7 +170,19 @@ public class OmsSalesAnalysisServiceImpl implements OmsSalesAnalysisService {
         SysStrategy strategy = sysStrategyMapper.getGlobalStrategy();
         int days = (strategy != null && strategy.getWeeklyAnalysisDays() != null) ? strategy.getWeeklyAnalysisDays() : 90;
         LocalDateTime endTime = LocalDateTime.now();
-        return omsOrderTrafficMapper.getWeeklyTrafficAnalysis(endTime.minusDays(days), endTime, days / 7.0);
+
+        Double divisor = days / 7.0; // 计算周期倍数
+        List<TimeTrafficVO> res = omsOrderTrafficMapper.getWeeklyTrafficAnalysis(endTime.minusDays(days), endTime, divisor);
+
+        // 🌟 下发采样周期系数
+        if(res != null) {
+            for (TimeTrafficVO vo : res) {
+                if (vo.getTotalOrderCount() == null) vo.setTotalOrderCount(BigDecimal.ZERO);
+                if (vo.getTotalSalesAmount() == null) vo.setTotalSalesAmount(BigDecimal.ZERO);
+                vo.setSampleDays(divisor);
+            }
+        }
+        return res;
     }
 
     @Override
@@ -166,7 +190,19 @@ public class OmsSalesAnalysisServiceImpl implements OmsSalesAnalysisService {
         SysStrategy strategy = sysStrategyMapper.getGlobalStrategy();
         int days = (strategy != null && strategy.getMonthlyAnalysisDays() != null) ? strategy.getMonthlyAnalysisDays() : 180;
         LocalDateTime endTime = LocalDateTime.now();
-        return omsOrderTrafficMapper.getMonthlyTrafficAnalysis(endTime.minusDays(days), endTime, days / 30.43);
+
+        Double divisor = days / 30.43; // 换算成几个标准月
+        List<TimeTrafficVO> res = omsOrderTrafficMapper.getMonthlyTrafficAnalysis(endTime.minusDays(days), endTime, divisor);
+
+        // 🌟 下发采样周期系数
+        if(res != null) {
+            for (TimeTrafficVO vo : res) {
+                if (vo.getTotalOrderCount() == null) vo.setTotalOrderCount(BigDecimal.ZERO);
+                if (vo.getTotalSalesAmount() == null) vo.setTotalSalesAmount(BigDecimal.ZERO);
+                vo.setSampleDays(divisor);
+            }
+        }
+        return res;
     }
 
     @Override

@@ -58,4 +58,7 @@ public class OrderDetailVO extends OmsOrderVO {
         private BigDecimal payAmount;
         private LocalDateTime createTime;
     }
+
+    @Schema(description="状态中文描述 (动态同步字典与枚举兜底)")
+    private String statusDesc;
 }

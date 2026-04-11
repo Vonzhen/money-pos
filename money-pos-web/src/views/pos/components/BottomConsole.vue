@@ -14,16 +14,16 @@
                 <div class="flex justify-between items-start mt-0.5 2xl:mt-1">
                     <span class="text-gray-400 shrink-0 mr-2 mt-0.5 2xl:mt-1">会员身份:</span>
                     <div class="flex flex-wrap gap-1 justify-end">
-                        <template v-if="currentMember.brandLevels && Object.keys(currentMember.brandLevels).length > 0">
+                        <template v-if="currentMember.brandLevelDesc && Object.keys(currentMember.brandLevelDesc).length > 0">
                             <el-tag
-                                v-for="(levelCode, brandId) in currentMember.brandLevels"
-                                :key="brandId"
+                                v-for="(levelName, brandName) in currentMember.brandLevelDesc"
+                                :key="brandName"
                                 size="small"
                                 type="success"
                                 effect="dark"
                                 class="font-bold tracking-wider border-0 shadow-[0_0_8px_rgba(16,185,129,0.3)] !text-[10px] 2xl:!text-xs"
                             >
-                                {{ brandsKv[brandId] || brandId }}: {{ getLevelName(levelCode) }}
+                                {{ brandName }}: {{ levelName }}
                             </el-tag>
                         </template>
                         <span v-else class="text-gray-500 font-bold mt-1">普通客</span>
@@ -177,7 +177,6 @@ import { ref, computed, nextTick, onMounted } from 'vue'
 import { Search, Delete, User, Unlock, Tickets, Timer, Monitor } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { req } from '@/api/index.js'
-import brandApi from '@/api/gms/brand.js'
 import { usePosStore } from '../hooks/usePosStore'
 import MemberSmartSearch from '@/components/common/MemberSmartSearch.vue'
 
@@ -195,7 +194,6 @@ const memberDialogVisible = ref(false)
 const bindMemberId = ref(null)
 const memberSearchComp = ref(null)
 const autocompleteKey = ref(0)
-const brandsKv = ref({})
 
 const isDialogOpen = computed(() => memberDialogVisible.value);
 const closeAllDialogs = () => {
@@ -206,12 +204,7 @@ const closeAllDialogs = () => {
     return false;
 }
 
-onMounted(async () => {
-    try {
-        const brandRes = await (brandApi.list ? brandApi.list({ size: 1000 }) : brandApi.getSelect())
-        const brandList = brandRes?.data?.records || brandRes?.data || brandRes?.records || brandRes || []
-        brandList.forEach(e => { brandsKv.value[e.id || e.value] = e.name || e.label })
-    } catch (e) {}
+onMounted(() => {
     nextTick(() => { setTimeout(() => { focusInput() }, 300) })
 })
 
@@ -241,15 +234,8 @@ const resetScanner = async () => {
 
 const focusInput = () => { scannerInput.value?.focus(); }
 
-// 🌟 核心修复：只发射呼叫指令，绝不越权直接清空！
 const clearAllWithFocus = () => {
     emit('clear-cart');
-}
-
-const getLevelName = (code) => {
-    if (!props.memberTypesDict) return code;
-    const match = props.memberTypesDict.find(item => String(item.value) === String(code) || String(item.dictValue) === String(code));
-    return match ? (match.desc || match.dictLabel || code) : code;
 }
 
 const formatMoney = (val) => {
