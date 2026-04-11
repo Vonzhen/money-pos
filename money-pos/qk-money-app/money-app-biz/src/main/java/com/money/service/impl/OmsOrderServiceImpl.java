@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.money.constant.BizErrorStatus;
+import com.money.constant.OrderStatusEnum;
 import com.money.constant.PayMethodEnum;
 import com.money.dto.OmsOrder.OmsOrderQueryDTO;
 import com.money.dto.OmsOrder.OmsOrderVO;
@@ -19,12 +20,13 @@ import com.money.service.OmsOrderDetailService;
 import com.money.service.OmsOrderLogService;
 import com.money.service.OmsOrderService;
 import com.money.service.UmsMemberService;
-import com.money.util.MoneyUtil;
+import com.money.service.SysDictDetailService;
 import com.money.util.PageUtil;
 import com.money.web.exception.BaseException;
 import com.money.web.util.BeanMapUtil;
 import com.money.web.vo.PageVO;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -32,7 +34,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-@Service // 🌟 挂牌，纳入 Spring 容器管理
+@Slf4j
+@Service
 @RequiredArgsConstructor
 public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> implements OmsOrderService {
 
@@ -43,28 +46,79 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
     private final OmsOrderPayMapper omsOrderPayMapper;
     private final UmsMemberBrandLevelMapper umsMemberBrandLevelMapper;
 
+    private final SysDictDetailService sysDictDetailService;
+
+    /**
+     * 🌟 暴力兼容版字典加载器 (带上帝视角日志)
+     */
+    private Map<String, String> getOrderStatusDictMap() {
+        Map<String, String> dictMap = new HashMap<>();
+        try {
+            log.info("====== 🕵️ 开始查杀字典问题 ======");
+            // 1. 尝试查询驼峰命名
+            List<SysDictDetail> details = sysDictDetailService.listByDict("orderStatus");
+
+            // 2. 如果查不到，尝试查询下划线命名 (数据库常见命名规范)
+            if (details == null || details.isEmpty()) {
+                log.warn("未查到名为 [orderStatus] 的字典，尝试查询 [order_status]...");
+                details = sysDictDetailService.listByDict("order_status");
+            }
+
+            if (details != null && !details.isEmpty()) {
+                for (SysDictDetail detail : details) {
+                    if (StrUtil.isNotBlank(detail.getValue()) && StrUtil.isNotBlank(detail.getCnDesc())) {
+                        // 🌟 核心防坑：将 key 强制转为大写并去掉前后空格
+                        String safeKey = detail.getValue().trim().toUpperCase();
+                        dictMap.put(safeKey, detail.getCnDesc());
+                    }
+                }
+                log.info("✅ 成功加载字典映射表 (已统一转大写): {}", dictMap);
+            } else {
+                log.error("❌ 数据库中根本不存在 [orderStatus] 或 [order_status] 的字典配置！");
+            }
+            log.info("====================================");
+        } catch (Exception e) {
+            log.error("字典查询发生异常: ", e);
+        }
+        return dictMap;
+    }
+
+    /**
+     * 🌟 暴力兼容版语义翻译器
+     */
+    private String translateStatusDesc(String statusCode, Map<String, String> dictMap) {
+        if (statusCode == null) return "-";
+
+        // 🌟 核心防坑：将传进来的订单状态也强制转大写去空格
+        String safeStatusCode = statusCode.trim().toUpperCase();
+
+        if (dictMap != null && dictMap.containsKey(safeStatusCode)) {
+            return dictMap.get(safeStatusCode);
+        }
+
+        log.warn("⚠️ 字典表里找不到状态 [{}] 的配置，已退化使用枚举兜底！", safeStatusCode);
+        return OrderStatusEnum.getFallbackDesc(statusCode);
+    }
+
     @Override
     public PageVO<OmsOrderVO> list(OmsOrderQueryDTO queryDTO) {
-        // 提取前端可能传过来的字符串关键字（防呆处理：兼容 String 或 Long 类型）
         String memberKeyword = queryDTO.getMember() != null ? String.valueOf(queryDTO.getMember()) : null;
-
         Page<OmsOrder> page = omsOrderMapper.selectPage(PageUtil.toPage(queryDTO), new LambdaQueryWrapper<OmsOrder>()
-                // 🌟 修复 1：会员智能搜索。如果输入了手机号或姓名，进行双字段模糊匹配
-                .and(StrUtil.isNotBlank(memberKeyword), w -> w
-                        .like(OmsOrder::getMember, memberKeyword)
-                        .or()
-                        .like(OmsOrder::getContact, memberKeyword))
-
-                // 🌟 修复 2：订单号智能搜索。必须用 like 模糊查询，不能用 eq！
+                .and(StrUtil.isNotBlank(memberKeyword), w -> w.like(OmsOrder::getMember, memberKeyword).or().like(OmsOrder::getContact, memberKeyword))
                 .like(StrUtil.isNotBlank(queryDTO.getOrderNo()), OmsOrder::getOrderNo, queryDTO.getOrderNo())
-
-                // 状态和时间精确匹配保持不变
                 .eq(StrUtil.isNotBlank(queryDTO.getStatus()), OmsOrder::getStatus, queryDTO.getStatus())
-                .between(queryDTO.getStartTime() != null && queryDTO.getEndTime() != null,
-                        OmsOrder::getCreateTime, queryDTO.getStartTime(), queryDTO.getEndTime())
+                .between(queryDTO.getStartTime() != null && queryDTO.getEndTime() != null, OmsOrder::getCreateTime, queryDTO.getStartTime(), queryDTO.getEndTime())
                 .orderByDesc(OmsOrder::getCreateTime));
 
-        return PageUtil.toPageVO(page, OmsOrderVO::new);
+        PageVO<OmsOrderVO> pageVO = PageUtil.toPageVO(page, OmsOrderVO::new);
+
+        if (pageVO.getRecords() != null && !pageVO.getRecords().isEmpty()) {
+            Map<String, String> dictMap = getOrderStatusDictMap();
+            pageVO.getRecords().forEach(vo ->
+                    vo.setStatusDesc(translateStatusDesc(vo.getStatus(), dictMap))
+            );
+        }
+        return pageVO;
     }
 
     @Override
@@ -84,41 +138,29 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
     private OrderDetailVO assembleOrderDetail(OmsOrder order) {
         OrderDetailVO vo = BeanMapUtil.to(order, OrderDetailVO::new);
 
-        // 1. 组装明细
+        Map<String, String> dictMap = getOrderStatusDictMap();
+        vo.setStatusDesc(translateStatusDesc(order.getStatus(), dictMap));
+
         List<OmsOrderDetail> details = omsOrderDetailService.list(new LambdaQueryWrapper<OmsOrderDetail>().eq(OmsOrderDetail::getOrderNo, order.getOrderNo()));
         vo.setOrderDetails(BeanMapUtil.to(details, OmsOrderDetailVO::new));
 
-        // 2. 组装会员及多轨身份
+        // ✅ 替换为：直接调用我们刚刚武装好的全能档案接口！
         if (order.getMemberId() != null) {
-            UmsMember member = umsMemberService.getById(order.getMemberId());
-            if (member != null) {
-                UmsMemberVO memberVO = BeanMapUtil.to(member, UmsMemberVO::new);
-                List<UmsMemberBrandLevel> levels = umsMemberBrandLevelMapper.selectList(new LambdaQueryWrapper<UmsMemberBrandLevel>().eq(UmsMemberBrandLevel::getMemberId, member.getId()));
-                if (levels != null && !levels.isEmpty()) {
-                    Map<String, String> levelMap = new HashMap<>();
-                    for (UmsMemberBrandLevel bl : levels) levelMap.put(bl.getBrand(), bl.getLevelCode());
-                    memberVO.setBrandLevels(levelMap);
-                }
+            try {
+                // 直接获取自带 brandLevelDesc (纯中文真理矩阵) 的胖模型
+                UmsMemberVO memberVO = umsMemberService.getDetail(order.getMemberId());
                 vo.setMemberInfo(memberVO);
+            } catch (Exception e) {
+                log.warn("获取订单关联会员详情失败: {}", e.getMessage());
             }
         }
 
-        // 3. 组装操作日志
         List<OmsOrderLog> logs = omsOrderLogService.list(new LambdaQueryWrapper<OmsOrderLog>().eq(OmsOrderLog::getOrderId, order.getId()).orderByAsc(OmsOrderLog::getCreateTime));
         vo.setOrderLog(BeanMapUtil.to(logs, OrderDetailVO.OrderLogVO::new));
 
-        // 4. 组装支付流与找零计算
         List<OmsOrderPay> pays = omsOrderPayMapper.selectList(new LambdaQueryWrapper<OmsOrderPay>().eq(OmsOrderPay::getOrderNo, order.getOrderNo()));
         vo.setPayments(BeanMapUtil.to(pays, OrderDetailVO.OrderPayVO::new));
 
-        // 执行找零逻辑
-        calculateChange(vo, pays, order.getPayAmount());
-
-        return vo;
-    }
-
-    // 🌟 修复版找零计算：严格执行支付降维建模
-    private void calculateChange(OrderDetailVO vo, List<OmsOrderPay> pays, BigDecimal orderReceivableAmount) {
         BigDecimal balanceAmount = BigDecimal.ZERO;
         BigDecimal scanAmount = BigDecimal.ZERO;
         BigDecimal cashAmount = BigDecimal.ZERO;
@@ -126,30 +168,24 @@ public class OmsOrderServiceImpl extends ServiceImpl<OmsOrderMapper, OmsOrder> i
 
         for (OmsOrderPay pay : pays) {
             PayMethodEnum method = PayMethodEnum.fromCode(pay.getPayMethodCode());
-            if (method == null) method = PayMethodEnum.AGGREGATE; // 防御未知支付方式
+            if (method == null) method = PayMethodEnum.AGGREGATE;
 
-            if (method == PayMethodEnum.BALANCE) {
-                balanceAmount = MoneyUtil.add(balanceAmount, pay.getPayAmount());
-            } else if (method == PayMethodEnum.AGGREGATE) {
-                scanAmount = MoneyUtil.add(scanAmount, pay.getPayAmount());
-            } else if (method == PayMethodEnum.CASH) {
-                cashAmount = MoneyUtil.add(cashAmount, pay.getPayAmount());
+            BigDecimal orig = pay.getOriginalAmount() != null ? pay.getOriginalAmount() : pay.getPayAmount();
+
+            if (method == PayMethodEnum.BALANCE) balanceAmount = balanceAmount.add(orig);
+            else if (method == PayMethodEnum.AGGREGATE) scanAmount = scanAmount.add(orig);
+            else if (method == PayMethodEnum.CASH) cashAmount = cashAmount.add(orig);
+
+            if (pay.getChangeAllocated() != null) {
+                changeAmount = changeAmount.add(pay.getChangeAllocated());
             }
-        }
-
-        BigDecimal totalIn = MoneyUtil.add(MoneyUtil.add(balanceAmount, scanAmount), cashAmount);
-        changeAmount = MoneyUtil.subtract(totalIn, orderReceivableAmount);
-
-        if(changeAmount.compareTo(BigDecimal.ZERO) < 0) {
-            changeAmount = BigDecimal.ZERO;
-        } else {
-            // 找零只能从现金池里扣
-            cashAmount = MoneyUtil.subtract(cashAmount, changeAmount);
         }
 
         vo.setBalanceAmount(balanceAmount);
         vo.setScanAmount(scanAmount);
         vo.setCashAmount(cashAmount);
         vo.setChangeAmount(changeAmount);
+
+        return vo;
     }
 }

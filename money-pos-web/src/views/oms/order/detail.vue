@@ -7,12 +7,8 @@
                         <el-icon class="text-blue-500"><Document /></el-icon>
                         单据详情 - {{ order.orderNo }}
                     </span>
-                    <el-tag effect="dark" :type="statusColor[order.status] || 'primary'" class="tracking-widest font-bold">
-                        {{
-                            order.status === 'PAID' ? '已支付' :
-                            order.status === 'PARTIAL' ? '部分退货' :
-                            (dict?.orderStatusKv?.[order.status] || order.status)
-                        }}
+                    <el-tag effect="dark" :type="getOrderStatusType(order.status)" class="tracking-widest font-bold">
+                        {{ getOrderStatusName(order.status) }}
                     </el-tag>
                 </div>
                 <el-button type="primary" plain @click="print" class="font-bold tracking-widest">
@@ -91,7 +87,11 @@
             <el-table-column label="单价" align="center" width="160"><template #default="{row}"><div class="flex items-center justify-center gap-2"><span class="text-gray-400 line-through text-xs">￥{{ row.salePrice }}</span><el-icon class="text-gray-300"><Right /></el-icon><span class="font-bold text-red-500">￥{{ row.goodsPrice }}</span></div></template></el-table-column>
             <el-table-column label="数量状态" align="center" width="120"><template #default="{row}"><div class="font-black text-lg">{{ row.quantity }}</div><div v-if="row.returnQuantity > 0" class="text-xs text-red-500 font-bold">- 已退 {{ row.returnQuantity }}</div></template></el-table-column>
             <el-table-column label="单品小计" align="right" width="140"><template #default="{ row }"><span class="font-bold">￥{{ NP.times(row.quantity, row.goodsPrice) }}</span></template></el-table-column>
-            <el-table-column label="售后操作" align="center" width="100" fixed="right"><template #default="{ row }"><el-button type="danger" plain size="small" @click="handleReturnGoods(row)" :disabled="row.returnQuantity >= row.quantity || order.status === 'RETURN' || order.status === 'REFUNDED'">退货</el-button></template></el-table-column>
+            <el-table-column label="售后操作" align="center" width="100" fixed="right">
+                <template #default="{ row }">
+                    <el-button type="danger" plain size="small" @click="handleReturnGoods(row)" :disabled="row.returnQuantity >= row.quantity || order.status === 'RETURN' || order.status === 'REFUNDED'">退货</el-button>
+                </template>
+            </el-table-column>
         </el-table>
 
         <h4 class="mb-3 font-black text-gray-800 flex items-center gap-2 text-lg"><el-icon class="text-gray-600"><Clock /></el-icon>系统审计日志</h4>
@@ -119,7 +119,6 @@ import NP from "number-precision"
 
 const printOrder = ref()
 const routeParam = useRoute().params.id
-const statusColor = { 'RETURN': 'info', 'REFUNDED': 'info', 'PAID': 'success', 'PARTIAL': 'warning' }
 
 const dict = ref({}); const order = ref({}); const detail = ref([]); const member = ref({}); const log = ref([]); const payList = ref([]); const payTagDict = ref([])
 const returnPrice = ref(0); const returnCoupon = ref(0)
@@ -135,6 +134,37 @@ onBeforeMount(async () => {
     if (dictRes && dictRes.paySubTag) payTagDict.value = dictRes.paySubTag
     await loadDetail()
 })
+
+// 🌟 统一标准的字典翻译函数（字典优先，兼容老数据兜底）
+const getOrderStatusName = (status) => {
+    if (!status) return '-';
+    // 1. 优先从后端字典的 Key-Value Map 中取
+    if (dict.value?.orderStatusKv?.[status]) {
+        return dict.value.orderStatusKv[status];
+    }
+    // 2. 尝试从后端字典的 Array 列表中取
+    const statuses = dict.value.orderStatus;
+    if (Array.isArray(statuses)) {
+        const match = statuses.find(s => s && (s.value === status || s.dictValue === status));
+        if (match) return match.desc || match.dictLabel || status;
+    }
+    // 3. 终极兜底（新老标准合并，防报错）
+    const fallbackMap = {
+        'UNPAID': '待支付', 'PENDING': '待支付',
+        'PAID': '已支付', 'DONE': '已完成',
+        'PARTIAL': '部分退货', 'PARTIAL_REFUNDED': '部分退货',
+        'RETURN': '已退款', 'REFUNDED': '已退款',
+        'CLOSED': '已关闭', 'CANCELLED': '已取消'
+    };
+    return fallbackMap[status] || status;
+}
+
+const getOrderStatusType = (status) => {
+    if (status === 'PAID' || status === 'DONE') return 'success';
+    if (status === 'PARTIAL' || status === 'PARTIAL_REFUNDED') return 'warning';
+    if (status === 'RETURN' || status === 'REFUNDED' || status === 'CLOSED' || status === 'CANCELLED') return 'info';
+    return 'danger';
+}
 
 const getPayTagName = (tagCode) => {
     if (!tagCode) return '其他扫码'
@@ -190,7 +220,13 @@ function handleReturnGoods(row) {
     }).then(({ value }) => {
         const qty = parseInt(value)
         if (qty > (row.quantity - (row.returnQuantity || 0))) return ElMessage.warning('退货数量不能超过当前可退数量！')
-        orderApi.returnGoods({ orderNo: order.value.orderNo, detailId: row.id, returnQty: qty }).then(() => {
+
+        orderApi.returnGoods({
+            orderNo: order.value.orderNo,
+            detailId: row.id,
+            returnQty: qty,
+            reqId: 'B_PRET' + Date.now()
+        }).then(() => {
             ElMessage.success('退货成功！')
             loadDetail()
         })

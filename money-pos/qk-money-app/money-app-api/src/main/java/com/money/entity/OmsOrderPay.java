@@ -8,16 +8,11 @@ import java.time.LocalDateTime;
 
 @Data
 public class OmsOrderPay {
-    // 主键
     @TableId(type = IdType.AUTO)
     private Long id;
-    // 订单号
     private String orderNo;
-    // 支付方式名称
     private String payMethodName;
-    // 🌟 支付子标签(如: WECHAT, ALIPAY)
     private String payTag;
-    // 支付方式代码
     private String payMethodCode;
 
     // 【老字段保留】为了向下兼容，依然存入净收金额
@@ -33,6 +28,5 @@ public class OmsOrderPay {
     // 3. 找给顾客的金额 (找零分配)
     private BigDecimal changeAllocated;
 
-    // 创建时间
     private LocalDateTime createTime;
 }

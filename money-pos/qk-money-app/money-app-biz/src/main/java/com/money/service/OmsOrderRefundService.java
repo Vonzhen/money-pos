@@ -6,7 +6,7 @@ public interface OmsOrderRefundService {
     /**
      * 整单退款
      */
-    void returnOrder(String orderNo);
+    void returnOrder(String reqId, String orderNo);
 
     /**
      * 部分退货

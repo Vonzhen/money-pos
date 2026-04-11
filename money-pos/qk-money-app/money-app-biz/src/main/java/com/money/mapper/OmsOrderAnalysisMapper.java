@@ -87,7 +87,8 @@ public interface OmsOrderAnalysisMapper {
     // 🌟 P0-2 引擎：按日聚合会员与散客经营体征
     // ==========================================
     @Select("SELECT DATE_FORMAT(create_time, '%Y-%m-%d') AS dateStr, " +
-            "  CASE WHEN member_id IS NOT NULL THEN 1 ELSE 0 END AS isMember, " +
+            // 🌟 核心修复点 1：精准散客判定，兼容底层默认值0与历史的vip标识兜底，拒绝“伪会员”
+            "  CASE WHEN IFNULL(member_id, 0) > 0 OR IFNULL(vip, 0) = 1 THEN 1 ELSE 0 END AS isMember, " +
             "  COUNT(id) AS orderCount, " +
             "  SUM(IFNULL(final_sales_amount, 0)) AS salesAmount " +
             "FROM oms_order " +

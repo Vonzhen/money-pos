@@ -24,20 +24,56 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class PosServiceImpl implements PosService {
 
-    // 🌟 原有查询所需的依赖 (只保留查数据用的)
     private final UmsMemberService umsMemberService;
     private final GmsGoodsService gmsGoodsService;
     private final PosSkuLevelPriceMapper posSkuLevelPriceMapper;
     private final PosCouponRuleMapper posCouponRuleMapper;
     private final PosMemberCouponMapper posMemberCouponMapper;
     private final UmsMemberBrandLevelMapper umsMemberBrandLevelMapper;
-
-    // 🌟 核心新增：引入刚刚建好的车间主任
     private final CheckoutOrchestrator checkoutOrchestrator;
 
-    // ==========================================
-    // 基础查询模块 (保持不变，现在它专心做查询)
-    // ==========================================
+    // 🌟 核心新增：注入双擎翻译服务
+    private final SysDictDetailService sysDictDetailService;
+    private final GmsBrandService gmsBrandService;
+
+    /**
+     * 🌟 翻译引擎 1：加载全量品牌映射 (ID -> 名称)
+     */
+    private Map<String, String> getBrandMap() {
+        Map<String, String> map = new HashMap<>();
+        try {
+            List<GmsBrand> brands = gmsBrandService.list();
+            if (brands != null) {
+                for (GmsBrand b : brands) {
+                    map.put(String.valueOf(b.getId()), b.getName());
+                }
+            }
+        } catch (Exception e) {
+            log.warn("⚠️ 获取品牌映射表失败", e);
+        }
+        return map;
+    }
+
+    /**
+     * 🌟 翻译引擎 2：加载会员等级字典 (Code -> 中文名)
+     */
+    private Map<String, String> getMemberLevelDictMap() {
+        Map<String, String> map = new HashMap<>();
+        try {
+            List<SysDictDetail> details = sysDictDetailService.listByDict("memberType");
+            if (details != null) {
+                for (SysDictDetail d : details) {
+                    if (StrUtil.isNotBlank(d.getValue())) {
+                        map.put(d.getValue().trim().toUpperCase(), d.getCnDesc());
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("⚠️ 获取 memberType 字典失败", e);
+        }
+        return map;
+    }
+
     @Override
     public List<PosGoodsVO> listGoods(String barcode) {
         List<GmsGoods> gmsGoodsList = gmsGoodsService.lambdaQuery()
@@ -94,15 +130,29 @@ public class PosServiceImpl implements PosService {
                 ruleMap.putAll(posCouponRuleMapper.selectBatchIds(ruleIds).stream().collect(Collectors.toMap(PosCouponRule::getId, rule -> rule)));
             }
 
+            // 🌟 核心防爆破：一次性加载双擎缓存，避免在 for 循环中查库
+            Map<String, String> brandMap = getBrandMap();
+            Map<String, String> levelDictMap = getMemberLevelDictMap();
+
             for (PosMemberVO vo : posMemberVOS) {
                 List<UmsMemberBrandLevel> levels = blMap.get(vo.getId());
-                Map<String, String> levelMap = new HashMap<>();
+                Map<String, String> levelMap = new HashMap<>();      // 存旧数据 (防报错)
+                Map<String, String> levelDescMap = new HashMap<>();  // 存新语义 (纯中文)
+
                 if (levels != null) {
                     for (UmsMemberBrandLevel bl : levels) {
                         levelMap.put(bl.getBrand(), bl.getLevelCode());
+
+                        // 🌟 执行“双擎翻译”
+                        String brandName = brandMap.getOrDefault(bl.getBrand(), "未知品牌(" + bl.getBrand() + ")");
+                        String safeLevelCode = bl.getLevelCode() != null ? bl.getLevelCode().trim().toUpperCase() : "";
+                        String levelName = levelDictMap.getOrDefault(safeLevelCode, bl.getLevelCode());
+
+                        levelDescMap.put(brandName, levelName);
                     }
                 }
                 vo.setBrandLevels(levelMap);
+                vo.setBrandLevelDesc(levelDescMap); // 🌟 挂载纯中文语义矩阵
 
                 List<PosMemberCoupon> hisCoupons = allUnusedCoupons.stream().filter(c -> c.getMemberId().equals(vo.getId())).collect(Collectors.toList());
                 vo.setVoucherCount(hisCoupons.size());
@@ -131,16 +181,8 @@ public class PosServiceImpl implements PosService {
         return posCouponRuleMapper.selectList(new LambdaQueryWrapper<PosCouponRule>().orderByDesc(PosCouponRule::getId));
     }
 
-    // ==========================================
-    // 🌟 终极交响乐指挥：settleAccounts (解耦后)
-    // ==========================================
     @Override
     public SettleResultVO settleAccounts(SettleAccountsDTO dto) {
-
-        // 🌟 彻底剥夺实权：PosServiceImpl 不再包含任何复杂的业务流转逻辑
-        // 就像收银前台，只负责接收前端请求，然后原封不动地交给背后的流水线处理，最后把小票还给顾客。
-
         return checkoutOrchestrator.orchestrate(dto);
-
     }
 }

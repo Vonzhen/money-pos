@@ -23,16 +23,10 @@ public class OmsSalesDataVO {
         private List<BigDecimal> trendSales;
         private List<Integer> trendOrders;
 
-        // 🌟 P0-1 核心新增：每日客单价 (ASP) 趋势
         private List<BigDecimal> trendAsp;
-
-        // 🌟 P0-2 核心新增：会员 vs 散客 趋势载体
         private MemberTrendVO memberTrend;
     }
 
-    // ==========================================
-    // 🌟 P0-2 新增：会员经营趋势专用实体
-    // ==========================================
     @Data
     public static class MemberTrendVO {
         private List<String> dates;
@@ -45,14 +39,11 @@ public class OmsSalesDataVO {
     @Data
     public static class DailyMemberStatDTO {
         private String dateStr;
-        private Integer isMember; // 1:会员, 0:散客
+        private Integer isMember;
         private Integer orderCount;
         private BigDecimal salesAmount;
     }
 
-    // ==========================================
-    // 🌟 P0-3 新增：Top N 单品趋势载体
-    // ==========================================
     @Data
     public static class GoodsTrendVO {
         private Long goodsId;
@@ -70,7 +61,6 @@ public class OmsSalesDataVO {
 
     @Data
     public static class GoodsSalesRankVO {
-        // 🌟 修复：补齐商品真实 ID，供单品趋势联动查询使用
         private Long goodsId;
         private String goodsName;
         private Integer salesQty;
@@ -129,6 +119,12 @@ public class OmsSalesDataVO {
         private Integer hour;
         private java.math.BigDecimal avgOrderCount;
         private java.math.BigDecimal avgSalesAmount;
+
+        // 🌟 核心新增：保留原始总数据，彻底剥夺前端计算权
+        private java.math.BigDecimal totalOrderCount;
+        private java.math.BigDecimal totalSalesAmount;
+        private Integer sampleDays; // 后端计算出的确切采样天数，给前端展示文案用
+
         private String suggestion;
     }
 
@@ -137,5 +133,10 @@ public class OmsSalesDataVO {
         private Integer timeKey;
         private java.math.BigDecimal avgOrderCount;
         private java.math.BigDecimal avgSalesAmount;
+
+        // 🌟 核心新增：保留原始总数据
+        private java.math.BigDecimal totalOrderCount;
+        private java.math.BigDecimal totalSalesAmount;
+        private Double sampleDays; // 采样周期倍数
     }
 }

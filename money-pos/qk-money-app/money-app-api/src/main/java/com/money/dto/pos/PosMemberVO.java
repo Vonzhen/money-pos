@@ -41,24 +41,25 @@ public class PosMemberVO {
      */
     private BigDecimal coupon;
 
-    @io.swagger.v3.oas.annotations.media.Schema(description="本金余额")
+    @Schema(description="本金余额")
     private BigDecimal balance;
 
-    // ... 前面是你原有的 id, name, phone 等字段 ...
-
-    @Schema(description="【全新架构】多品牌等级矩阵")
+    @Schema(description="【旧版兼容】多品牌等级矩阵 (存ID与Code)")
     private java.util.Map<String, String> brandLevels;
 
     // ==========================================
-    // 🌟 必须加上的 3 个字段！否则前端永远收不到满减券和等级！
+    // 🌟 核心新增：专门给前台收银台展示用的纯中文语义矩阵
     // ==========================================
-    @io.swagger.v3.oas.annotations.media.Schema(description="会员等级ID")
+    @Schema(description="【全新架构】多品牌语义真理矩阵 (直接存中文)")
+    private java.util.Map<String, String> brandLevelDesc;
+
+    @Schema(description="会员等级ID")
     private Long levelId;
 
     @Schema(description = "满减券有效张数(统一命名)")
     private Integer voucherCount;
 
-    @io.swagger.v3.oas.annotations.media.Schema(description="具体的满减券规则列表(给下拉框用)")
+    @Schema(description="具体的满减券规则列表(给下拉框用)")
     private List<MemberCouponRuleVO> couponList;
 
     // 定义发给前端的满减券明细结构

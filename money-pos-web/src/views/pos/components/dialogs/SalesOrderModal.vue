@@ -58,8 +58,8 @@
                     <el-table-column label="实收" width="120" align="right">
                         <template #default="{row}">
                             <div class="whitespace-nowrap">
-                                <span v-if="row.status === 'REFUNDED'" class="text-gray-400 font-bold">已退单</span>
-                                <span v-else-if="row.status === 'CLOSED'" class="text-gray-400 font-bold">已取消</span>
+                                <span v-if="row.status === 'REFUNDED'" class="text-gray-400 font-bold">{{ row.statusDesc || '已退单' }}</span>
+                                <span v-else-if="row.status === 'CLOSED'" class="text-gray-400 font-bold">{{ row.statusDesc || '已取消' }}</span>
                                 <span v-else-if="row.status === 'PARTIAL_REFUNDED'" class="font-bold text-orange-500 tracking-tight">￥{{ Number(row.payAmount || 0).toFixed(2) }}</span>
                                 <span v-else class="font-bold text-red-500 tracking-tight">￥{{ Number(row.payAmount || 0).toFixed(2) }}</span>
                             </div>
@@ -86,7 +86,7 @@
                             <div class="text-xs text-gray-500 mt-1">创建时间: {{ currentOrderDetail.createTime }} | 操作人: {{ cashierName }}</div>
                         </div>
                         <el-tag effect="dark" :type="getOrderStatusType(currentOrderDetail.status)" class="tracking-widest font-bold">
-                            {{ getOrderStatusName(currentOrderDetail.status) }}
+                            {{ currentOrderDetail.statusDesc || getOrderStatusName(currentOrderDetail.status) }}
                         </el-tag>
                     </div>
 
@@ -98,10 +98,17 @@
                                 <div class="shrink-0"><span class="text-gray-500 mr-2">电话:</span><span class="font-mono text-gray-800">{{ currentOrderDetail.member?.phone || '-' }}</span></div>
                                 <div class="flex flex-1 items-center gap-2 border-l border-gray-200 pl-4">
                                     <span class="text-gray-500 shrink-0">身份:</span>
-                                    <div class="flex flex-wrap gap-2" v-if="currentOrderDetail.member?.brandLevels">
-                                        <el-tag v-for="(levelCode, brandId) in currentOrderDetail.member.brandLevels" :key="brandId" size="small" type="success" effect="light" class="border-success-300">
-                                            <span class="font-bold text-gray-700 mr-1">{{ brandsKv[brandId] || getBrandName(brandId) || '未知' }}</span>
-                                            <span class="text-green-600 font-bold">{{ (dict.memberTypeKv && dict.memberTypeKv[levelCode]) || getLevelName(levelCode) || levelCode }}</span>
+                                    <div class="flex flex-wrap gap-2" v-if="currentOrderDetail.member?.brandLevelDesc && Object.keys(currentOrderDetail.member.brandLevelDesc).length > 0">
+                                        <el-tag
+                                            v-for="(levelName, brandName) in currentOrderDetail.member.brandLevelDesc"
+                                            :key="brandName"
+                                            size="small"
+                                            type="success"
+                                            effect="light"
+                                            class="border-success-300"
+                                        >
+                                            <span class="font-bold text-gray-700 mr-1">{{ brandName }}</span>
+                                            <span class="text-green-600 font-bold">{{ levelName }}</span>
                                         </el-tag>
                                     </div>
                                     <span v-else class="text-gray-400 font-bold text-sm">无关联身份 / 散客</span>
@@ -201,7 +208,6 @@ import dayjs from 'dayjs'
 import { req } from "@/api/index.js"
 import { ElMessage, ElMessageBox } from 'element-plus'
 import dictApi from "@/api/system/dict.js"
-import brandApi from "@/api/gms/brand.js"
 import NP from "number-precision"
 
 const props = defineProps(['modelValue'])
@@ -222,8 +228,6 @@ const currentOrderDetail = ref(null);
 const detailLoading = ref(false)
 const payTagDict = ref([]);
 const dict = ref({ orderStatusKv: {} });
-const brandsKv = ref({});
-const brandList = ref([])
 
 const auditStats = ref({ orderCount: 0, totalSales: 0, profit: 0, saleCount: 0 })
 
@@ -282,17 +286,12 @@ const handleTimeChange = () => { refreshList(); }
 
 onMounted(async () => {
     try {
-        const dictRes = await dictApi.loadDict(["paySubTag", "orderStatus", "memberType"])
+        // 🌟 核心清理：不再请求 memberType，完全解耦前端字典依赖！
+        const dictRes = await dictApi.loadDict(["paySubTag", "orderStatus"])
         if (dictRes) {
             if (dictRes.paySubTag) payTagDict.value = dictRes.paySubTag
             dict.value = dictRes
         }
-    } catch (e) {}
-
-    try {
-        const brandRes = await (brandApi.list ? brandApi.list({ size: 1000 }) : brandApi.getSelect())
-        brandList.value = brandRes?.data?.records || brandRes?.data || brandRes?.records || brandRes || []
-        brandList.value.forEach(e => { brandsKv.value[e.id || e.value] = e.name || e.label })
     } catch (e) {}
 
     nextTick(() => {
@@ -335,7 +334,16 @@ const handlePartialReturn = async (row) => {
         const returnQty = parseInt(value)
         if (returnQty > maxQty) return ElMessage.error('不能超过可退数量！')
         detailLoading.value = true
-        await req({ url: '/oms-order/returnGoods', method: 'POST', data: { orderNo: currentOrderDetail.value.orderNo, detailId: row.id, returnQty: returnQty } })
+        await req({
+            url: '/oms-order/returnGoods',
+            method: 'POST',
+            data: {
+                orderNo: currentOrderDetail.value.orderNo,
+                detailId: row.id,
+                returnQty: returnQty,
+                reqId: 'PRET' + Date.now()
+            }
+        })
         ElMessage.success('退货成功！')
         handleSelectOrder(currentOrderDetail.value)
         refreshList();
@@ -349,6 +357,8 @@ const handleFullReturn = async () => {
         await req({ url: '/oms-order/return', method: 'POST', data: { orderNo: currentOrderDetail.value.orderNo, reqId: 'RET' + Date.now() } })
         ElMessage.success('退单成功！')
         currentOrderDetail.value.status = 'REFUNDED'
+        // 更新 statusDesc 保持前端表现一致
+        currentOrderDetail.value.statusDesc = '已退单'
         refreshList();
     } catch (e) {} finally { detailLoading.value = false }
 }
@@ -358,6 +368,7 @@ const reprintOrder = async () => {
 }
 
 const getOrderStatusName = (s) => {
+    // 仅作为最后一层安全兜底，正常情况下都由 row.statusDesc 接管
     const fallbackMap = {
         'UNPAID': '待支付',
         'PAID': '已支付',
@@ -371,14 +382,13 @@ const getOrderStatusName = (s) => {
 }
 
 const getOrderStatusType = (s) => {
+    // 视觉样式依然由前端管控
     if (s === 'PAID') return 'success';
     if (s === 'PARTIAL_REFUNDED') return 'warning';
     if (s === 'REFUNDED' || s === 'CLOSED') return 'info';
     return 'danger';
 }
 
-const getBrandName = (id) => brandList.value.find(b => b.id?.toString() === id?.toString())?.name || id;
-const getLevelName = (c) => dict.value.memberType?.find(m => m.value === c || m.dictValue === c)?.dictLabel || c;
 const getPayTagName = (c) => payTagDict.value.find(t => t.value === c || t.dictValue === c)?.desc || '其他扫码';
 const formatTime = (t) => t ? dayjs(t).format('HH:mm') : '';
 const formatDate = (t) => t ? dayjs(t).format('MM-DD') : '';

@@ -1,5 +1,7 @@
 package com.money.dto.pos;
 
+import com.alibaba.fastjson.annotation.JSONField;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.money.dto.OmsOrderDetail.OmsOrderDetailDTO;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
@@ -42,21 +44,30 @@ public class SettleAccountsDTO {
     private List<PaymentItem> payments;
 
     /**
-     * 支付项明细
+     * 支付项明细 (🌟 V2.0 强约束映射版)
      */
     @Data
     @Schema(description = "支付项明细")
     public static class PaymentItem {
 
+        @JsonProperty("payMethodCode")
+        @JSONField(name = "payMethodCode")
         @Schema(description = "支付方式编码，如 CASH, WECHAT, ALIPAY, BALANCE")
         private String payMethodCode;
 
+        @JsonProperty("payMethodName")
+        @JSONField(name = "payMethodName")
         @Schema(description = "支付方式展示名称")
         private String payMethodName;
 
-        @Schema(description = "该项支付的具体金额")
+        // 🌟 核心定义：这里接收的必须是“原始录入金额（实收）”，不要前端算好的净额！
+        @JsonProperty("payAmount")
+        @JSONField(name = "payAmount")
+        @Schema(description = "该项支付的具体金额 (前端录入的原始实收)")
         private BigDecimal payAmount;
 
+        @JsonProperty("payTag")
+        @JSONField(name = "payTag")
         @Schema(description = "支付子标签或第三方流水号 (如支付渠道返回的交易号)")
         private String payTag;
     }

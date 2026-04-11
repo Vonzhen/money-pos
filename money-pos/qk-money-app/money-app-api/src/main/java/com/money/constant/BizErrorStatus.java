@@ -18,11 +18,13 @@ public enum BizErrorStatus implements IStatus {
     POS_CASH_OUT_FORBIDDEN(20005, "禁止非现金超付套现"),
     POS_ORDER_DUPLICATED(20006, "订单已处理，请勿重复提交"),
     POS_MANUAL_DISCOUNT_EXCEED(20007, "手工优惠额超过上限"),
+
     // 🌟 核心新增：专门为退款防线定制的标准错误码
     POS_REFUND_NOT_FOUND(20008, "退货单或明细不存在，或已被篡改"),
     POS_REFUND_REPEAT(20009, "订单已退款或正在处理，请勿重复点击"),
     POS_REFUND_QTY_INVALID(20010, "可退数量不足或发生并发冲突"),
-    POS_REFUND_STATE_INVALID(20011, "当前订单状态不支持退款操作"),
+    // 🌟 统一命名：与 RefundStateGuard 保持一致
+    POS_REFUND_STATUS_INVALID(20011, "当前订单状态不支持退款操作"),
 
     // ==========================================
     // 30xxx: 商品与库存相关异常

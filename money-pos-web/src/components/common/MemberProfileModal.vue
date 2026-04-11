@@ -37,9 +37,9 @@
                                 <div class="flex justify-between mt-2 pt-2 border-t border-blue-100/50 items-start">
                                     <span class="text-blue-500 font-bold whitespace-nowrap mt-1">特权版图:</span>
                                     <div class="flex flex-wrap gap-1 justify-end max-w-[220px]">
-                                        <template v-if="localMemberInfo.brandLevels && Object.keys(localMemberInfo.brandLevels).length > 0">
-                                            <el-tag v-for="(levelCode, brandId) in localMemberInfo.brandLevels" :key="brandId" size="small" effect="dark" type="success" class="border-0 shadow-sm">
-                                                {{ getBrandName(brandId) }}: {{ getLevelName(levelCode) }}
+                                        <template v-if="localMemberInfo.brandLevelDesc && Object.keys(localMemberInfo.brandLevelDesc).length > 0">
+                                            <el-tag v-for="(levelName, brandName) in localMemberInfo.brandLevelDesc" :key="brandName" size="small" effect="dark" type="success" class="border-0 shadow-sm">
+                                                {{ brandName }}: {{ levelName }}
                                             </el-tag>
                                         </template>
                                         <span v-else class="text-gray-400 border border-gray-300 border-dashed px-2 py-0.5 rounded text-xs">仅限普通零售</span>

@@ -1,14 +1,13 @@
 package com.money.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.money.constant.BizErrorStatus;
 import com.money.entity.UmsMember;
 import com.money.entity.UmsMemberLog;
-import com.money.entity.UmsRechargeOrder; // 🌟 新增引入
+import com.money.entity.UmsRechargeOrder;
 import com.money.mapper.UmsMemberLogMapper;
 import com.money.mapper.UmsMemberMapper;
-import com.money.mapper.UmsRechargeOrderMapper; // 🌟 新增引入
+import com.money.mapper.UmsRechargeOrderMapper;
 import com.money.web.exception.BaseException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,10 +15,10 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
-import java.util.List; // 🌟 新增引入
+import java.util.List;
 
 /**
- * 领域服务：会员资产子域
+ * 领域服务：会员资产子域 (V4.0 防注入安全版)
  */
 @Slf4j
 @Service
@@ -28,15 +27,12 @@ public class UmsMemberAssetService {
 
     private final UmsMemberMapper umsMemberMapper;
     private final UmsMemberLogMapper umsMemberLogMapper;
-    private final UmsRechargeOrderMapper umsRechargeOrderMapper; // 🌟 补齐底层的 Mapper 注入
+    private final UmsRechargeOrderMapper umsRechargeOrderMapper;
 
     private static final String TYPE_BALANCE = "BALANCE";
     private static final String TYPE_COUPON = "COUPON";
     private static final String TYPE_VOUCHER = "VOUCHER";
 
-    // ==========================================
-    // 🌟 新增：由 Service 彻底接管的查询防线 (方便后续加脱敏/缓存/审计)
-    // ==========================================
     public List<UmsMemberLog> getMemberLogs(Long memberId) {
         return umsMemberLogMapper.selectList(
                 new LambdaQueryWrapper<UmsMemberLog>()
@@ -61,7 +57,7 @@ public class UmsMemberAssetService {
     }
 
     // ==========================================
-    // 正向交易：严格校验，找不到会员必须阻断！
+    // 🌟 正向交易：底层预编译防注入，精准扣库
     // ==========================================
     public void consume(Long id, BigDecimal amount, BigDecimal couponAmount, String orderNo) {
         if (amount != null && amount.compareTo(BigDecimal.ZERO) < 0) throw new BaseException("扣款金额不能为负数");
@@ -70,19 +66,11 @@ public class UmsMemberAssetService {
         if (member == null) throw new BaseException(BizErrorStatus.MEMBER_NOT_FOUND, "会员不存在");
 
         BigDecimal beforeCoupon = member.getCoupon() != null ? member.getCoupon() : BigDecimal.ZERO;
+        BigDecimal safeAmount = amount != null ? amount : BigDecimal.ZERO;
 
-        LambdaUpdateWrapper<UmsMember> updateWrapper = new LambdaUpdateWrapper<UmsMember>()
-                .setSql("consume_amount = consume_amount + " + (amount != null ? amount : BigDecimal.ZERO))
-                .setSql("consume_times = consume_times + 1")
-                .eq(UmsMember::getId, id);
+        // 🌟 核心替换：使用底层 Mapper 执行原子扣减
+        int rows = umsMemberMapper.consumeAsset(id, safeAmount, couponAmount);
 
-        if (couponAmount != null && couponAmount.compareTo(BigDecimal.ZERO) > 0) {
-            updateWrapper.setSql("consume_coupon = consume_coupon + " + couponAmount)
-                    .setSql("coupon = coupon - " + couponAmount)
-                    .ge(UmsMember::getCoupon, couponAmount);
-        }
-
-        int rows = umsMemberMapper.update(null, updateWrapper);
         if (rows == 0 && couponAmount != null && couponAmount.compareTo(BigDecimal.ZERO) > 0) {
             throw new BaseException(BizErrorStatus.COUPON_NOT_ENOUGH, "扣款失败：券余额不足");
         }
@@ -100,10 +88,8 @@ public class UmsMemberAssetService {
 
         BigDecimal beforeBalance = member.getBalance() != null ? member.getBalance() : BigDecimal.ZERO;
 
-        int rows = umsMemberMapper.update(null, new LambdaUpdateWrapper<UmsMember>()
-                .setSql("balance = balance - " + amount)
-                .eq(UmsMember::getId, memberId)
-                .ge(UmsMember::getBalance, amount));
+        // 🌟 核心替换：使用底层 Mapper 执行原子扣减
+        int rows = umsMemberMapper.deductBalanceAtomically(memberId, amount);
 
         if (rows == 0) {
             throw new BaseException(BizErrorStatus.BALANCE_INSUFFICIENT, "余额不足");
@@ -126,9 +112,8 @@ public class UmsMemberAssetService {
 
         BigDecimal beforeBalance = member.getBalance() != null ? member.getBalance() : BigDecimal.ZERO;
 
-        umsMemberMapper.update(null, new LambdaUpdateWrapper<UmsMember>()
-                .setSql("balance = balance + " + amount)
-                .eq(UmsMember::getId, memberId));
+        // 🌟 核心替换：使用底层 Mapper 执行原子增加
+        umsMemberMapper.addBalanceAtomically(memberId, amount);
 
         umsMemberLogMapper.insert(createLog(member, TYPE_BALANCE, "REFUND", amount, BigDecimal.ZERO, beforeBalance.add(amount), orderNo, remark));
     }
@@ -154,17 +139,14 @@ public class UmsMemberAssetService {
         }
 
         BigDecimal beforeCoupon = member.getCoupon() == null ? BigDecimal.ZERO : member.getCoupon();
+        BigDecimal safeAmount = amount != null ? amount : BigDecimal.ZERO;
 
         if (coupon != null && coupon.compareTo(BigDecimal.ZERO) > 0) {
             umsMemberLogMapper.insert(createLog(member, TYPE_COUPON, "REFUND", coupon, BigDecimal.ZERO, beforeCoupon.add(coupon), orderNo, "售后退货返还会员券"));
         }
 
-        int rows = umsMemberMapper.update(null, new LambdaUpdateWrapper<UmsMember>()
-                .setSql("coupon = coupon + " + (coupon != null ? coupon : BigDecimal.ZERO))
-                .setSql("consume_amount = consume_amount - " + (amount != null ? amount : BigDecimal.ZERO))
-                .setSql("consume_coupon = consume_coupon - " + (coupon != null ? coupon : BigDecimal.ZERO))
-                .setSql(increaseCancelTimes, "cancel_times = cancel_times + 1")
-                .eq(UmsMember::getId, id));
+        // 🌟 核心替换：使用底层 Mapper 执行原子更新
+        int rows = umsMemberMapper.processReturnAsset(id, safeAmount, coupon, increaseCancelTimes);
 
         if (rows == 0) {
             log.warn("【数据预警】会员(ID:{})资产退回 SQL 未命中任何行", id);

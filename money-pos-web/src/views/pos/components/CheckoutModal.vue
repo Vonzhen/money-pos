@@ -109,8 +109,8 @@
                                     @focus="handleFocus"
                                 />
                             </div>
-                            <div v-if="pay.code === 'AGGREGATE' && payTagDict && payTagDict.length > 0" class="flex flex-wrap gap-2 mt-2 ml-[5.5rem]">
-                                <el-tag v-for="tag in payTagDict" :key="tag.value" :type="pay.activeTag === tag.value ? 'success' : 'info'" :effect="pay.activeTag === tag.value ? 'dark' : 'plain'" class="cursor-pointer font-bold border-0 shadow-sm transition-all hover:scale-105" @click="pay.activeTag = tag.value">
+                            <div v-if="pay.code === 'AGGREGATE' && localPayTagDict && localPayTagDict.length > 0" class="flex flex-wrap gap-2 mt-2 ml-[5.5rem]">
+                                <el-tag v-for="tag in localPayTagDict" :key="tag.value" :type="pay.activeTag === tag.value ? 'success' : 'info'" :effect="pay.activeTag === tag.value ? 'dark' : 'plain'" class="cursor-pointer font-bold border-0 shadow-sm transition-all hover:scale-105" @click="pay.activeTag = tag.value">
                                     {{ tag.desc }}
                                 </el-tag>
                             </div>
@@ -146,12 +146,12 @@ import { UserFilled, Ticket, PriceTag } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { usePosStore } from '../hooks/usePosStore'
 import { req } from "@/api/index.js"
+import dictApi from "@/api/system/dict.js" // 🌟 引入字典 API
 import Big from 'big.js'
 
 const props = defineProps({
     modelValue: Boolean,
     payMethodDict: { type: Array, default: () => [] },
-    payTagDict: { type: Array, default: () => [{value: 'WECHAT', desc: '微信支付'}, {value: 'ALIPAY', desc: '支付宝'}] },
     memberLevelDesc: String
 })
 const emit = defineEmits(['update:modelValue', 'checkout-success', 'closed'])
@@ -162,6 +162,7 @@ const visible = computed({
 })
 
 const submitLoading = ref(false)
+const localPayTagDict = ref([]) // 🌟 纯净的数据源存放点
 
 const {
     cartList, currentMember, isWaiveCoupon, manualDiscount, selectedCouponRule, usedCouponCount, paymentList,
@@ -175,7 +176,6 @@ const isSubmitDisabled = computed(() => {
            (!isWaiveCoupon.value && currentMember.value.id && currentMember.value.coupon < theoreticalCouponUsed.value);
 })
 
-// 🌟 新增：全选处理函数 (event.target 即 input 元素)
 const handleFocus = (event) => {
     event.target.select();
 }
@@ -192,7 +192,17 @@ const handleKeyDown = (e) => {
     }
 }
 
-onMounted(() => { window.addEventListener('keydown', handleKeyDown); })
+// 🌟 组件挂载时自主索要支付子标签字典
+onMounted(async () => {
+    window.addEventListener('keydown', handleKeyDown);
+    try {
+        const dictRes = await dictApi.loadDict(["paySubTag"])
+        if (dictRes && dictRes.paySubTag) {
+            localPayTagDict.value = dictRes.paySubTag
+        }
+    } catch (e) {}
+})
+
 onUnmounted(() => { window.removeEventListener('keydown', handleKeyDown); })
 
 const availableCoupons = computed(() => {
@@ -213,6 +223,7 @@ const unpaidAmount = computed(() => {
     const diff = pay.minus(paid);
     return diff.gt(0) ? diff.toNumber() : 0;
 })
+// 找零计算仅用于页面底部红字展示，提交时不发送给后端
 const changeAmount = computed(() => {
     const cashItem = paymentList.value.find(p => p.code.includes('CASH'));
     const cashPaid = new Big(cashItem ? (cashItem.amount || 0) : 0);
@@ -228,12 +239,16 @@ watch(visible, (newVal) => {
     if (newVal) {
         prepareCheckout();
         usedCouponCount.value = 0;
+
+        // 保留兜底的组合方式（聚合扫码、现金），如果后台传了 payMethodDict 则优先使用后台
         const sourceDict = props.payMethodDict.length > 0 ? props.payMethodDict : [{value: 'AGGREGATE', desc: '聚合扫码'}, {value: 'CASH', desc: '现金支付'}]
+
         paymentList.value = sourceDict.map(dict => ({
             code: dict.value,
             name: dict.desc,
             amount: 0,
-            activeTag: (dict.value === 'AGGREGATE' && props.payTagDict.length > 0) ? props.payTagDict[0].value : null
+            // 🌟 自动选中从后台拉取到的第一个 paySubTag (动态且安全)
+            activeTag: (dict.value === 'AGGREGATE' && localPayTagDict.value.length > 0) ? localPayTagDict.value[0].value : null
         }))
         recalculatePayments();
     }
@@ -284,31 +299,21 @@ const handleClosed = () => {
 
 const submitOrderAction = async () => {
     if (unpaidAmount.value > 0) return ElMessage.error(`实付不足 ￥${unpaidAmount.value.toFixed(2)}`);
+
     const validPayments = paymentList.value
         .filter(p => p.amount > 0)
         .map(p => {
-            const original = new Big(p.amount);
-            let net = original;
-            let changeAlloc = new Big(0);
-            if (p.code.includes('CASH')) {
-                const totalChange = new Big(changeAmount.value);
-                if (totalChange.gt(0)) {
-                    changeAlloc = totalChange;
-                    net = original.minus(changeAlloc);
-                }
-            }
             return {
                 payMethodCode: p.code,
                 payMethodName: p.name,
-                payAmount: net.toNumber(),
-                originalAmount: original.toNumber(),
-                netAmount: net.toNumber(),
-                changeAmount: changeAlloc.toNumber(),
+                payAmount: p.amount,
                 payTag: p.activeTag || null
             };
         });
+
     const orderDetails = cartList.value.map(item => ({ goodsId: item.id, quantity: Number(item.qty) || 1 }));
-    submitLoading.value = true
+    submitLoading.value = true;
+
     try {
         const payload = {
             reqId: reqId.value,
