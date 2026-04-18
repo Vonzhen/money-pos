@@ -35,9 +35,15 @@ public class PosAssetActionService {
     private final UmsMemberLogMapper umsMemberLogMapper;
 
     public void consume(Long memberId, SettleAccountsDTO dto, PricingResult trialRes, NormalizedPaymentResult payResult, String orderNo) {
+        // 安全拦截：防止流水线编排异常导致 payResult 为空
+        if (payResult == null || payResult.getValidItems() == null) {
+            log.error("【极度危险】资产管家收到了空的支付凭证！单号: {}", orderNo);
+            throw new BaseException("系统内部流水线异常：支付凭证脱落，请重试！");
+        }
+
         LocalDateTime now = LocalDateTime.now();
 
-        // 1. 扣除会员券金额与消费统计
+        // 1. 记录会员消费统计 (此方法仅记录消费额，不扣除余额)
         umsMemberService.consume(memberId, trialRes.getFinalPayAmount(), trialRes.getActualCouponDeduct(), orderNo);
 
         // 2. 满减券物理核销与流水记录
@@ -71,12 +77,10 @@ public class PosAssetActionService {
                     .eq(PosMemberCoupon::getMemberId, memberId)
                     .eq(PosMemberCoupon::getStatus, CouponStatusEnum.UNUSED.name()));
 
-            // 🌟 核心修复：查明正身，补全姓名和手机号
             UmsMember member = umsMemberService.getById(memberId);
 
             UmsMemberLog voucherLog = new UmsMemberLog();
             voucherLog.setMemberId(memberId);
-            // 🌟 缝合上下文断层
             if (member != null) {
                 voucherLog.setMemberName(member.getName());
                 voucherLog.setMemberPhone(member.getPhone());
@@ -91,12 +95,24 @@ public class PosAssetActionService {
             umsMemberLogMapper.insert(voucherLog);
         }
 
-        // 3. 余额扣减
+        // ==========================================
+        // 🌟 P0 核心修复 3：业务逻辑书同文，使用统一的枚举解析取代硬编码比对！
+        // ==========================================
         BigDecimal balanceCost = payResult.getValidItems().stream()
-                .filter(p -> PayMethodEnum.BALANCE.getCode().equals(p.getMethodCode()))
+                .filter(p -> PayMethodEnum.fromCode(p.getMethodCode()) == PayMethodEnum.BALANCE)
                 .map(NormalizedPaymentResult.StandardPayItem::getNetAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
+        // 🌟 核心防线：资金逻辑断言！只要检测到有 BALANCE 支付意向，扣除额必须大于0
+        boolean hasBalanceIntent = payResult.getValidItems().stream()
+                .anyMatch(p -> PayMethodEnum.fromCode(p.getMethodCode()) == PayMethodEnum.BALANCE);
+
+        if (hasBalanceIntent && balanceCost.compareTo(BigDecimal.ZERO) <= 0) {
+            log.error("【资金防漏拦截】检测到余额支付意图，但实际核算出的扣除额为0！单号: {}", orderNo);
+            throw new BaseException("【风控拦截】账务异常：余额扣除指令未成功下达！");
+        }
+
+        // 3. 真正执行余额物理扣减
         if (balanceCost.compareTo(BigDecimal.ZERO) > 0) {
             if (balanceCost.compareTo(payResult.getNetReceived()) > 0) {
                 log.error("【资产安全拦截】尝试扣减的余额({})大于订单净入账({})，单号: {}", balanceCost, payResult.getNetReceived(), orderNo);

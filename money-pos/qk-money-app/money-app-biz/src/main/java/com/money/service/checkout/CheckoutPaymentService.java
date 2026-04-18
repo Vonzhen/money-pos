@@ -2,6 +2,7 @@ package com.money.service.checkout;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.money.dto.pos.NormalizedPaymentResult;
+import com.money.dto.pos.SettleAccountsDTO; // 🌟 引入 DTO
 import com.money.entity.OmsOrderPay;
 import com.money.entity.SysDictDetail;
 import com.money.mapper.OmsOrderPayMapper;
@@ -26,8 +27,50 @@ public class CheckoutPaymentService {
     private final OmsOrderPayMapper omsOrderPayMapper;
     private final SysDictDetailService sysDictDetailService;
 
+    // ==========================================
+    // 🌟 P0 核心修复 1：支付数据入口归一化 (防大小写/空格黑客)
+    // ==========================================
+    public void preProcessPayments(CheckoutContext context) {
+        SettleAccountsDTO request = context.getRequest();
+        NormalizedPaymentResult result = new NormalizedPaymentResult();
+
+        BigDecimal netTotal = BigDecimal.ZERO;
+        BigDecimal originalTotal = BigDecimal.ZERO;
+
+        if (request.getPayments() != null) {
+            for (SettleAccountsDTO.PaymentItem p : request.getPayments()) {
+                if (p.getPayAmount() == null || p.getPayAmount().compareTo(BigDecimal.ZERO) <= 0) {
+                    continue; // 过滤无效支付项
+                }
+
+                NormalizedPaymentResult.StandardPayItem item = new NormalizedPaymentResult.StandardPayItem();
+
+                // 🌟 核心防御：强制 Trim + 大写，将前端的不规范数据转换为系统标准口径
+                String safeCode = StringUtils.hasText(p.getPayMethodCode()) ? p.getPayMethodCode().trim().toUpperCase() : "UNKNOWN";
+
+                item.setMethodCode(safeCode);
+                item.setPayTag(p.getPayTag());
+
+                // 暂时将实收和净额保持一致（找零逻辑后续可在此处扩展）
+                item.setNetAmount(p.getPayAmount());
+                item.setOriginalAmount(p.getPayAmount());
+                item.setChangeAmount(BigDecimal.ZERO);
+
+                result.getValidItems().add(item);
+                netTotal = netTotal.add(p.getPayAmount());
+                originalTotal = originalTotal.add(p.getPayAmount());
+            }
+        }
+
+        result.setNetReceived(netTotal);
+        result.setTotalPaid(originalTotal);
+        result.setChangeAmount(BigDecimal.ZERO); // 此处初始化找零池
+
+        // 🌟 提前挂载到上下文，供后续的“资产扣除”关卡使用
+        context.setPaymentResult(result);
+    }
+
     public void loadExistingPayments(CheckoutContext context) {
-        // ... (保持原代码不变) ...
         String orderNo = context.getOrder().getOrderNo();
         List<OmsOrderPay> pays = omsOrderPayMapper.selectList(
                 new LambdaQueryWrapper<OmsOrderPay>().eq(OmsOrderPay::getOrderNo, orderNo)
@@ -69,6 +112,9 @@ public class CheckoutPaymentService {
         String orderNo = context.getOrder().getOrderNo();
         LocalDateTime now = LocalDateTime.now();
 
+        // 防止 payResult 为空（加固保护）
+        if (payResult == null || payResult.getValidItems() == null) return;
+
         for (NormalizedPaymentResult.StandardPayItem item : payResult.getValidItems()) {
             if ((item.getNetAmount() == null || item.getNetAmount().compareTo(BigDecimal.ZERO) == 0) &&
                     (item.getOriginalAmount() == null || item.getOriginalAmount().compareTo(BigDecimal.ZERO) == 0)) {
@@ -81,10 +127,9 @@ public class CheckoutPaymentService {
             payRecord.setPayTag(item.getPayTag());
             payRecord.setPayMethodName(getSafeMethodName(item.getMethodCode(), item.getPayTag()));
 
-            // 🌟 核心升级：完整的三元组时空胶囊落库
-            payRecord.setPayAmount(item.getNetAmount()); // 兼容老代码
-            payRecord.setOriginalAmount(item.getOriginalAmount()); // 原始实收
-            payRecord.setNetAmount(item.getNetAmount());           // 财务净额
+            payRecord.setPayAmount(item.getNetAmount());
+            payRecord.setOriginalAmount(item.getOriginalAmount());
+            payRecord.setNetAmount(item.getNetAmount());
             payRecord.setChangeAllocated(item.getChangeAmount() != null ? item.getChangeAmount() : BigDecimal.ZERO);
             payRecord.setCreateTime(now);
 
@@ -93,7 +138,6 @@ public class CheckoutPaymentService {
     }
 
     private String getSafeMethodName(String methodCode, String payTag) {
-        // ... (保持原双层字典逻辑不变) ...
         try {
             if (StringUtils.hasText(payTag)) {
                 List<SysDictDetail> subList = sysDictDetailService.listByDict("paySubTag");

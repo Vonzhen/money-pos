@@ -42,7 +42,6 @@ public class CheckoutOrchestrator {
 
         // ================= 🌟 1. 幂等拦截闸口 =================
         if (orderService.loadExistingOrder(context)) {
-            // P1-2 修复：找回包含【真实找零与实收快照】的支付流水
             paymentService.loadExistingPayments(context);
 
             log.info("【幂等拦截生效】订单 {} 已成功处理过，已100%无损还原原始结账快照并放行。", context.getOrder().getOrderNo());
@@ -52,9 +51,16 @@ public class CheckoutOrchestrator {
         // ================= 🌟 2. 正常流水线 =================
         validationService.validate(context);
         pricingService.calculate(context);
+
+        // 🌟 P0 核心修复 2：粮草先行！必须先将前端支付参数解析归一化，再谈后续的扣款
+        paymentService.preProcessPayments(context);
+
         orderService.createOrder(context);
         inventoryService.deductStock(context);
+
+        // 此时，资产管家能够拿到 100% 准确的 paymentResult 对象了
         memberAssetService.handleAsset(context);
+
         paymentService.handlePayment(context);
 
         saveAuditLog(context);
@@ -67,10 +73,15 @@ public class CheckoutOrchestrator {
         NormalizedPaymentResult payResult = context.getPaymentResult();
 
         int totalItemCount = context.getOrderDetails().stream().mapToInt(d -> d.getQuantity()).sum();
-        String distinctPayMethods = payResult.getValidItems().stream()
-                .map(p -> StrUtil.isNotBlank(p.getPayTag()) ? p.getMethodCode() + ":" + p.getPayTag() : p.getMethodCode())
-                .distinct()
-                .collect(Collectors.joining(","));
+
+        // 安全获取，防止支付方式为空
+        String distinctPayMethods = "";
+        if (payResult != null && payResult.getValidItems() != null) {
+            distinctPayMethods = payResult.getValidItems().stream()
+                    .map(p -> StrUtil.isNotBlank(p.getPayTag()) ? p.getMethodCode() + ":" + p.getPayTag() : p.getMethodCode())
+                    .distinct()
+                    .collect(Collectors.joining(","));
+        }
 
         OmsOrderLog orderLog = new OmsOrderLog();
         orderLog.setOrderId(order.getId());
@@ -83,9 +94,12 @@ public class CheckoutOrchestrator {
         auditMap.put("detailCount", context.getOrderDetails().size());
         auditMap.put("payMethods", distinctPayMethods);
         auditMap.put("finalPay", order.getPayAmount());
-        auditMap.put("totalPaid", payResult.getTotalPaid());
-        auditMap.put("change", payResult.getChangeAmount());
-        auditMap.put("net", payResult.getNetReceived());
+
+        if (payResult != null) {
+            auditMap.put("totalPaid", payResult.getTotalPaid());
+            auditMap.put("change", payResult.getChangeAmount());
+            auditMap.put("net", payResult.getNetReceived());
+        }
 
         orderLog.setDescription(JSONUtil.toJsonStr(auditMap));
         omsOrderLogService.save(orderLog);
@@ -100,10 +114,11 @@ public class CheckoutOrchestrator {
         vo.setTotalAmount(order.getTotalAmount());
         vo.setFinalPayAmount(order.getPayAmount());
 
-        // 🌟 此时这里拿到的 TotalPaid 和 ChangeAmount 将是历史真实的快照数据！
-        vo.setTotalPaid(payResult.getTotalPaid());
-        vo.setChangeAmount(payResult.getChangeAmount());
-        vo.setNetReceived(payResult.getNetReceived());
+        if (payResult != null) {
+            vo.setTotalPaid(payResult.getTotalPaid());
+            vo.setChangeAmount(payResult.getChangeAmount());
+            vo.setNetReceived(payResult.getNetReceived());
+        }
 
         vo.setPaymentTime(order.getPaymentTime());
         vo.setMemberName(order.getMember());
